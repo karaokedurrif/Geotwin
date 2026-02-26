@@ -1,0 +1,25 @@
+{
+  "name": "geotwin",
+  "version": "0.1.0",
+  "private": true,
+  "description": "GeoTwin Engine - Interactive 3D geospatial twin platform",
+  "scripts": {
+    "dev": "bash tools/dev-up.sh",
+    "build": "pnpm --filter \"./packages/*\" build && pnpm --filter \"./apps/*\" build",
+    "lint": "pnpm --recursive lint",
+    "typecheck": "pnpm --recursive typecheck",
+    "format": "prettier --write \"**/*.{ts,tsx,json,md}\"",
+    "format:check": "prettier --check \"**/*.{ts,tsx,json,md}\"",
+    "terrain:build": "pnpm exec ts-node tools/terrain/build-terrain.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "prettier": "^3.2.4",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.3"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "pnpm": ">=8.0.0"
+  }
+}

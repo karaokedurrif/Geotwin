@@ -1,0 +1,283 @@
+import { useEffect, useRef } from 'react';
+import type { TwinRecipe, LayerType } from '@geotwin/types';
+
+interface CesiumViewerProps {
+  recipe: TwinRecipe;
+  enabledLayers: Set<LayerType>;
+}
+
+declare global {
+  interface Window {
+    Cesium: any;
+  }
+}
+
+export default function CesiumViewer({ recipe, enabledLayers }: CesiumViewerProps) {
+  const viewerRef = useRef<HTMLDivElement>(null);
+  const cesiumViewerRef = useRef<any>(null);
+  const dataSourcesRef = useRef<Map<LayerType, any>>(new Map());
+
+  // Initialize Cesium viewer
+  useEffect(() => {
+    if (!viewerRef.current || typeof window === 'undefined' || !window.Cesium) {
+      return;
+    }
+
+    const Cesium = window.Cesium;
+
+    // Set Cesium Ion token (use default for now)
+    Cesium.Ion.defaultAccessToken =
+      'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiJlYWE1OWUxNy1mMWZiLTQzYjYtYTQ0OS1kMWFjYmFkNjc5YzciLCJpZCI6NTc3MzMsImlhdCI6MTYyNzg0NTE4Mn0.XcKpgANiY19MC4bdFUXMVEBToBmqS8kuYpUlxJHYZxk';
+
+    const viewer = new Cesium.Viewer(viewerRef.current, {
+      terrainProvider: Cesium.createWorldTerrain(),
+      imageryProvider: new Cesium.IonImageryProvider({ assetId: 2 }),
+      baseLayerPicker: false,
+      geocoder: false,
+      homeButton: false,
+      sceneModePicker: false,
+      navigationHelpButton: false,
+      animation: false,
+      timeline: false,
+      fullscreenButton: false,
+      vrButton: false,
+      infoBox: false,
+      selectionIndicator: false,
+    });
+
+    // Apply preset configuration
+    applyPresetConfig(viewer, recipe);
+
+    // Set camera position
+    viewer.camera.setView({
+      destination: Cesium.Cartesian3.fromDegrees(
+        recipe.camera.longitude,
+        recipe.camera.latitude,
+        recipe.camera.height
+      ),
+      orientation: {
+        heading: Cesium.Math.toRadians(recipe.camera.heading),
+        pitch: Cesium.Math.toRadians(recipe.camera.pitch),
+        roll: Cesium.Math.toRadians(recipe.camera.roll),
+      },
+    });
+
+    cesiumViewerRef.current = viewer;
+
+    // Load geometry
+    loadGeometry(viewer, recipe);
+
+    return () => {
+      if (cesiumViewerRef.current) {
+        cesiumViewerRef.current.destroy();
+        cesiumViewerRef.current = null;
+      }
+    };
+  }, [recipe]);
+
+  // Update layers based on enabled state
+  useEffect(() => {
+    if (!cesiumViewerRef.current) return;
+
+    dataSourcesRef.current.forEach((dataSource, layerId) => {
+      dataSource.show = enabledLayers.has(layerId);
+    });
+  }, [enabledLayers]);
+
+  return <div ref={viewerRef} className="w-full h-full cesium-viewer" />;
+}
+
+/**
+ * Apply preset configuration to the viewer
+ */
+function applyPresetConfig(viewer: any, recipe: TwinRecipe) {
+  const Cesium = window.Cesium;
+  const { presetConfig } = recipe;
+
+  // Terrain exaggeration
+  viewer.scene.verticalExaggeration = presetConfig.terrain.terrainExaggeration;
+
+  // Lighting
+  viewer.scene.light.intensity = presetConfig.terrain.lightingIntensity;
+
+  // Atmosphere effects
+  viewer.scene.skyAtmosphere.brightnessShift = presetConfig.atmosphere.brightness - 1.0;
+  viewer.scene.skyAtmosphere.saturationShift = presetConfig.atmosphere.saturation - 1.0;
+  viewer.scene.skyAtmosphere.hueShift = presetConfig.atmosphere.hueShift / 360.0;
+
+  // Ground color tint (apply to globe)
+  const tint = presetConfig.groundTint;
+  viewer.scene.globe.baseColor = new Cesium.Color(
+    tint.r / 255,
+    tint.g / 255,
+    tint.b / 255,
+    tint.a
+  );
+}
+
+/**
+ * Load geometry and create data sources
+ */
+async function loadGeometry(viewer: any, recipe: TwinRecipe) {
+  const Cesium = window.Cesium;
+
+  try {
+    // Fetch geometry
+    const response = await fetch(`http://localhost:3001${recipe.geometryPath}`);
+    const geojson = await response.json();
+
+    // Create data sources for each layer
+    const parcelLayer = recipe.layers.find((l) => l.id === 'parcel');
+    const extrusionLayer = recipe.layers.find((l) => l.id === 'extrusion');
+    const ndviLayer = recipe.layers.find((l) => l.id === 'ndvi_demo');
+    const waterLayer = recipe.layers.find((l) => l.id === 'water_demo');
+    const roiLayer = recipe.layers.find((l) => l.id === 'roi_demo');
+
+    // Parcel boundary
+    if (parcelLayer) {
+      const parcelDS = new Cesium.CustomDataSource('parcel');
+      const entity = parcelDS.entities.add({
+        polygon: {
+          hierarchy: Cesium.Cartesian3.fromDegreesArray(
+            flattenCoordinates(geojson.geometry.coordinates[0])
+          ),
+          material: createCesiumColor(parcelLayer.material!.color),
+          outline: true,
+          outlineColor: createCesiumColor(parcelLayer.material!.outlineColor!),
+          outlineWidth: parcelLayer.material!.outlineWidth || 2,
+          height: 0,
+        },
+      });
+      viewer.dataSources.add(parcelDS);
+      viewer.cesiumDataSourcesRef = viewer.cesiumDataSourcesRef || new Map();
+      viewer.cesiumDataSourcesRef.set('parcel', parcelDS);
+    }
+
+    // Extrusion
+    if (extrusionLayer) {
+      const extrusionDS = new Cesium.CustomDataSource('extrusion');
+      extrusionDS.entities.add({
+        polygon: {
+          hierarchy: Cesium.Cartesian3.fromDegreesArray(
+            flattenCoordinates(geojson.geometry.coordinates[0])
+          ),
+          material: createCesiumColor(extrusionLayer.material!.color),
+          extrudedHeight: extrusionLayer.extrusionHeight || 10,
+          height: 0,
+        },
+      });
+      extrusionDS.show = false;
+      viewer.dataSources.add(extrusionDS);
+      viewer.cesiumDataSourcesRef.set('extrusion', extrusionDS);
+    }
+
+    // NDVI demo layer
+    if (ndviLayer && ndviLayer.heatmap) {
+      const ndviDS = new Cesium.CustomDataSource('ndvi_demo');
+      // Fetch NDVI grid from demo data
+      const ndviResponse = await fetch(`http://localhost:3001/api/twin/${recipe.twinId}`);
+      const ndviData = await ndviResponse.json();
+      
+      // This would render NDVI cells - simplified for now
+      ndviDS.show = true;
+      viewer.dataSources.add(ndviDS);
+      viewer.cesiumDataSourcesRef.set('ndvi_demo', ndviDS);
+    }
+
+    // Water points
+    if (waterLayer && waterLayer.points) {
+      const waterDS = new Cesium.CustomDataSource('water_demo');
+      waterLayer.points.forEach((poi) => {
+        waterDS.entities.add({
+          position: Cesium.Cartesian3.fromDegrees(poi.position[0], poi.position[1]),
+          billboard: {
+            image: createTextBillboard(poi.icon || '💧', 32),
+            scale: poi.scale || 1.0,
+          },
+          label: {
+            text: poi.label,
+            font: '14px sans-serif',
+            fillColor: Cesium.Color.WHITE,
+            outlineColor: Cesium.Color.BLACK,
+            outlineWidth: 2,
+            pixelOffset: new Cesium.Cartesian2(0, -40),
+            style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+          },
+        });
+      });
+      viewer.dataSources.add(waterDS);
+      viewer.cesiumDataSourcesRef.set('water_demo', waterDS);
+    }
+
+    // ROI labels
+    if (roiLayer && roiLayer.points) {
+      const roiDS = new Cesium.CustomDataSource('roi_demo');
+      roiLayer.points.forEach((poi) => {
+        roiDS.entities.add({
+          position: Cesium.Cartesian3.fromDegrees(poi.position[0], poi.position[1]),
+          billboard: {
+            image: createTextBillboard(poi.icon || '📊', 28),
+            scale: poi.scale || 1.0,
+          },
+          label: {
+            text: `${poi.label}: ${poi.value || ''}`,
+            font: '12px sans-serif',
+            fillColor: Cesium.Color.CYAN,
+            outlineColor: Cesium.Color.BLACK,
+            outlineWidth: 2,
+            pixelOffset: new Cesium.Cartesian2(0, -35),
+            style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+          },
+        });
+      });
+      viewer.dataSources.add(roiDS);
+      viewer.cesiumDataSourcesRef.set('roi_demo', roiDS);
+    }
+
+    // Store data sources reference
+    if (viewer.cesiumDataSourcesRef) {
+      viewer.cesiumDataSourcesRef.forEach((ds: any, id: string) => {
+        viewer.dataSources._dataSources.forEach((viewerDs: any) => {
+          if (viewerDs.name === id) {
+            (viewer as any).layerDataSources = (viewer as any).layerDataSources || new Map();
+            (viewer as any).layerDataSources.set(id as LayerType, viewerDs);
+          }
+        });
+      });
+    }
+  } catch (error) {
+    console.error('Error loading geometry:', error);
+  }
+}
+
+/**
+ * Flatten coordinate array for Cesium
+ */
+function flattenCoordinates(coords: number[][]): number[] {
+  return coords.flatMap((coord) => [coord[0], coord[1]]);
+}
+
+/**
+ * Create Cesium Color from ColorConfig
+ */
+function createCesiumColor(color: any) {
+  const Cesium = window.Cesium;
+  return new Cesium.Color(color.r / 255, color.g / 255, color.b / 255, color.a / 255);
+}
+
+/**
+ * Create a simple billboard from emoji text
+ */
+function createTextBillboard(text: string, size: number): string {
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  if (ctx) {
+    ctx.font = `${size}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, size / 2, size / 2);
+  }
+  return canvas.toDataURL();
+}

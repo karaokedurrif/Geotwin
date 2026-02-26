@@ -1,0 +1,97 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ═══════════════════════════════════════════════════════════
+   GEOTWIN BENTO LIGHT DESIGN TOKENS — Phase 1
+   ═════════════════════════════════════════════════════════ */
+:root {
+  /* Surfaces */
+  --gt-bg: #f7f6f3;
+  --gt-surface: #ffffff;
+  --gt-surface-raised: #faf9f7;
+  --gt-surface-sunken: #f0ede8;
+
+  /* Borders */
+  --gt-border: #e4e1da;
+  --gt-border-strong: #ccc9c0;
+
+  /* Text */
+  --gt-text-1: #181714;   /* primary */
+  --gt-text-2: #5c5954;   /* secondary */
+  --gt-text-3: #9c9892;   /* muted */
+
+  /* Brand colors */
+  --gt-green: #1a5e35;        /* deep forest green */
+  --gt-green-mid: #2d8653;
+  --gt-green-light: #e8f3ec;
+  --gt-green-border: rgba(45,134,83,0.2);
+
+  /* Data accent */
+  --gt-cyan: #0e7490;
+  --gt-cyan-light: #ecfeff;
+  --gt-gold: #92400e;
+  --gt-gold-light: #fffbeb;
+
+  /* Phase badges */
+  --gt-phase-2: #6b21a8;
+  --gt-phase-3: #1d4ed8;
+
+  /* Shadows */
+  --gt-shadow-xs: 0 1px 2px rgba(0,0,0,0.04);
+  --gt-shadow-sm: 0 1px 4px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
+  --gt-shadow-md: 0 4px 16px rgba(0,0,0,0.08);
+
+  /* Typography */
+  --gt-font-sans: 'DM Sans', 'Geist', system-ui, -apple-system, sans-serif;
+  --gt-font-mono: 'DM Mono', 'Geist Mono', 'JetBrains Mono', monospace;
+
+  /* Geometry */
+  --gt-radius-sm: 5px;
+  --gt-radius-md: 9px;
+  --gt-radius-lg: 13px;
+  --gt-radius-xl: 16px;
+}
+
+body {
+  @apply bg-climate-darker text-gray-100;
+}
+
+.cesium-viewer {
+  width: 100%;
+  height: 100%;
+}
+
+.cesium-viewer-toolbar,
+.cesium-viewer-geocoderContainer,
+.cesium-viewer-selectionIndicatorContainer,
+.cesium-viewer-infoBoxContainer {
+  display: none !important;
+}
+
+/* Tile Mode: Premium 3D diorama effect */
+.cesium-viewer.tile-mode {
+  position: relative;
+  border-radius: 12px;
+  box-shadow: 
+    0 20px 60px rgba(0, 0, 0, 0.5),
+    0 10px 30px rgba(0, 0, 0, 0.3);
+}
+
+.cesium-viewer.tile-mode::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  border-radius: 12px;
+  pointer-events: none;
+  background: radial-gradient(
+    ellipse at center,
+    transparent 20%,
+    rgba(0, 0, 0, 0.2) 70%,
+    rgba(0, 0, 0, 0.5) 100%
+  );
+  z-index: 10;
+}

@@ -1,0 +1,35 @@
+{
+  "name": "@geotwin/cli",
+  "version": "0.1.0",
+  "description": "GeoTwin CLI - Friendly command-line interface for creating digital twins",
+  "type": "module",
+  "bin": {
+    "geotwin": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "geotwin": "node dist/index.js"
+  },
+  "dependencies": {
+    "chalk": "^5.3.0",
+    "inquirer": "^9.2.12",
+    "ora": "^8.0.1",
+    "dotenv": "^16.3.1",
+    "commander": "^11.1.0",
+    "node-fetch": "^3.3.2"
+  },
+  "devDependencies": {
+    "@types/inquirer": "^9.0.7",
+    "@types/node": "^20.10.5",
+    "typescript": "^5.3.3"
+  },
+  "keywords": [
+    "geotwin",
+    "digital-twin",
+    "gis",
+    "cli"
+  ],
+  "author": "GeoTwin Team",
+  "license": "MIT"
+}

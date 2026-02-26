@@ -1,0 +1,36 @@
+{
+  "name": "@geotwin/api",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "tsx src/server.ts",
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "typecheck": "tsc --noEmit",
+    "lint": "echo 'Lint configured'"
+  },
+  "dependencies": {
+    "@fastify/cors": "^8.5.0",
+    "@fastify/multipart": "^8.1.0",
+    "@geotwin/types": "workspace:*",
+    "@turf/area": "^6.5.0",
+    "@turf/bbox": "^6.5.0",
+    "@turf/boolean-point-in-polygon": "^6.5.0",
+    "@turf/buffer": "^7.3.4",
+    "@turf/centroid": "^6.5.0",
+    "@turf/helpers": "^6.5.0",
+    "@turf/square-grid": "^6.5.0",
+    "axios": "^1.13.5",
+    "dotenv": "^17.3.1",
+    "fast-xml-parser": "^4.3.4",
+    "fastify": "^4.26.0",
+    "get-port": "^7.1.0",
+    "jszip": "^3.10.1",
+    "nanoid": "^3.3.7"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.3"
+  }
+}

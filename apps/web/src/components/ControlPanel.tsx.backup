@@ -1,0 +1,553 @@
+import { useEffect, useRef, useState } from 'react';
+import type { TwinRecipe, LayerType, StylePreset } from '@geotwin/types';
+import { uploadCadastralFile, loadSampleData } from '@/lib/api';
+
+type ServiceStatus = 'idle' | 'loading' | 'success' | 'error' | 'fallback';
+
+interface ServiceStatusInfo {
+  status: ServiceStatus;
+  message?: string;
+}
+
+interface ControlPanelProps {
+  onRecipeLoaded: (recipe: TwinRecipe) => void;
+  recipe: TwinRecipe | null;
+  enabledLayers: Set<LayerType>;
+  onToggleLayer: (layerId: LayerType) => void;
+  terrainEnabled: boolean;
+  onToggleTerrain: () => void;
+  terrainSource?: 'world' | 'mdt02';
+  onTerrainSourceChange?: (source: 'world' | 'mdt02') => void;
+  realNDVIEnabled: boolean;
+  onToggleRealNDVI: () => void;
+  pnoaImageryEnabled?: boolean;
+  onTogglePNOAImagery?: () => void;
+  ndviDate?: string;
+  onNDVIDateChange?: (date: string) => void;
+  onRecenterCamera?: () => void;
+  onIsometricView?: () => void;
+  onExportParcel?: () => void;
+  recenterEnabled?: boolean;
+  exportEnabled?: boolean;
+  framingMargin?: number;
+  onFramingMarginChange?: (margin: number) => void;
+  viewerLogs?: string[];
+  terrainStatus?: ServiceStatusInfo;
+  imageryStatus?: ServiceStatusInfo;
+  ndviStatus?: ServiceStatusInfo;
+  onToggleBuildings?: () => void;
+  parcelStatus?: {
+    loaded: boolean;
+    centroid?: [number, number];
+    radiusMeters?: number;
+    wasReprojected?: boolean;
+    sourceEPSG?: string;
+    error?: string;
+  };
+  viewerStatus?: { isOffline?: boolean }; // Full viewer status for offline detection
+}
+
+export default function ControlPanel({
+  onRecipeLoaded,
+  recipe,
+  enabledLayers,
+  onToggleLayer,
+  terrainEnabled,
+  onToggleTerrain,
+  terrainSource = 'world',
+  onTerrainSourceChange,
+  realNDVIEnabled,
+  onToggleRealNDVI,
+  pnoaImageryEnabled = false,
+  onTogglePNOAImagery,
+  ndviDate,
+  onNDVIDateChange,
+  onRecenterCamera,
+  onIsometricView,
+  onExportParcel,
+  recenterEnabled,
+  exportEnabled = false,
+  framingMargin = 1.45,
+  onFramingMarginChange,
+  viewerLogs = [],
+  terrainStatus = { status: 'idle' },
+  imageryStatus = { status: 'idle' },
+  ndviStatus = { status: 'idle' },
+  onToggleBuildings,
+  parcelStatus,
+  viewerStatus,
+}: ControlPanelProps) {
+  const isParcelReady = parcelStatus?.loaded === true && (parcelStatus?.radiusMeters ?? 0) > 0;
+  const canRecenter = recenterEnabled ?? isParcelReady;
+  
+  // Temporal debugging
+  console.log('Parcel Ready:', parcelStatus);
+  const [preset, setPreset] = useState<StylePreset>('dehesa');
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [logs, setLogs] = useState<string[]>(['Ready. Select a file or load sample data.']);
+  const [loading, setLoading] = useState(false);
+  const [buildingsEnabled, setBuildingsEnabled] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isOnline, setIsOnline] = useState(true);
+
+  useEffect(() => {
+    if (typeof navigator === 'undefined') return;
+    const updateStatus = () => setIsOnline(navigator.onLine);
+    updateStatus();
+
+    window.addEventListener('online', updateStatus);
+    window.addEventListener('offline', updateStatus);
+    return () => {
+      window.removeEventListener('online', updateStatus);
+      window.removeEventListener('offline', updateStatus);
+    };
+  }, []);
+
+  // Combine control panel logs with viewer logs
+  const allLogs = [...logs, ...viewerLogs];
+
+  const addLog = (message: string) => {
+    setLogs((prev) => [...prev.slice(-4), `[${new Date().toLocaleTimeString()}] ${message}`]);
+  };
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setSelectedFile(file);
+      addLog(`Selected: ${file.name} (${(file.size / 1024).toFixed(1)} KB)`);
+    }
+  };
+
+  const handleGenerateTwin = async () => {
+    if (!selectedFile) {
+      addLog('Error: No file selected');
+      return;
+    }
+
+    setLoading(true);
+    addLog(`Uploading ${selectedFile.name}...`);
+
+    try {
+      const recipe = await uploadCadastralFile({
+        file: selectedFile,
+        preset,
+        onProgress: addLog,
+      });
+
+      addLog(`✓ Twin generated: ${recipe.twinId}`);
+      onRecipeLoaded(recipe);
+    } catch (err) {
+      addLog(`✗ Error: ${err instanceof Error ? err.message : 'Upload failed'}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleLoadSample = async () => {
+    setLoading(true);
+    addLog('Loading sample cadastral data...');
+
+    try {
+      const recipe = await loadSampleData({
+        preset,
+        onProgress: addLog,
+      });
+
+      addLog(`✓ Sample loaded: ${recipe.twinId}`);
+      onRecipeLoaded(recipe);
+    } catch (err) {
+      addLog(`✗ Error: ${err instanceof Error ? err.message : 'Failed to load sample'}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleReset = () => {
+    setSelectedFile(null);
+    setLogs(['Ready. Select a file or load sample data.']);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  // Render status badge
+  const renderStatusBadge = (status: ServiceStatus, message?: string, isOffline?: boolean) => {
+    const colors = {
+      idle: 'bg-gray-700 text-gray-400',
+      loading: 'bg-yellow-600 text-yellow-100 animate-pulse',
+      success: 'bg-green-600 text-green-100',
+      error: 'bg-red-600 text-red-100',
+      fallback: 'bg-orange-600 text-orange-100',
+    };
+
+    const icons = {
+      idle: '○',
+      loading: '⏳',
+      success: '✓',
+      error: '✗',
+      fallback: '⚠',
+    };
+
+    // Override display if offline
+    const displayStatus = isOffline && status === 'fallback' ? 'OFFLINE' : status.toUpperCase();
+    const displayIcon = isOffline && status === 'fallback' ? '🔴' : icons[status];
+
+    return (
+      <span 
+        className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${colors[status]}`}
+        title={message}
+      >
+        {displayIcon} {displayStatus}
+      </span>
+    );
+  };
+
+  return (
+    <div className="w-80 bg-climate-dark border-r border-gray-800 flex flex-col h-full overflow-hidden">
+      {/* Header */}
+      <div className="border-b border-gray-800 p-4">
+        <h2 className="text-lg font-bold text-climate-accent">GeoTwin Control</h2>
+        <p className="text-xs text-gray-500 mt-1">v0.1.0 MVP</p>
+        <div className="mt-2">
+          <span
+            className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold ${
+              isOnline ? 'bg-green-900/70 text-green-200' : 'bg-red-900/70 text-red-200'
+            }`}
+          >
+            {isOnline ? '● Online' : '● Offline'}
+          </span>
+        </div>
+      </div>
+
+      {/* Scrollable Content */}
+      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        {(!isOnline || viewerStatus?.isOffline) && (
+          <div className="bg-red-900/30 border border-red-700 text-red-200 text-xs rounded px-3 py-2">
+            <div className="font-semibold mb-1">🔴 OFFLINE MODE</div>
+            <div className="text-[10px] leading-tight">
+              Cannot load terrain/imagery/NDVI tiles.
+              <br />
+              <strong>Fix:</strong> DevTools → Network → No throttling (disable Offline)
+            </div>
+          </div>
+        )}
+        {/* Preset Selection */}
+        <div className="space-y-2">
+          <label className="text-xs font-semibold text-gray-400 uppercase tracking-wide">
+            Preset
+          </label>
+          <select
+            value={preset}
+            onChange={(e) => setPreset(e.target.value as StylePreset)}
+            className="w-full bg-climate-darker border border-gray-700 rounded px-3 py-2 text-sm focus:border-climate-accent focus:outline-none"
+            disabled={loading}
+          >
+            <option value="mountain">🏔️ Mountain</option>
+            <option value="dehesa">🌳 Dehesa</option>
+            <option value="mediterranean">🫒 Mediterranean</option>
+          </select>
+        </div>
+
+        {/* File Upload */}
+        <div className="space-y-2">
+          <label className="text-xs font-semibold text-gray-400 uppercase tracking-wide">
+            Upload Cadastral File
+          </label>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".kml,.gml,.zip"
+            onChange={handleFileSelect}
+            className="hidden"
+            id="file-upload"
+            disabled={loading}
+          />
+          <label
+            htmlFor="file-upload"
+            className="block w-full px-3 py-2 border border-dashed border-gray-700 rounded text-xs text-center cursor-pointer hover:border-climate-accent transition"
+          >
+            {selectedFile ? (
+              <span className="text-climate-accent">📄 {selectedFile.name}</span>
+            ) : (
+              <span className="text-gray-500">Click to select KML/GML/ZIP</span>
+            )}
+          </label>
+        </div>
+
+        {/* Action Buttons */}
+        <div className="space-y-2">
+          <button
+            onClick={handleGenerateTwin}
+            disabled={!selectedFile || loading}
+            className="w-full bg-climate-accent hover:bg-climate-accent-bright disabled:bg-gray-700 disabled:cursor-not-allowed px-4 py-3 rounded font-semibold text-sm transition shadow-lg disabled:shadow-none"
+          >
+            {loading ? '⏳ Processing...' : '▶ Generate Twin'}
+          </button>
+
+          <button
+            onClick={handleLoadSample}
+            disabled={loading}
+            className="w-full bg-gray-700 hover:bg-gray-600 disabled:bg-gray-800 disabled:cursor-not-allowed px-4 py-2 rounded text-sm transition"
+          >
+            Load Sample Data
+          </button>
+
+          {recipe && (
+            <button
+              onClick={handleReset}
+              disabled={loading}
+              className="w-full bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded text-xs transition"
+            >
+              ↻ New Upload
+            </button>
+          )}
+        </div>
+
+        {/* Layer Toggles (only show if recipe loaded) */}
+        {recipe && (
+          <div className="space-y-2">
+            <label className="text-xs font-semibold text-gray-400 uppercase tracking-wide">
+              Layers
+            </label>
+            <div className="space-y-1">
+              {recipe.layers.map((layer: LayerType | any) => (
+                <label
+                  key={layer.id}
+                  className="flex items-center space-x-2 px-2 py-1.5 rounded hover:bg-climate-darker cursor-pointer"
+                >
+                  <input
+                    type="checkbox"
+                    checked={enabledLayers.has(layer.id)}
+                    onChange={() => onToggleLayer(layer.id)}
+                    className="form-checkbox h-4 w-4 text-climate-accent rounded border-gray-700 bg-climate-darker focus:ring-climate-accent"
+                  />
+                  <span className="text-sm flex-1">{layer.name}</span>
+                </label>
+              ))}
+              
+              {/* Buildings Layer Toggle */}
+              <label
+                className="flex items-center space-x-2 px-2 py-1.5 rounded hover:bg-climate-darker cursor-pointer"
+              >
+                <input
+                  type="checkbox"
+                  checked={buildingsEnabled}
+                  onChange={() => {
+                    setBuildingsEnabled(!buildingsEnabled);
+                    onToggleBuildings?.();
+                  }}
+                  className="form-checkbox h-4 w-4 text-climate-accent rounded border-gray-700 bg-climate-darker focus:ring-climate-accent"
+                />
+                <span className="text-sm flex-1">🏢 Buildings (GML)</span>
+              </label>
+            </div>
+          </div>
+        )}
+
+        {/* Terrain Toggle */}
+        <div className="space-y-2">
+          <label className="text-xs font-semibold text-gray-400 uppercase tracking-wide">
+            Visualization
+          </label>
+          
+          {/* Framing Margin Slider */}
+          {recipe && onFramingMarginChange && (
+            <div className="space-y-1">
+              <label className="text-xs text-gray-400 flex justify-between">
+                <span>🎯 Framing</span>
+                <span className="font-mono">{framingMargin.toFixed(2)}x</span>
+              </label>
+              <input
+                type="range"
+                min="1.1"
+                max="2.0"
+                step="0.05"
+                value={framingMargin}
+                onChange={(e) => onFramingMarginChange(parseFloat(e.target.value))}
+                className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer slider"
+                title="Adjust camera framing (1.1 = tight, 2.0 = wide)"
+              />
+              <div className="flex justify-between text-[10px] text-gray-500">
+                <span>Tight</span>
+                <span>Wide</span>
+              </div>
+            </div>
+          )}
+          
+          {/* Recenter Camera Button */}
+          {recipe && onRecenterCamera && (
+            <button
+              onClick={onRecenterCamera}
+              disabled={!canRecenter}
+              className="w-full bg-gray-700 hover:bg-gray-600 disabled:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-50 px-3 py-2 rounded text-sm transition flex items-center justify-center gap-2"
+              title={canRecenter ? "Recenter camera on parcel" : "Load a parcel first"}
+            >
+              🎯 Recenter Camera
+            </button>
+          )}
+
+          {recipe && onIsometricView && (
+            <button
+              onClick={onIsometricView}
+              disabled={!canRecenter}
+              className="w-full bg-blue-700 hover:bg-blue-600 disabled:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-50 px-3 py-2 rounded text-sm transition flex items-center justify-center gap-2"
+              title={canRecenter ? "Isometric view of parcel" : "Load a parcel first"}
+            >
+              📐 Isometric View
+            </button>
+          )}
+
+          {/* Save Twin Button */}
+          {recipe && onExportParcel && (
+            <button
+              onClick={onExportParcel}
+              disabled={!exportEnabled}
+              className="w-full bg-green-700 hover:bg-green-600 disabled:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-50 px-3 py-2 rounded text-sm transition flex items-center justify-center gap-2"
+              title={exportEnabled ? "Save complete twin snapshot (parcel + sensors + cattle + camera)" : "Load a parcel first"}
+            >
+              💾 Save Twin
+            </button>
+          )}
+
+          {/* Parcel Status Info */}
+          {parcelStatus?.loaded && parcelStatus.centroid && (
+            <div className="bg-climate-darker border border-gray-700 rounded p-2 text-xs space-y-1">
+              <div className="text-gray-400 font-semibold">📍 Parcel Info</div>
+              <div className="text-gray-300 font-mono">
+                Centroid: [{parcelStatus.centroid[0].toFixed(5)}, {parcelStatus.centroid[1].toFixed(5)}]
+              </div>
+              {parcelStatus.radiusMeters && (
+                <div className="text-gray-300 font-mono">
+                  Radius: {parcelStatus.radiusMeters.toFixed(0)}m
+                </div>
+              )}
+              {parcelStatus.wasReprojected && parcelStatus.sourceEPSG && (
+                <div className="text-yellow-400 font-mono text-[10px]">
+                  ⚠ Reprojected from {parcelStatus.sourceEPSG}
+                </div>
+              )}
+            </div>
+          )}
+          {parcelStatus?.error && (
+            <div className="bg-red-900/30 border border-red-700 text-red-200 text-[11px] rounded px-2 py-1">
+              {parcelStatus.error}
+            </div>
+          )}
+
+          {/* Terrain Toggle */}
+          <div className="space-y-1">
+            <label className="flex items-center space-x-2 px-2 py-1.5 rounded hover:bg-climate-darker cursor-pointer">
+              <input
+                type="checkbox"
+                checked={terrainEnabled}
+                onChange={onToggleTerrain}
+                className="form-checkbox h-4 w-4 text-climate-accent rounded border-gray-700 bg-climate-darker focus:ring-climate-accent"
+              />
+              <span className="text-sm flex-1">🏔️ Real Terrain & Slopes</span>
+              {renderStatusBadge(terrainStatus.status, terrainStatus.message, viewerStatus?.isOffline)}
+            </label>
+            
+            {/* Terrain Source Selector */}
+            {terrainEnabled && onTerrainSourceChange && (
+              <div className="ml-6 space-y-1 mt-2">
+                <div className="text-xs text-gray-400 mb-1">Terrain Source:</div>
+                <label className="flex items-center space-x-2 px-2 py-1 rounded hover:bg-climate-darker cursor-pointer">
+                  <input
+                    type="radio"
+                    name="terrainSource"
+                    value="world"
+                    checked={terrainSource === 'world'}
+                    onChange={() => onTerrainSourceChange('world')}
+                    className="form-radio h-3 w-3 text-climate-accent border-gray-700 bg-climate-darker focus:ring-climate-accent"
+                  />
+                  <span className="text-xs text-gray-300">Cesium World Terrain</span>
+                </label>
+                <label className="flex items-center space-x-2 px-2 py-1 rounded hover:bg-climate-darker cursor-pointer">
+                  <input
+                    type="radio"
+                    name="terrainSource"
+                    value="mdt02"
+                    checked={terrainSource === 'mdt02'}
+                    onChange={() => onTerrainSourceChange('mdt02')}
+                    className="form-radio h-3 w-3 text-climate-accent border-gray-700 bg-climate-darker focus:ring-climate-accent"
+                  />
+                  <span className="text-xs text-gray-300">Local MDT02 (CNIG)</span>
+                </label>
+                {terrainSource === 'mdt02' && terrainStatus?.status === 'error' && (
+                  <div className="text-[10px] text-yellow-400 px-2 py-1 bg-yellow-900/20 rounded mt-1">
+                    ⚠️ {terrainStatus.message || 'MDT02 tiles not found'}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* PNOA Imagery Toggle */}
+          {recipe && onTogglePNOAImagery && (
+            <div className="space-y-1">
+              <label className="flex items-center space-x-2 px-2 py-1.5 rounded hover:bg-climate-darker cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={pnoaImageryEnabled}
+                  onChange={onTogglePNOAImagery}
+                  className="form-checkbox h-4 w-4 text-climate-accent rounded border-gray-700 bg-climate-darker focus:ring-climate-accent"
+                />
+                <span className="text-sm flex-1">📷 PNOA Imagery (IGN)</span>
+                {renderStatusBadge(imageryStatus.status, imageryStatus.message, viewerStatus?.isOffline)}
+              </label>
+            </div>
+          )}
+
+          {/* Real NDVI Toggle */}
+          {recipe && (
+            <div className="space-y-1">
+              <label className="flex items-center space-x-2 px-2 py-1.5 rounded hover:bg-climate-darker cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={realNDVIEnabled}
+                  onChange={onToggleRealNDVI}
+                  className="form-checkbox h-4 w-4 text-climate-accent rounded border-gray-700 bg-climate-darker focus:ring-climate-accent"
+                />
+                <span className="text-sm flex-1">🛰️ Real NDVI (Sentinel-2)</span>
+                {renderStatusBadge(ndviStatus.status, ndviStatus.message)}
+              </label>
+              
+              {/* Date Picker for NDVI */}
+              {realNDVIEnabled && onNDVIDateChange && (
+                <div className="ml-6 mt-1">
+                  <label className="text-xs text-gray-400 block mb-1">Date:</label>
+                  <input
+                    type="date"
+                    value={ndviDate || new Date().toISOString().split('T')[0]}
+                    onChange={(e) => onNDVIDateChange(e.target.value)}
+                    max={new Date().toISOString().split('T')[0]}
+                    className="w-full bg-climate-darker border border-gray-700 rounded px-2 py-1 text-xs focus:border-climate-accent focus:outline-none"
+                  />
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Logs */}
+        <div className="space-y-2">
+          <label className="text-xs font-semibold text-gray-400 uppercase tracking-wide">
+            Logs
+          </label>
+          <div className="bg-black/50 border border-gray-800 rounded p-2 font-mono text-xs h-32 overflow-y-auto">
+            {allLogs.slice(-15).map((log, i) => (
+              <div key={i} className={`whitespace-pre-wrap ${
+                log.startsWith('✓') ? 'text-green-400' :
+                log.startsWith('❌') ? 'text-red-400' :
+                log.startsWith('⚠') ? 'text-yellow-400' :
+                'text-gray-300'
+              }`}>
+                {log}
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
