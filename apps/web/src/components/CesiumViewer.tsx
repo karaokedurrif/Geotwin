@@ -717,26 +717,30 @@ export default function CesiumViewer({
             const entity = pickedObject.id;
             
             // Only handle our parcel entities (including the invisible clickable point)
-            if (entity.name === 'Cadastral Parcel' || 
-                entity.name === 'Parcel Outline' || 
-                entity.name === 'Parcel Label' ||
-                entity.name === 'Parcel Clickable Area') {
-              
+            // Check if the clicked entity belongs to the current parcel dataSource
+            const parcelDS = parcelDataSourceRef.current;
+            const isParcelEntity = parcelDS && parcelDS.entities.values.some((e: any) => e === entity);
+
+            if (isParcelEntity) {
               // Visual feedback: highlight polygon
-              const parcelDS = parcelDataSourceRef.current;
               if (parcelDS) {
-                // Find the polygon entity
+                // Find the first polygon entity in the dataSource
                 const polygonEntity = parcelDS.entities.values.find(
-                  (e: any) => e.name === 'Cadastral Parcel'
+                  (e: any) => e?.polygon
                 );
-                
+
                 if (polygonEntity && polygonEntity.polygon) {
-                  // Toggle highlight
+                  // Toggle highlight - handle both raw Cesium.Color and ColorMaterialProperty
                   const currentMaterial = polygonEntity.polygon.material;
-                  const currentColor = currentMaterial.getValue(Cesium.JulianDate.now());
-                  
+                  let currentColor: any;
+                  if (currentMaterial && typeof currentMaterial.getValue === 'function') {
+                    currentColor = currentMaterial.getValue(Cesium.JulianDate.now());
+                  } else {
+                    currentColor = currentMaterial;
+                  }
+
                   // Check if already highlighted (YELLOW)
-                  if (Cesium.Color.equals(currentColor, Cesium.Color.YELLOW.withAlpha(0.5))) {
+                  if (currentColor && Cesium.Color.equals(currentColor, Cesium.Color.YELLOW.withAlpha(0.5))) {
                     // Un-highlight: restore CYAN
                     polygonEntity.polygon.material = Cesium.Color.CYAN.withAlpha(0.35);
                     logMessage('Parcel deselected', 'info');
@@ -744,7 +748,6 @@ export default function CesiumViewer({
                     // Highlight: change to YELLOW
                     polygonEntity.polygon.material = Cesium.Color.YELLOW.withAlpha(0.5);
                     logMessage('✓ Parcel selected (click again to deselect)', 'success');
-                    
                   }
                 }
               }
@@ -754,15 +757,20 @@ export default function CesiumViewer({
             const parcelDS = parcelDataSourceRef.current;
             if (parcelDS) {
               const polygonEntity = parcelDS.entities.values.find(
-                (e: any) => e.name === 'Cadastral Parcel'
+                (e: any) => e?.polygon
               );
-              
+
               if (polygonEntity && polygonEntity.polygon) {
                 const currentMaterial = polygonEntity.polygon.material;
-                const currentColor = currentMaterial.getValue(Cesium.JulianDate.now());
-                
+                let currentColor: any;
+                if (currentMaterial && typeof currentMaterial.getValue === 'function') {
+                  currentColor = currentMaterial.getValue(Cesium.JulianDate.now());
+                } else {
+                  currentColor = currentMaterial;
+                }
+
                 // If highlighted, restore original color
-                if (Cesium.Color.equals(currentColor, Cesium.Color.YELLOW.withAlpha(0.5))) {
+                if (currentColor && Cesium.Color.equals(currentColor, Cesium.Color.YELLOW.withAlpha(0.5))) {
                   polygonEntity.polygon.material = Cesium.Color.CYAN.withAlpha(0.35);
                   logMessage('Parcel deselected (clicked background)', 'info');
                 }
@@ -856,8 +864,11 @@ export default function CesiumViewer({
     // === IMAGERY UPGRADE FUNCTION (WITH SESSION CHECK) ===
     async function upgradeImagery(viewer: any, Cesium: any, ionToken: string, session: number) {
       setViewerStatus(prev => ({ ...prev, imageryType: 'loading' }));
-      logMessage('Loading Ion imagery...', 'info');
+      logMessage('Loading imagery layers...', 'info');
       
+      let ionSuccess = false;
+      
+      // Try Ion Bing Maps imagery (optional - many accounts don't have asset 2)
       try {
         const imageryProvider = await withTimeout(
           Cesium.IonImageryProvider.fromAssetId(2),
@@ -887,48 +898,50 @@ export default function CesiumViewer({
         const baseLayer = layers.get(0);
         layers.remove(baseLayer);
         layers.addImageryProvider(imageryProvider, 0);
-
         attachImageryErrorHandler(imageryProvider, 'ion');
-
-        setViewerStatus(prev => ({ ...prev, imageryType: 'success' }));
-        logMessage('✓ Ion imagery loaded', 'success');
-        
-        // ── Add PNOA for Spain (high-resolution orthophoto) ──────────────
-        try {
-          const pnoaWMS = new Cesium.WebMapServiceImageryProvider({
-            url: 'https://www.ign.es/wms-inspire/pnoa-ma',
-            layers: 'OI.OrthoimageCoverage',
-            parameters: {
-              transparent: false,
-              format: 'image/png',
-              VERSION: '1.3.0',
-            },
-            rectangle: Cesium.Rectangle.fromDegrees(-9.5, 35.5, 4.5, 44.0), // Spain bounds
-            maximumLevel: 19,
-            credit: 'PNOA - IGN España',
-          });
-          
-          layers.addImageryProvider(pnoaWMS);
-          logMessage('✓ PNOA imagery added (IGN España)', 'success');
-        } catch (pnoaError) {
-          logMessage('PNOA imagery failed (optional)', 'warn');
-        }
+        ionSuccess = true;
+        logMessage('✓ Ion Bing Maps imagery loaded', 'success');
       } catch (error) {
         // Check if session is still valid
         if (currentSessionRef.current !== session) return;
 
         const errorMsg = error instanceof Error ? error.message : 'Unknown';
-        if (error instanceof TimeoutError) {
-          logMessage(`Ion imagery timeout (${TIMEOUTS.IMAGERY}ms) - using OSM`, 'warn');
-        } else if (isOfflineError(errorMsg)) {
-          if (shouldLog('imagery-timeout')) {
-            logMessage('Ion imagery offline - using OSM', 'warn');
-          }
-        } else {
-          logMessage(`Ion imagery failed: ${errorMsg} - using OSM`, 'warn');
-        }
-        handleConnectivityIssue('imagery', errorMsg);
+        logMessage(`Ion imagery unavailable (${errorMsg}) - keeping OSM base`, 'warn');
+        // OSM base layer (set during viewer init) remains active - that's fine
       }
+      
+      // Check session/viewer before adding PNOA
+      if (currentSessionRef.current !== session) return;
+      if (!viewer || viewer.isDestroyed() || !viewer.imageryLayers) return;
+      
+      // ── Always add PNOA for Spain (works without Ion, high-res orthophoto) ──
+      try {
+        const layers = viewer.imageryLayers;
+        const pnoaWMS = new Cesium.WebMapServiceImageryProvider({
+          url: 'https://www.ign.es/wms-inspire/pnoa-ma',
+          layers: 'OI.OrthoimageCoverage',
+          parameters: {
+            transparent: false,
+            format: 'image/png',
+            VERSION: '1.3.0',
+          },
+          rectangle: Cesium.Rectangle.fromDegrees(-9.5, 35.5, 4.5, 44.0), // Spain bounds
+          maximumLevel: 19,
+          credit: 'PNOA - IGN España',
+        });
+        
+        layers.addImageryProvider(pnoaWMS);
+        logMessage('✓ PNOA imagery added (IGN España)', 'success');
+      } catch (pnoaError) {
+        logMessage('PNOA imagery failed (optional)', 'warn');
+      }
+      
+      // Set final status - OSM + PNOA is perfectly good even without Ion
+      setViewerStatus(prev => ({ 
+        ...prev, 
+        imageryType: 'success',
+        imageryMessage: ionSuccess ? 'Bing Maps + PNOA' : 'OSM + PNOA España',
+      }));
     }
 
     // === TERRAIN UPGRADE FUNCTION (WITH SESSION CHECK) ===
@@ -937,10 +950,10 @@ export default function CesiumViewer({
       
       if (source === 'mdt02') {
         // ── MDT02 España from Cesium Ion ────────────────────────
-        logMessage('Loading MDT02 España Terrain (Ion Asset 4475150)...', 'info');
+        logMessage('Loading MDT02 España Terrain (Ion Asset 4475569)...', 'info');
         
         try {
-          const mdt02AssetId = parseInt(process.env.NEXT_PUBLIC_MDT02_ASSET_ID || '4475150');
+          const mdt02AssetId = parseInt(process.env.NEXT_PUBLIC_MDT02_ASSET_ID || '4475569');
           
           const terrainProvider = await withTimeout(
             Cesium.CesiumTerrainProvider.fromIonAssetId(mdt02AssetId, {
@@ -1237,19 +1250,16 @@ export default function CesiumViewer({
 
       if (terrainEnabled) {
         if (terrainSource === 'mdt02') {
-          // Load local MDT02 terrain
+          // Load MDT02 terrain from Cesium Ion
           setViewerStatus(prev => ({ ...prev, terrainType: 'loading' }));
-          logMessage('Enabling Local MDT02 terrain...', 'info');
+          logMessage('Enabling MDT02 terrain (Ion Asset 4475569)...', 'info');
           
           try {
-            const testResponse = await fetch('/terrain/mdt02/layer.json');
+            const mdt02AssetId = parseInt(process.env.NEXT_PUBLIC_MDT02_ASSET_ID || '4475569');
             
-            if (!testResponse.ok) {
-              throw new Error('Local terrain tiles not found. Run: pnpm terrain:build');
-            }
-            
-            const terrainProvider = await Cesium.CesiumTerrainProvider.fromUrl('/terrain/mdt02', {
+            const terrainProvider = await Cesium.CesiumTerrainProvider.fromIonAssetId(mdt02AssetId, {
               requestVertexNormals: true,
+              requestWaterMask: false,
             });
             
             // Check viewer still exists after async operation
@@ -1264,13 +1274,13 @@ export default function CesiumViewer({
             viewer.scene.globe.depthTestAgainstTerrain = true;
             viewer.terrainShadows = Cesium.ShadowMode.ENABLED;
             
-            setViewerStatus(prev => ({ 
-              ...prev, 
+            setViewerStatus(prev => ({
+              ...prev,
               terrainType: 'success',
               terrainSource: 'mdt02',
-              terrainMessage: 'CNIG MDT02 Local Terrain'
+              terrainMessage: 'CNIG MDT02 Ion Terrain'
             }));
-            logMessage('✓ Local MDT02 Terrain enabled', 'success');
+            logMessage('✓ MDT02 Ion Terrain enabled', 'success');
             
           } catch (error) {
             // Check viewer still exists
@@ -1283,8 +1293,8 @@ export default function CesiumViewer({
               }
               handleConnectivityIssue('terrain', errorMsg);
             } else {
-              console.warn(`⚠️ MDT02 terrain tiles not found. Falling back to Cesium World Terrain. ${errorMsg}`);
-              logMessage(`MDT02 tiles missing, falling back to World Terrain`, 'warn');
+              console.warn(`⚠️ MDT02 Ion terrain failed. Falling back to Cesium World Terrain. ${errorMsg}`);
+              logMessage(`MDT02 Ion terrain failed, falling back to World Terrain`, 'warn');
             }
             
             // Fall back to World Terrain if available
@@ -1317,11 +1327,12 @@ export default function CesiumViewer({
               } catch {
                 if (!viewer || viewer.isDestroyed()) return;
                 viewer.terrainProvider = new Cesium.EllipsoidTerrainProvider();
+                logMessage('World Terrain also unavailable - using flat terrain', 'warn');
                 setViewerStatus(prev => ({ 
                   ...prev, 
-                  terrainType: 'error',
+                  terrainType: 'fallback',
                   terrainSource: 'ellipsoid',
-                  terrainMessage: 'MDT02 unavailable, World Terrain failed'
+                  terrainMessage: 'Flat terrain (MDT02 & World Terrain unavailable)'
                 }));
               }
             } else {
@@ -1771,8 +1782,14 @@ async function flyToIsometric(
   
   // Sample terrain at parcel center for true ground height
   const centerCarto = Cesium.Cartographic.fromCartesian(boundingSphere.center);
-  
+
   try {
+    // EllipsoidTerrainProvider does not support sampleTerrainMostDetailed
+    // (it has no computeMaximumLevelAtPosition), so skip sampling and use fallback
+    if (!viewer.terrainProvider || viewer.terrainProvider instanceof Cesium.EllipsoidTerrainProvider) {
+      throw new Error('No real terrain provider available for sampling');
+    }
+
     // Sample terrain height asynchronously
     const [sampledCenter] = await Cesium.sampleTerrainMostDetailed(
       viewer.terrainProvider,
@@ -1785,6 +1802,10 @@ async function flyToIsometric(
     // Range: close enough to see terrain detail, far enough to see full parcel
     // For 134 ha (radius ~650m), target range ~1800-2200m
     const range = Math.max(radius * 2.0 * marginFactor, 400);
+
+    if (!sampledCenter) {
+      throw new Error('Terrain sampling returned no results');
+    }
 
     const centroidLon = Cesium.Math.toDegrees(sampledCenter.longitude);
     const centroidLat = Cesium.Math.toDegrees(sampledCenter.latitude);
