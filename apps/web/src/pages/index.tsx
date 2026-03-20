@@ -153,23 +153,21 @@ export default function Home() {
   };
 
   return (
-    <main className="h-screen w-screen overflow-hidden flex flex-col bg-climate-darker">
-      {/* Header */}
-      <header className="bg-climate-dark border-b border-gray-800 px-6 py-3 flex items-center justify-between z-20">
-        <div className="flex items-center space-x-3">
-          <div className="w-8 h-8 bg-climate-accent rounded-lg flex items-center justify-center text-xl">
-            🌍
+    <main className="h-screen w-screen overflow-hidden flex flex-col" style={{ background: '#1a1a1e', fontFamily: "'DM Sans', 'Inter', system-ui, sans-serif" }}>
+      {/* TopBar — compact 36px, estilo Blender */}
+      <header className="flex items-center justify-between z-20 px-3 flex-shrink-0" style={{ height: '36px', background: '#222226', borderBottom: '1px solid #2e2e34' }}>
+        <div className="flex items-center gap-2">
+          <div className="flex items-center justify-center rounded" style={{ width: '22px', height: '22px', background: '#10B981' }}>
+            <span style={{ fontSize: '13px', lineHeight: 1 }}>⬢</span>
           </div>
-          <div>
-            <h1 className="text-xl font-bold text-white">GeoTwin Engine</h1>
-            <p className="text-xs text-gray-500">Interactive 3D Geospatial Twins</p>
-          </div>
+          <span style={{ fontSize: '13px', fontWeight: 700, color: '#E8E8EC', letterSpacing: '-0.01em' }}>GeoTwin</span>
+          <span style={{ fontSize: '11px', color: '#6B6B73', fontWeight: 500 }}>Engine</span>
         </div>
         
         {recipe && (
-          <div className="text-right">
-            <div className="text-xs text-gray-500">Twin ID</div>
-            <div className="text-sm font-mono text-climate-accent">{recipe.twinId}</div>
+          <div className="flex items-center gap-3">
+            <span style={{ fontSize: '11px', color: '#6B6B73' }}>Twin</span>
+            <span style={{ fontSize: '11px', color: '#10B981', fontFamily: "'JetBrains Mono', monospace", fontWeight: 600 }}>{recipe.twinId.slice(0, 10)}</span>
           </div>
         )}
       </header>
@@ -211,7 +209,7 @@ export default function Home() {
         />
 
         {/* Right Viewer */}
-        <div className="flex-1 relative bg-black">
+        <div className="flex-1 relative" style={{ background: '#1a1a1e' }}>
           {recipe ? (
             <>
               <CesiumViewer 
@@ -231,7 +229,6 @@ export default function Home() {
                 onExportReady={setExportReady}
               />
               
-              {/* Bento Light HUDs */}
               <StatusHUD
                 terrainStatus={viewerStatus ? { status: viewerStatus.terrainType, message: viewerStatus.terrainMessage } : undefined}
                 imageryStatus={viewerStatus ? { status: viewerStatus.imageryType, message: viewerStatus.imageryMessage } : undefined}
@@ -249,11 +246,11 @@ export default function Home() {
             </>
           ) : (
             <div className="h-full flex items-center justify-center">
-              <div className="text-center space-y-2">
-                <div className="text-6xl mb-4">🌍</div>
-                <h2 className="text-2xl font-bold text-gray-400">No Twin Loaded</h2>
-                <p className="text-sm text-gray-600">
-                  Upload a cadastral file or load sample data
+              <div className="text-center space-y-3">
+                <div style={{ fontSize: '48px', opacity: 0.3 }}>⬢</div>
+                <h2 style={{ fontSize: '16px', fontWeight: 600, color: '#6B6B73' }}>No Twin Loaded</h2>
+                <p style={{ fontSize: '12px', color: '#45454D' }}>
+                  Sube un archivo KML o carga datos de ejemplo
                 </p>
               </div>
             </div>
