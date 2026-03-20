@@ -13,7 +13,7 @@ import styles from '@/styles/studio.module.css';
 // Cesium must be loaded client-side only
 const StudioViewer = dynamic(
   () => import('@/components/studio/StudioViewer'),
-  { ssr: false, loading: () => <div className="viewer-loading">Cargando visor 3D...</div> }
+  { ssr: false, loading: () => <div className={styles.viewerLoading}>Cargando visor 3D...</div> }
 );
 
 // 🎮 Simulator Mode - also client-side only (uses Cesium APIs)
