@@ -155,7 +155,7 @@ export default function StudioTopBar({
       const prompt = stylePrompts[stylePreset] || stylePrompts.natural;
       
       console.log('[Illustration] 🎨 Enviando a Replicate Flux...');
-      const res = await fetch('http://localhost:8001/generate-ai-illustration', {
+      const res = await fetch('/api/illustration', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

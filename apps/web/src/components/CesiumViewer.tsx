@@ -918,11 +918,11 @@ export default function CesiumViewer({
       try {
         const layers = viewer.imageryLayers;
         const pnoaWMS = new Cesium.WebMapServiceImageryProvider({
-          url: 'https://www.ign.es/wms-inspire/pnoa-ma',
+          url: '/api/pnoa',
           layers: 'OI.OrthoimageCoverage',
           parameters: {
             transparent: false,
-            format: 'image/png',
+            format: 'image/jpeg',
             VERSION: '1.3.0',
           },
           rectangle: Cesium.Rectangle.fromDegrees(-9.5, 35.5, 4.5, 44.0), // Spain bounds

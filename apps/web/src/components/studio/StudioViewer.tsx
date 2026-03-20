@@ -512,8 +512,8 @@ export default function StudioViewer({
           fullscreenButton: false,
           infoBox: false,
           selectionIndicator: false,
-          shadows: visualStyle.enableLighting,
-          terrainShadows: Cesium.ShadowMode.ENABLED,
+          shadows: false,
+          terrainShadows: Cesium.ShadowMode.RECEIVE_ONLY,
           // ❌❌❌ CRÍTICO para captura PNG de alta resolución ❌❌❌
           contextOptions: {
             webgl: {
@@ -629,11 +629,9 @@ export default function StudioViewer({
         viewer.scene.globe.preloadAncestors = true;  // Load parent tiles first
         viewer.scene.globe.preloadSiblings = true;   // Load adjacent tiles
         
-        // Enable terrain shadows (critical for relief visualization)
-        viewer.shadows = true;
-        viewer.terrainShadows = Cesium.ShadowMode.ENABLED;
-        viewer.shadowMap.maximumDistance = 10000.0;  // Sombras más lejanas
-        viewer.shadowMap.darkness = 0.8;  // Sombras MÁS OSCURAS para mejor contraste
+        // Enable terrain shadows (RECEIVE_ONLY avoids complex shadow-map shaders that crash on many GPUs)
+        viewer.shadows = false;
+        viewer.terrainShadows = Cesium.ShadowMode.RECEIVE_ONLY;
 
         // Set sun time (7:30am = VERY long shadows for maximum relief visibility)
         viewer.clock.currentTime = Cesium.JulianDate.fromIso8601(
