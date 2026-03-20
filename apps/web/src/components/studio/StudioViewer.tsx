@@ -621,7 +621,10 @@ export default function StudioViewer({
         // ── TERRAIN VISUALIZATION ENHANCEMENTS ──────────────────
         // Enable lighting for terrain shadows
         viewer.scene.globe.enableLighting = true;
-        viewer.scene.globe.depthTestAgainstTerrain = true;
+        // IMPORTANT: depthTestAgainstTerrain=false required when using verticalExaggeration > 1.0
+        // With exaggeration, clampToGround polylines render at non-exaggerated height and get
+        // depth-tested against the exaggerated terrain, making them invisible underground.
+        viewer.scene.globe.depthTestAgainstTerrain = false;
         
         // Terrain detail (LOWEST = max detail)  
         viewer.scene.globe.maximumScreenSpaceError = 0.8;  // ⬇️ REDUCED from 1.5 for better detail
@@ -801,64 +804,55 @@ export default function StudioViewer({
     const Cesium = window.Cesium;
     setHelicopterMode(true);
 
-    const centroidLon = snapshot.parcel.centroid[0];
-    const centroidLat = snapshot.parcel.centroid[1];
+    const [centroidLon, centroidLat] = snapshot.parcel.centroid;
     const areaHa = snapshot.parcel.area_ha ?? 100;
 
-    // Orbit parameters scaled to parcel size
-    const RADIUS_DEG = Math.max(0.003, Math.min(0.010, Math.sqrt(areaHa) * 0.0009));
-    const HEIGHT     = Math.max(200, Math.min(600, Math.sqrt(areaHa) * 45));
-    const SPEED      = 0.06;  // Degrees per frame — slow cinematic orbit
+    // Distance from center — scales with parcel area, same formula as other views
+    const distanceM = Math.max(700, Math.min(3000, Math.sqrt(areaHa) * 100));
+    const SPEED = 0.4; // Degrees per tick (20fps → ~8°/s → ~45s per full orbit)
 
-    // Initial flyTo to approach position
+    // lookAt pivot: the parcel centroid on the ground
+    // We'll orbit around it using HeadingPitchRange so the camera is always
+    // at the correct elevation regardless of terrain height (no absolute altitude needed).
+    const center = Cesium.Cartesian3.fromDegrees(centroidLon, centroidLat, 0);
+
+    let angle = 225; // Start viewing from SW (same as initial view)
+
+    // Placeholder: truthy non-null value signals "mode started, not stopped"
+    helicopterIntervalRef.current = -1 as any;
+
+    // Approach flight — use flyTo with complete callback (not setTimeout)
     viewer.camera.flyTo({
-      destination: Cesium.Cartesian3.fromDegrees(
-        centroidLon - RADIUS_DEG * 0.7,
-        centroidLat - RADIUS_DEG * 0.4,
-        HEIGHT + 100
-      ),
+      destination: Cesium.Cartesian3.fromDegrees(centroidLon, centroidLat, distanceM),
       orientation: {
-        heading: Cesium.Math.toRadians(45),
+        heading: Cesium.Math.toRadians(225),
         pitch:   Cesium.Math.toRadians(-30),
         roll:    0,
       },
-      duration: 3,
+      duration: 2.5,
+      complete: () => {
+        if (!helicopterIntervalRef.current) return; // stopped during approach
+
+        // Orbit loop: lookAt + HeadingPitchRange = always correct elevation
+        helicopterIntervalRef.current = setInterval(() => {
+          if (!viewer || viewer.isDestroyed()) { stopHelicopterMode(); return; }
+
+          angle += SPEED;
+          if (angle >= 360) angle -= 360;
+
+          viewer.camera.lookAt(
+            center,
+            new Cesium.HeadingPitchRange(
+              Cesium.Math.toRadians(angle),
+              Cesium.Math.toRadians(-30),  // 30° down — good terrain visibility
+              distanceM,
+            )
+          );
+        }, 50); // 20fps
+      },
     });
 
-    // Start orbit AFTER the initial flyTo completes (3s)
-    let angle = 45;
-    setTimeout(() => {
-      if (!helicopterIntervalRef.current) return; // mode was stopped during flyTo
-      helicopterIntervalRef.current = setInterval(() => {
-        if (!viewer || viewer.isDestroyed()) {
-          stopHelicopterMode();
-          return;
-        }
-
-        angle += SPEED;
-        if (angle > 360) angle -= 360;
-
-        const rad = Cesium.Math.toRadians(angle);
-
-        viewer.camera.setView({
-          destination: Cesium.Cartesian3.fromDegrees(
-            centroidLon + Math.cos(rad) * RADIUS_DEG,
-            centroidLat + Math.sin(rad) * RADIUS_DEG * 0.6,
-            HEIGHT,
-          ),
-          orientation: {
-            heading: Cesium.Math.toRadians(angle + 180),
-            pitch:   Cesium.Math.toRadians(-25),
-            roll:    0,
-          },
-        });
-      }, 50);
-    }, 3200);
-
-    // Use a placeholder ref value during flyTo so the timeout check works
-    helicopterIntervalRef.current = -1 as any;
-
-    console.log('[StudioViewer] 🚁 Helicopter mode started — radius:', RADIUS_DEG.toFixed(4), 'height:', HEIGHT.toFixed(0) + 'm');
+    console.log('[StudioViewer] 🚁 Helicopter started — range:', distanceM.toFixed(0) + 'm');
   };
 
   const stopHelicopterMode = () => {
@@ -867,6 +861,12 @@ export default function StudioViewer({
       helicopterIntervalRef.current = null;
     }
     setHelicopterMode(false);
+    // Release the lookAt constraint so the user can control the camera again
+    const viewer = viewerRef.current;
+    if (viewer && !viewer.isDestroyed()) {
+      const Cesium = window.Cesium;
+      if (Cesium) viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
+    }
     console.log('[StudioViewer] 🚁 Helicopter mode stopped');
   };
 

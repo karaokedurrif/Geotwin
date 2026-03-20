@@ -250,7 +250,12 @@ async function applyBoundaryMask(
   // Proyectar coordenadas geográficas a píxeles de pantalla
   const screenPoints: Array<{x: number, y: number}> = [];
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  
+
+  // wgs84ToWindowCoordinates returns CSS-pixel coords.
+  // When resolutionScale > 1 the canvas backing store is larger by that factor,
+  // so we must multiply screen coords by the scale to match canvas device pixels.
+  const scale = viewer.resolutionScale ?? 1;
+
   for (const coord of coordinates) {
     const [lon, lat] = coord;
     const cartesian = Cesium.Cartesian3.fromDegrees(lon, lat, 0);
@@ -258,13 +263,15 @@ async function applyBoundaryMask(
       viewer.scene,
       cartesian
     );
-    
+
     if (screenPos) {
-      screenPoints.push({ x: screenPos.x, y: screenPos.y });
-      minX = Math.min(minX, screenPos.x);
-      minY = Math.min(minY, screenPos.y);
-      maxX = Math.max(maxX, screenPos.x);
-      maxY = Math.max(maxY, screenPos.y);
+      const sx = screenPos.x * scale;
+      const sy = screenPos.y * scale;
+      screenPoints.push({ x: sx, y: sy });
+      minX = Math.min(minX, sx);
+      minY = Math.min(minY, sy);
+      maxX = Math.max(maxX, sx);
+      maxY = Math.max(maxY, sy);
     }
   }
   

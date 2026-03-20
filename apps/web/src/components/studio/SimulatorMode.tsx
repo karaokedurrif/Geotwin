@@ -1,5 +1,5 @@
+'use client';
 import { useEffect, useState, useRef } from 'react';
-import * as Cesium from 'cesium';
 import type { TwinSnapshot } from '@/lib/twinStore';
 
 interface SimulatorModeProps {
@@ -13,7 +13,7 @@ type WeatherType = 'clear' | 'rain' | 'snow';
 
 interface CattleEntity {
   entity: any;
-  targetPosition: Cesium.Cartesian3;
+  targetPosition: any;  // Cesium.Cartesian3
   speed: number;
 }
 
@@ -44,43 +44,31 @@ export default function SimulatorMode({ viewerRef, snapshot, active }: Simulator
   // ============================================
   const startHelicopterOrbit = () => {
     if (!viewerRef || !snapshot.parcel.geojson) return;
+    const Cesium = window.Cesium;
+    if (!Cesium) return;
 
     const viewer = viewerRef;
-    const center = Cesium.Cartesian3.fromDegrees(
-      snapshot.parcel.centroid[0],  // lon
-      snapshot.parcel.centroid[1],  // lat
-      0
-    );
+    const [lon, lat] = snapshot.parcel.centroid;
+    const areaHa = snapshot.parcel.area_ha ?? 100;
+    const distanceM = Math.max(700, Math.min(3000, Math.sqrt(areaHa) * 100));
 
-    const radius = Math.max(snapshot.parcel.area_ha * 50, 500);  // Radio proporcional al tamaño
-    const height = 700;  // Altura helicóptero
+    const center = Cesium.Cartesian3.fromDegrees(lon, lat, 0);
 
     const animate = () => {
       if (!helicopterActive) return;
 
-      // Incrementar ángulo (0.3° por frame ≈ 2 min por órbita completa a 60fps)
       helicopterAngleRef.current += 0.3;
       if (helicopterAngleRef.current >= 360) helicopterAngleRef.current -= 360;
 
-      const angle = Cesium.Math.toRadians(helicopterAngleRef.current);
-
-      // Posición cámara en órbita circular
-      const offset = new Cesium.Cartesian3(
-        radius * Math.cos(angle),
-        radius * Math.sin(angle),
-        height
+      // lookAt+HeadingPitchRange: camera always at correct elevation above parcel
+      viewer.camera.lookAt(
+        center,
+        new Cesium.HeadingPitchRange(
+          Cesium.Math.toRadians(helicopterAngleRef.current),
+          Cesium.Math.toRadians(-25),
+          distanceM,
+        )
       );
-
-      const cameraPosition = Cesium.Cartesian3.add(center, offset, new Cesium.Cartesian3());
-
-      viewer.camera.setView({
-        destination: cameraPosition,
-        orientation: {
-          heading: angle + Math.PI / 2,  // Mirar tangente a la órbita
-          pitch: Cesium.Math.toRadians(-25),  // Inclinación hacia abajo
-          roll: 0,
-        },
-      });
 
       animationFrameRef.current = requestAnimationFrame(animate);
     };
@@ -93,6 +81,11 @@ export default function SimulatorMode({ viewerRef, snapshot, active }: Simulator
       cancelAnimationFrame(animationFrameRef.current);
       animationFrameRef.current = null;
     }
+    // Release lookAt lock so the user can control the camera again
+    const Cesium = window.Cesium;
+    if (Cesium && viewerRef && !viewerRef.isDestroyed?.()) {
+      viewerRef.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
+    }
   };
 
   // ============================================
@@ -100,6 +93,8 @@ export default function SimulatorMode({ viewerRef, snapshot, active }: Simulator
   // ============================================
   const changeSeason = (newSeason: Season) => {
     if (!viewerRef) return;
+    const Cesium = window.Cesium;
+    if (!Cesium) return;
 
     const viewer = viewerRef;
     const config = seasonDates[newSeason];
@@ -121,6 +116,8 @@ export default function SimulatorMode({ viewerRef, snapshot, active }: Simulator
   // ============================================
   const updateWeather = (newWeather: WeatherType) => {
     if (!viewerRef || !snapshot.parcel.geojson) return;
+    const Cesium = window.Cesium;
+    if (!Cesium) return;
 
     const viewer = viewerRef;
 
@@ -186,11 +183,25 @@ export default function SimulatorMode({ viewerRef, snapshot, active }: Simulator
   // ============================================
   const spawnCattle = () => {
     if (!viewerRef || !snapshot.parcel.geojson) return;
+    const Cesium = window.Cesium;
+    if (!Cesium) return;
 
     const viewer = viewerRef;
-    const geometry = snapshot.parcel.geojson.geometry;
-    const bounds = geometry.type === 'Polygon' 
-      ? geometry.coordinates[0] 
+
+    // Extract geometry — handle both FeatureCollection and direct Polygon
+    const geojson = snapshot.parcel.geojson;
+    let geometry: any = null;
+    if (geojson.type === 'FeatureCollection' && geojson.features?.[0]) {
+      geometry = geojson.features[0].geometry;
+    } else if (geojson.type === 'Feature') {
+      geometry = geojson.geometry;
+    } else if (geojson.type === 'Polygon' || geojson.type === 'MultiPolygon') {
+      geometry = geojson;
+    }
+    if (!geometry) return;
+
+    const bounds = geometry.type === 'Polygon'
+      ? geometry.coordinates[0]
       : geometry.coordinates[0][0];  // MultiPolygon
 
     // Calcular bounding box de la parcela
@@ -205,19 +216,19 @@ export default function SimulatorMode({ viewerRef, snapshot, active }: Simulator
     for (let i = 0; i < 25; i++) {
       const lon = minLon + Math.random() * (maxLon - minLon);
       const lat = minLat + Math.random() * (maxLat - minLat);
-      const height = 2;  // 2m sobre el terreno
 
-      const position = Cesium.Cartesian3.fromDegrees(lon, lat, height);
+      const position = Cesium.Cartesian3.fromDegrees(lon, lat, 0);
 
       const entity = viewer.entities.add({
         position: position,
         point: {
           pixelSize: 12,
-          color: i % 3 === 0 
+          color: i % 3 === 0
             ? Cesium.Color.BROWN      // Vacas marrones
             : Cesium.Color.WHITE,     // Ovejas blancas
           outlineColor: Cesium.Color.BLACK,
           outlineWidth: 2,
+          heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
         },
         label: {
           text: i % 3 === 0 ? '🐄' : '🐑',
@@ -225,13 +236,14 @@ export default function SimulatorMode({ viewerRef, snapshot, active }: Simulator
           verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
           pixelOffset: new Cesium.Cartesian2(0, -12),
           disableDepthTestDistance: Number.POSITIVE_INFINITY,
+          heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
         },
       });
 
       // Target inicial aleatorio
       const targetLon = minLon + Math.random() * (maxLon - minLon);
       const targetLat = minLat + Math.random() * (maxLat - minLat);
-      const targetPosition = Cesium.Cartesian3.fromDegrees(targetLon, targetLat, height);
+      const targetPosition = Cesium.Cartesian3.fromDegrees(targetLon, targetLat, 0);
 
       cattleEntitiesRef.current.push({
         entity,
@@ -245,6 +257,8 @@ export default function SimulatorMode({ viewerRef, snapshot, active }: Simulator
 
   const animateCattle = () => {
     if (!showCattle || !viewerRef) return;
+    const Cesium = window.Cesium;
+    if (!Cesium) return;
 
     cattleEntitiesRef.current.forEach((cattle) => {
       const currentPos = cattle.entity.position.getValue(Cesium.JulianDate.now());
@@ -258,10 +272,15 @@ export default function SimulatorMode({ viewerRef, snapshot, active }: Simulator
 
       if (distance < 5) {
         // Llegó al target, elegir nuevo target aleatorio
-        const geometry = snapshot.parcel.geojson.geometry;
-        const bounds = geometry.type === 'Polygon' 
-          ? geometry.coordinates[0] 
-          : geometry.coordinates[0][0];
+        const geojson = snapshot.parcel.geojson;
+        let geom: any = null;
+        if (geojson.type === 'FeatureCollection' && geojson.features?.[0]) geom = geojson.features[0].geometry;
+        else if (geojson.type === 'Feature') geom = geojson.geometry;
+        else if (geojson.type === 'Polygon' || geojson.type === 'MultiPolygon') geom = geojson;
+        if (!geom) return;
+        const bounds = geom.type === 'Polygon'
+          ? geom.coordinates[0]
+          : geom.coordinates[0][0];
         const lons = bounds.map((p: number[]) => p[0]);
         const lats = bounds.map((p: number[]) => p[1]);
         const minLon = Math.min(...lons);
@@ -271,7 +290,7 @@ export default function SimulatorMode({ viewerRef, snapshot, active }: Simulator
 
         const newLon = minLon + Math.random() * (maxLon - minLon);
         const newLat = minLat + Math.random() * (maxLat - minLat);
-        cattle.targetPosition = Cesium.Cartesian3.fromDegrees(newLon, newLat, 2);
+        cattle.targetPosition = Cesium.Cartesian3.fromDegrees(newLon, newLat, 0);
       } else {
         // Mover hacia el target
         const direction = Cesium.Cartesian3.subtract(cattle.targetPosition, currentPos, new Cesium.Cartesian3());
