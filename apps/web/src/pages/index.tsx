@@ -17,6 +17,7 @@ interface ViewerStatus {
   ndviStatus: { status: LoadingState; message?: string; size?: number };
   apiStatus: { healthy: boolean; latency?: number; error?: string };
   apiBaseUrl: string;
+  isOffline: boolean;
   parcelStatus?: {
     loaded: boolean;
     centroid?: [number, number];
@@ -241,7 +242,7 @@ export default function Home() {
               <ParcelBadge
                 twinId={recipe.twinId}
                 centroid={recipe.centroid}
-                radiusMeters={recipe.parcel_radius_m}
+                radiusMeters={viewerStatus?.parcelStatus?.radiusMeters}
                 wasReprojected={viewerStatus?.parcelStatus?.wasReprojected}
                 sourceEPSG={viewerStatus?.parcelStatus?.sourceEPSG}
               />

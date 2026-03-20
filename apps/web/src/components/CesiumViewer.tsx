@@ -146,6 +146,7 @@ export default function CesiumViewer({
     ndviStatus: { status: 'idle' },
     apiStatus: { healthy: false },
     apiBaseUrl: process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3001',
+    isOffline: false,
   });
 
   // Log helper
@@ -665,13 +666,18 @@ export default function CesiumViewer({
                 type: s.type as any,
                 lat: s.lat,
                 lon: s.lon,
-                status: 'active' as const,
+                status: 'ok' as const,
+                value: 0,
+                unit: '',
+                lastUpdate: new Date().toISOString(),
               })),
               cattle: cattle.map(c => ({
                 id: c.id,
                 lat: c.lat,
                 lon: c.lon,
                 weight: c.weight,
+                collarId: c.collarId,
+                health: c.health,
               })),
               layers,
               camera: {
@@ -2058,7 +2064,7 @@ function generateDemoSensors(center: [number, number], radiusM: number) {
       lat: center[1] + deltaLat,
       type: ['TEMP', 'NH3', 'CO2', 'MOISTURE'][i % 4],
       value: (Math.random() * 100).toFixed(1),
-      status: i === 3 ? 'warning' : 'ok',
+      status: (i === 3 ? 'warning' : 'ok') as 'ok' | 'warning' | 'error',
     });
   }
   return sensors;

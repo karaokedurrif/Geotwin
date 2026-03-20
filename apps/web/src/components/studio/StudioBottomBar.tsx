@@ -1,55 +1,79 @@
+import {
+  Mountain,
+  Radio,
+  CircleDot,
+  Building2,
+  Navigation,
+  Flame,
+  Glasses,
+  type LucideIcon,
+} from 'lucide-react';
 import type { TwinSnapshot } from '@/lib/twinStore';
 import styles from '@/styles/studio.module.css';
 
-type StudioMode = 'terrain' | 'iot' | 'cattle' | 'bim' | 'simulate';
+export type StudioMode = 'terrain' | 'iot' | 'ganado' | 'bim' | 'dron' | 'sim' | 'xr';
 
 interface ModeDefinition {
   id: StudioMode;
+  // Etiqueta en español para la UI
   label: string;
-  icon: string;
+  Icon: LucideIcon;
   desc: string;
   available: boolean;
   phase?: number;
 }
 
-const MODES: ModeDefinition[] = [
+const MODOS: ModeDefinition[] = [
   {
     id: 'terrain',
     label: 'Terreno',
-    icon: '⛰',
-    desc: 'Relieve, ortofoto, estilos visuales',
+    Icon: Mountain,
+    desc: 'Relieve, ortofoto MDT02+PNOA, estilos visuales',
     available: true,
   },
   {
     id: 'iot',
-    label: 'Sensores IoT',
-    icon: '📡',
-    desc: 'Red de sensores y telemetría',
-    available: false,
-    phase: 2,
+    label: 'IoT',
+    Icon: Radio,
+    desc: 'Red de sensores LoRa, gateways, cobertura',
+    available: true,
   },
   {
-    id: 'cattle',
+    id: 'ganado',
     label: 'Ganado',
-    icon: '🐄',
-    desc: 'Tracking GPS y salud animal',
-    available: false,
-    phase: 2,
+    Icon: CircleDot,
+    desc: 'Tracking GPS collares, alertas geofence',
+    available: true,
   },
   {
     id: 'bim',
     label: 'BIM',
-    icon: '🏗',
+    Icon: Building2,
     desc: 'Infraestructura 3D: naves, silos, fosas',
     available: false,
     phase: 3,
   },
   {
-    id: 'simulate',
-    label: 'Simulador',
-    icon: '🎮',
-    desc: 'Vuelo helicóptero, estaciones, clima, ganado animado',
-    available: true,  // ✅ ACTIVADO: Simulador de finca con dinámicas
+    id: 'dron',
+    label: 'Dron',
+    Icon: Navigation,
+    desc: 'Control virtual, ortofoto por sectores, misiones',
+    available: true,
+  },
+  {
+    id: 'sim',
+    label: 'Sim',
+    Icon: Flame,
+    desc: 'Simulación incendio, financiera, climática',
+    available: true,
+  },
+  {
+    id: 'xr',
+    label: 'XR',
+    Icon: Glasses,
+    desc: 'Mesa holográfica virtual + AR',
+    available: false,
+    phase: 4,
   },
 ];
 
@@ -66,31 +90,34 @@ export default function StudioBottomBar({
 }: StudioBottomBarProps) {
   return (
     <nav className={styles.studioBottomBar}>
-      {/* Mode tabs */}
-      {MODES.map((mode) => (
-        <button
-          key={mode.id}
-          className={`${styles.modeTab} ${
-            activeMode === mode.id ? styles.modeTabActive : ''
-          } ${!mode.available ? styles.modeTabLocked : ''}`}
-          onClick={() => mode.available && onModeChange(mode.id)}
-          title={mode.desc}
-          disabled={!mode.available}
-        >
-          <span className={styles.modeIcon}>{mode.icon}</span>
-          <span className={styles.modeLabel}>{mode.label}</span>
-          {!mode.available && (
-            <span className={styles.modePhaseBadge}>F{mode.phase}</span>
-          )}
-        </button>
-      ))}
+      {MODOS.map((modo) => {
+        const { Icon } = modo;
+        return (
+          <button
+            key={modo.id}
+            className={[
+              styles.modeTab,
+              activeMode === modo.id ? styles.modeTabActive : '',
+              !modo.available ? styles.modeTabLocked : '',
+            ].join(' ')}
+            onClick={() => modo.available && onModeChange(modo.id)}
+            title={modo.desc}
+            disabled={!modo.available}
+          >
+            <span className={styles.modeIcon}>
+              <Icon size={13} />
+            </span>
+            <span className={styles.modeLabel}>{modo.label}</span>
+            {!modo.available && (
+              <span className={styles.modePhaseBadge}>F{modo.phase}</span>
+            )}
+          </button>
+        );
+      })}
 
-      {/* Right side: camera controls (future) */}
       <div className={styles.bottomRight}>
         <div className={styles.twinStats}>
-          <span className={styles.statLabel}>
-            v{snapshot.version}
-          </span>
+          <span className={styles.statLabel}>v{snapshot.version}</span>
         </div>
       </div>
     </nav>

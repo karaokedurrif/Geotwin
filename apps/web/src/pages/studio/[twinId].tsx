@@ -3,9 +3,11 @@ import { useEffect, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { twinStore } from '@/lib/twinStore';
 import type { TwinSnapshot, VisualStyle } from '@/lib/twinStore';
+import type { StudioMode } from '@/components/studio/StudioBottomBar';
 import StudioTopBar from '@/components/studio/StudioTopBar';
 import StudioRightPanel from '@/components/studio/StudioRightPanel';
 import StudioBottomBar from '@/components/studio/StudioBottomBar';
+import StatusBar from '@/ui/shell/StatusBar';
 import styles from '@/styles/studio.module.css';
 
 // Cesium must be loaded client-side only
@@ -20,15 +22,13 @@ const SimulatorMode = dynamic(
   { ssr: false }
 );
 
-type StudioMode = 'terrain' | 'iot' | 'cattle' | 'bim' | 'simulate';
-
 const DEFAULT_VISUAL_STYLE: VisualStyle = {
   preset: 'default',
   fillColor: '#00d4ff',
   fillOpacity: 0.09,
   boundaryColor: '#f0c040',
   boundaryWidth: 2.0,
-  terrainExaggeration: 2.5, // Increased from 1.0 to make terrain relief visible
+  terrainExaggeration: 2.5,
   enableLighting: true,
   timeOfDay: new Date(2024, 0, 1, 8, 0, 0).toISOString(),
   atmosphereDensity: 1.0,
@@ -169,12 +169,12 @@ export default function TwinStudioPage() {
             onViewerReady={setViewerRef}
           />
           
-          {/* 🎮 Simulator Mode Overlay - only when active */}
-          {activeMode === 'simulate' && viewerRef && (
+          {/* Simulator Mode Overlay - activo solo en modo 'sim' */}
+          {activeMode === 'sim' && viewerRef && (
             <SimulatorMode
               viewerRef={viewerRef}
               snapshot={snapshot}
-              active={activeMode === 'simulate'}
+              active={activeMode === 'sim'}
             />
           )}
         </div>
@@ -199,12 +199,15 @@ export default function TwinStudioPage() {
         />
       </div>
 
-      {/* Bottom bar: mode switcher */}
+      {/* Bottom bar: selector de capas */}
       <StudioBottomBar
         activeMode={activeMode}
         snapshot={snapshot}
         onModeChange={setActiveMode}
       />
+
+      {/* Status bar: FPS, coords, altitud */}
+      <StatusBar viewerRef={viewerRef} version={snapshot.version} />
     </div>
   );
 }

@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { TwinSnapshot, VisualStyle } from '@/lib/twinStore';
 
-type StudioMode = 'terrain' | 'iot' | 'cattle' | 'bim' | 'simulate';
+import type { StudioMode } from './StudioBottomBar';
 
 interface StudioViewerProps {
   snapshot: TwinSnapshot;

@@ -1,4 +1,13 @@
 import { useState } from 'react';
+import {
+  ChevronLeft,
+  Image,
+  Palette,
+  FileImage,
+  Map,
+  Package,
+  Loader2,
+} from 'lucide-react';
 import type { TwinSnapshot, VisualStyle } from '@/lib/twinStore';
 import styles from '@/styles/studio.module.css';
 import IllustrationModal from './IllustrationModal';
@@ -193,15 +202,7 @@ export default function StudioTopBar({
       <header className={styles.studioTopBar}>
       {/* Left: back + breadcrumb */}
       <button className={styles.backBtn} onClick={onBackToCapture} title="Volver a Captura">
-        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-          <path
-            d="M9 2L4 7l5 5"
-            stroke="currentColor"
-            strokeWidth="1.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
+        <ChevronLeft size={14} />
       </button>
 
       <div className={styles.breadcrumb}>
@@ -235,10 +236,11 @@ export default function StudioTopBar({
           className={styles.actionBtn}
           onClick={() => handleCaptureHQ('current')}
           disabled={capturingHQ || !viewerRef}
-          style={{ background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)', fontWeight: 600 }}
+          style={{ borderColor: '#10B98160', color: capturingHQ ? '#10B981' : undefined }}
           title="Captura PNG 3x recortada al polígono, fondo transparente"
         >
-          {capturingHQ ? '⏳' : '📸'} HQ Contorno
+          {capturingHQ ? <Loader2 size={10} style={{ animation: 'spin 1s linear infinite' }} /> : <Image size={10} />}
+          HQ Contorno
         </button>
 
         {/* 2: Ilustración 3D — HQ Contorno → Replicate Flux */}
@@ -246,10 +248,11 @@ export default function StudioTopBar({
           className={styles.actionBtn}
           onClick={() => handleGenerateIllustration()}
           disabled={generatingIllustration || !viewerRef}
-          style={{ background: 'linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)', fontWeight: 600 }}
+          style={{ borderColor: '#6366f160', color: generatingIllustration ? '#6366f1' : undefined }}
           title="Genera ilustración artística isométrica via Replicate Flux"
         >
-          {generatingIllustration ? '⏳ Generando...' : '🎨 Ilustración 3D'}
+          {generatingIllustration ? <Loader2 size={10} style={{ animation: 'spin 1s linear infinite' }} /> : <Palette size={10} />}
+          {generatingIllustration ? 'Generando...' : 'Ilustración 3D'}
         </button>
 
         {/* 3: 4K Raw — canvas completo 5x para Photoshop */}
@@ -257,10 +260,11 @@ export default function StudioTopBar({
           className={styles.actionBtn}
           onClick={handleCapture4KRaw}
           disabled={capturingRaw || !viewerRef}
-          style={{ background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)', fontWeight: 600 }}
+          style={{ borderColor: '#F59E0B60', color: capturingRaw ? '#F59E0B' : undefined }}
           title="Captura PNG 5x del canvas completo para edición profesional"
         >
-          {capturingRaw ? '⏳' : '🖼️'} 4K Raw
+          {capturingRaw ? <Loader2 size={10} style={{ animation: 'spin 1s linear infinite' }} /> : <FileImage size={10} />}
+          4K Raw
         </button>
 
         {/* 4: Mapa Cenital — vista 90° desde arriba */}
@@ -268,15 +272,17 @@ export default function StudioTopBar({
           className={styles.actionBtn}
           onClick={handleCaptureCenital}
           disabled={capturingCenital || !viewerRef}
-          style={{ background: 'linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%)', fontWeight: 600 }}
+          style={{ borderColor: '#3B82F660', color: capturingCenital ? '#3B82F6' : undefined }}
           title="Vista cenital 90° para usar como mapa base en Digital Twin"
         >
-          {capturingCenital ? '⏳' : '🗺️'} Mapa Cenital
+          {capturingCenital ? <Loader2 size={10} style={{ animation: 'spin 1s linear infinite' }} /> : <Map size={10} />}
+          Mapa Cenital
         </button>
 
         {/* Exportar */}
-        <button className={styles.actionBtn} onClick={onExport}>
-          📦 Exportar
+        <button className={styles.actionBtn} onClick={onExport} title="Exportar snapshot JSON">
+          <Package size={10} />
+          Exportar
         </button>
       </div>
     </header>
