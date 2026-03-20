@@ -256,8 +256,8 @@ async function flyToParcelWithTerrain(
     center,
     new Cesium.HeadingPitchRange(
       Cesium.Math.toRadians(225),  // desde SW mirando NE (diagonal perfecta)
-      Cesium.Math.toRadians(-45),  // 45° abajo — VISTA EXTREMADAMENTE OBLICUA
-      distanceM * 0.8,  // 20% más cerca para ver mejor el relieve
+      Cesium.Math.toRadians(-35),  // 35° abajo — vista más aérea para ver la parcela completa
+      distanceM * 1.3,  // más amplio para ver bien la parcela en el encuadre inicial
     )
   );
   
@@ -513,7 +513,7 @@ export default function StudioViewer({
           infoBox: false,
           selectionIndicator: false,
           shadows: false,
-          terrainShadows: Cesium.ShadowMode.RECEIVE_ONLY,
+          terrainShadows: Cesium.ShadowMode.DISABLED,
           // ❌❌❌ CRÍTICO para captura PNG de alta resolución ❌❌❌
           contextOptions: {
             webgl: {
@@ -629,9 +629,9 @@ export default function StudioViewer({
         viewer.scene.globe.preloadAncestors = true;  // Load parent tiles first
         viewer.scene.globe.preloadSiblings = true;   // Load adjacent tiles
         
-        // Enable terrain shadows (RECEIVE_ONLY avoids complex shadow-map shaders that crash on many GPUs)
+        // Shadows disabled for GPU compatibility (complex shaders crash on many drivers)
         viewer.shadows = false;
-        viewer.terrainShadows = Cesium.ShadowMode.RECEIVE_ONLY;
+        viewer.terrainShadows = Cesium.ShadowMode.DISABLED;
 
         // Set sun time (7:30am = VERY long shadows for maximum relief visibility)
         viewer.clock.currentTime = Cesium.JulianDate.fromIso8601(
@@ -797,61 +797,68 @@ export default function StudioViewer({
   const startHelicopterMode = () => {
     const viewer = viewerRef.current;
     if (!viewer || viewer.isDestroyed()) return;
-    
+
     const Cesium = window.Cesium;
     setHelicopterMode(true);
-    
-    // Get parcel centroid
+
     const centroidLon = snapshot.parcel.centroid[0];
     const centroidLat = snapshot.parcel.centroid[1];
-    
-    // Initial flyTo for helicopter mode setup
+    const areaHa = snapshot.parcel.area_ha ?? 100;
+
+    // Orbit parameters scaled to parcel size
+    const RADIUS_DEG = Math.max(0.003, Math.min(0.010, Math.sqrt(areaHa) * 0.0009));
+    const HEIGHT     = Math.max(200, Math.min(600, Math.sqrt(areaHa) * 45));
+    const SPEED      = 0.06;  // Degrees per frame — slow cinematic orbit
+
+    // Initial flyTo to approach position
     viewer.camera.flyTo({
       destination: Cesium.Cartesian3.fromDegrees(
-        centroidLon - 0.008,  // Slightly west
-        centroidLat - 0.005,  // Slightly south
-        800  // 800m altitude
+        centroidLon - RADIUS_DEG * 0.7,
+        centroidLat - RADIUS_DEG * 0.4,
+        HEIGHT + 100
       ),
       orientation: {
-        heading: Cesium.Math.toRadians(45),    // Looking NE
-        pitch:   Cesium.Math.toRadians(-30),   // 30° downward
+        heading: Cesium.Math.toRadians(45),
+        pitch:   Cesium.Math.toRadians(-30),
         roll:    0,
       },
       duration: 3,
     });
-    
-    // Automatic slow orbit around the parcel
+
+    // Start orbit AFTER the initial flyTo completes (3s)
     let angle = 45;
-    const RADIUS_DEG = 0.012;  // Orbit radius in degrees
-    const HEIGHT     = 700;    // Height in meters
-    const SPEED      = 0.15;   // Degrees per frame
-    
-    helicopterIntervalRef.current = setInterval(() => {
-      if (!viewer || viewer.isDestroyed()) {
-        stopHelicopterMode();
-        return;
-      }
-      
-      angle += SPEED;
-      if (angle > 360) angle = 0;
-      
-      const rad = Cesium.Math.toRadians(angle);
-      
-      viewer.camera.setView({
-        destination: Cesium.Cartesian3.fromDegrees(
-          centroidLon + Math.cos(rad) * RADIUS_DEG,
-          centroidLat + Math.sin(rad) * RADIUS_DEG * 0.6,  // Compress N-S for curvature
-          HEIGHT,
-        ),
-        orientation: {
-          heading: Cesium.Math.toRadians(angle + 180), // Always looking at center
-          pitch:   Cesium.Math.toRadians(-25),          // 25° downward
-          roll:    0,
-        },
-      });
-    }, 50);  // 20fps
-    
-    console.log('[StudioViewer] 🚁 Helicopter mode started');
+    setTimeout(() => {
+      if (!helicopterIntervalRef.current) return; // mode was stopped during flyTo
+      helicopterIntervalRef.current = setInterval(() => {
+        if (!viewer || viewer.isDestroyed()) {
+          stopHelicopterMode();
+          return;
+        }
+
+        angle += SPEED;
+        if (angle > 360) angle -= 360;
+
+        const rad = Cesium.Math.toRadians(angle);
+
+        viewer.camera.setView({
+          destination: Cesium.Cartesian3.fromDegrees(
+            centroidLon + Math.cos(rad) * RADIUS_DEG,
+            centroidLat + Math.sin(rad) * RADIUS_DEG * 0.6,
+            HEIGHT,
+          ),
+          orientation: {
+            heading: Cesium.Math.toRadians(angle + 180),
+            pitch:   Cesium.Math.toRadians(-25),
+            roll:    0,
+          },
+        });
+      }, 50);
+    }, 3200);
+
+    // Use a placeholder ref value during flyTo so the timeout check works
+    helicopterIntervalRef.current = -1 as any;
+
+    console.log('[StudioViewer] 🚁 Helicopter mode started — radius:', RADIUS_DEG.toFixed(4), 'height:', HEIGHT.toFixed(0) + 'm');
   };
 
   const stopHelicopterMode = () => {
@@ -864,6 +871,7 @@ export default function StudioViewer({
   };
 
   const flyToLateralView = () => {
+    stopHelicopterMode();
     const viewer = viewerRef.current;
     if (!viewer || viewer.isDestroyed() || !snapshot) return;
     
@@ -888,14 +896,22 @@ export default function StudioViewer({
   };
 
   const flyToIsometricView = () => {
+    stopHelicopterMode();
     const viewer = viewerRef.current;
     if (!viewer || viewer.isDestroyed() || !snapshot) return;
-    
+
     const Cesium = window.Cesium;
-    const [lon, lat] = snapshot.parcel.centroid;
-    
+    if (!Cesium) return;
+
+    const centroid = snapshot.parcel?.centroid;
+    if (!centroid) return;
+    const [lon, lat] = centroid;
+
+    const areaHa = snapshot.parcel?.area_ha ?? 100;
+    const distanceM = Math.max(1500, Math.min(5000, Math.sqrt(areaHa) * 160));
+
     viewer.camera.flyTo({
-      destination: Cesium.Cartesian3.fromDegrees(lon, lat, 3500),
+      destination: Cesium.Cartesian3.fromDegrees(lon, lat, distanceM * 1.5),
       orientation: {
         heading: 0,
         pitch:   Cesium.Math.toRadians(-90),
@@ -903,7 +919,7 @@ export default function StudioViewer({
       },
       duration: 2,
     });
-    
+
     console.log('[StudioViewer] 🗺️ Vista cenital completa');
   };
 

@@ -104,7 +104,7 @@ export default function StudioTopBar({
         viewAngle: 'top',      // 90° cenital
         pixelRatio: 3,
         style: visualStyle?.preset as any ?? 'natural',
-        boundaryOnly: false,
+        boundaryOnly: true,   // ✂️ Recortar al polígono de la parcela
       });
       downloadBlob(blob, `geotwin_${snapshot.twinId}_cenital.png`);
       console.log('[TopBar] ✅ Mapa cenital descargado');
