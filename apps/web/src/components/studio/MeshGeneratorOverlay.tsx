@@ -307,11 +307,6 @@ export default function MeshGeneratorOverlay({ tileProcessing }: MeshGeneratorOv
     }
   }, [stage, showDone]);
 
-  // DEBUG: log state to console
-  useEffect(() => {
-    console.log('[MeshOverlay]', { status, stage, tilesAvailable, dismissed, progress });
-  }, [status, stage, tilesAvailable, dismissed, progress]);
-
   // Don't render if tiles are already available (done processing or pre-existing)
   if (tilesAvailable && (status === 'available' || stage === 'done')) return null;
   if (dismissed) return null;
