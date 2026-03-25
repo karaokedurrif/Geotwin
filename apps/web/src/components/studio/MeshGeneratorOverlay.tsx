@@ -307,12 +307,17 @@ export default function MeshGeneratorOverlay({ tileProcessing }: MeshGeneratorOv
     }
   }, [stage, showDone]);
 
-  // Don't render if tiles exist and we haven't started processing
-  if ((status === 'available' || dismissed) && stage === 'done') return null;
-  if (status === 'idle' || status === 'checking') {
-    // Show floating CTA only if tiles are NOT available yet
-    if (tilesAvailable) return null;
+  // DEBUG: log state to console
+  useEffect(() => {
+    console.log('[MeshOverlay]', { status, stage, tilesAvailable, dismissed, progress });
+  }, [status, stage, tilesAvailable, dismissed, progress]);
 
+  // Don't render if tiles are already available (done processing or pre-existing)
+  if (tilesAvailable && (status === 'available' || stage === 'done')) return null;
+  if (dismissed) return null;
+
+  // Idle/Checking: show floating CTA button
+  if (status === 'idle' || status === 'checking') {
     return (
       <div style={{
         position: 'absolute',
