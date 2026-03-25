@@ -4,6 +4,7 @@ Exportación de mallas a 3D Tiles y glTF para CesiumJS.
 Genera:
 - tileset.json (jerarquía 3D Tiles con bounding volumes y LODs)
 - Tiles individuales en formato glTF/GLB
+- Soporte para texturas (ortofoto PNOA)
 """
 
 from __future__ import annotations
@@ -21,14 +22,48 @@ from .mesh import TerrainMesh
 
 logger = logging.getLogger(__name__)
 
+# Textura compartida para todos los LODs (se asigna al exportar)
+_shared_texture_path: Path | None = None
 
-def _mesh_to_glb(mesh: TerrainMesh) -> bytes:
-    """Convierte TerrainMesh a GLB (binary glTF) usando trimesh."""
+
+def set_texture(texture_path: Path | None) -> None:
+    """Configura la textura a usar en las siguientes exportaciones."""
+    global _shared_texture_path
+    _shared_texture_path = texture_path
+
+
+def _mesh_to_glb(mesh: TerrainMesh, texture_path: Path | None = None) -> bytes:
+    """Convierte TerrainMesh a GLB (binary glTF) usando trimesh.
+
+    Si mesh.uv_coords y texture_path existen, se incluye la textura.
+    """
     t_mesh = trimesh.Trimesh(
         vertices=mesh.vertices,
         faces=mesh.faces,
         face_normals=mesh.normals if mesh.normals is not None else None,
     )
+
+    tex = texture_path or _shared_texture_path
+    if mesh.uv_coords is not None and tex is not None and tex.exists():
+        from PIL import Image
+        image = Image.open(tex)
+
+        # trimesh TextureVisuals: UV (0,0) = top-left en imagen,
+        # pero nuestros UVs tienen v=0 en min_lat (abajo).
+        # Flip V para que coincida con la orientación de la imagen.
+        uv = mesh.uv_coords.copy()
+        uv[:, 1] = 1.0 - uv[:, 1]
+
+        material = trimesh.visual.material.PBRMaterial(
+            baseColorTexture=image,
+            metallicFactor=0.0,
+            roughnessFactor=1.0,
+        )
+        t_mesh.visual = trimesh.visual.TextureVisuals(
+            uv=uv,
+            material=material,
+        )
+
     return t_mesh.export(file_type="glb")
 
 

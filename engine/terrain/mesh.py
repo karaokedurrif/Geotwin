@@ -23,6 +23,7 @@ class TerrainMesh:
     vertices: np.ndarray  # (N, 3) — [lon, lat, elevation_m]
     faces: np.ndarray  # (M, 3) — índices de triángulos
     normals: np.ndarray | None = None  # (M, 3) — normales por cara
+    uv_coords: np.ndarray | None = None  # (N, 2) — coordenadas UV por vértice
 
     @property
     def vertex_count(self) -> int:
@@ -45,6 +46,48 @@ class TerrainMesh:
             "max_lat": float(maxs[1]),
             "max_elev": float(maxs[2]),
         }
+
+
+def compute_uv_from_bbox(
+    mesh: TerrainMesh,
+    bbox: tuple[float, float, float, float],
+) -> TerrainMesh:
+    """Calcula coordenadas UV para texturizar con una ortofoto.
+
+    Mapea (lon, lat) de cada vértice a (u, v) en [0,1] según el bbox de la textura.
+    UV (0,0) = esquina inferior-izquierda; (1,1) = esquina superior-derecha.
+
+    Args:
+        mesh: Malla con vértices en coordenadas geográficas.
+        bbox: (min_lon, min_lat, max_lon, max_lat) del área de la textura.
+
+    Returns:
+        Nuevo TerrainMesh con uv_coords asignados.
+    """
+    min_lon, min_lat, max_lon, max_lat = bbox
+    lon_range = max_lon - min_lon
+    lat_range = max_lat - min_lat
+
+    if lon_range <= 0 or lat_range <= 0:
+        raise ValueError(f"Bbox inválido: {bbox}")
+
+    lons = mesh.vertices[:, 0]
+    lats = mesh.vertices[:, 1]
+
+    u = (lons - min_lon) / lon_range
+    v = (lats - min_lat) / lat_range
+
+    uv = np.column_stack([
+        np.clip(u, 0.0, 1.0),
+        np.clip(v, 0.0, 1.0),
+    ])
+
+    return TerrainMesh(
+        vertices=mesh.vertices,
+        faces=mesh.faces,
+        normals=mesh.normals,
+        uv_coords=uv,
+    )
 
 
 def _compute_slope(elevation: np.ndarray, cell_size: float) -> np.ndarray:

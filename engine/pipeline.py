@@ -16,10 +16,10 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from .config import settings
-from .terrain.export import export_3d_tiles, export_single_glb
+from .terrain.export import export_3d_tiles, export_single_glb, set_texture
 from .terrain.ingest import crop_dem_by_aoi, download_dem_ign, get_dem_for_aoi, load_dem
 from .terrain.lod import generate_lods
-from .terrain.mesh import clip_mesh_to_aoi, dem_to_mesh
+from .terrain.mesh import clip_mesh_to_aoi, compute_uv_from_bbox, dem_to_mesh
 from .vector.aoi import (
     AOIMetadata,
     compute_aoi_metadata,
@@ -47,6 +47,7 @@ class PipelineResult:
     processing_time_s: float
     steps_completed: list[str]
     ndvi: dict | None = None  # NDVI real stats if available
+    ortho: dict | None = None  # Ortofoto PNOA metadata if available
 
 
 def process_twin(
@@ -153,6 +154,38 @@ def process_twin(
     _progress("Recortando malla al AOI", 60)
     mesh = clip_mesh_to_aoi(mesh, aoi_feature)
 
+    # ─── 4b. Ortofoto PNOA (textura del terreno) ───────────────────────
+    ortho_result = None
+    texture_path = None
+    try:
+        _progress("Descargando ortofoto PNOA", 63)
+        from .raster.ortho import extract_texture_image, get_ortho_for_aoi
+
+        ortho_result = get_ortho_for_aoi(
+            bbox=aoi_meta.bbox,
+            output_dir=output_dir,
+            resolution_cm=25,
+            max_pixels=4096,
+        )
+        # Extraer JPEG para usar como textura en GLB
+        from pathlib import Path as P
+        ortho_tif = P(ortho_result["path"])
+        texture_path = extract_texture_image(ortho_tif)
+
+        # Asignar UVs al mesh basados en el bbox de la textura
+        mesh = compute_uv_from_bbox(mesh, tuple(ortho_result["bbox"]))
+        set_texture(texture_path)
+
+        logger.info(
+            "Ortofoto PNOA: %dx%d px, textura=%s",
+            ortho_result["width"], ortho_result["height"], texture_path,
+        )
+    except Exception as e:
+        logger.warning("Ortofoto PNOA no disponible: %s", e)
+        ortho_result = None
+        texture_path = None
+        set_texture(None)
+
     # ─── 5. Generar LODs ────────────────────────────────────────────────
     _progress("Generando niveles de detalle", 70)
     lods = generate_lods(mesh)
@@ -164,6 +197,9 @@ def process_twin(
     # También exportar GLB combinado para AR/VR
     glb_path = output_dir / f"{twin_id}.glb"
     export_single_glb(mesh, glb_path)
+
+    # Limpiar textura compartida después de exportar
+    set_texture(None)
 
     # ─── 7. NDVI real desde Sentinel-2 (opcional) ───────────────────────
     ndvi_result = None
@@ -215,6 +251,13 @@ def process_twin(
             "ndvi_path": ndvi_result["ndvi_path"],
             "colormap_path": ndvi_result["colormap_path"],
         } if ndvi_result else None,
+        ortho={
+            "path": ortho_result["path"],
+            "bbox": ortho_result["bbox"],
+            "width": ortho_result["width"],
+            "height": ortho_result["height"],
+            "textured": True,
+        } if ortho_result else None,
     )
 
     # Guardar resumen
@@ -231,6 +274,7 @@ def process_twin(
         "processing_time_s": round(result.processing_time_s, 2),
         "tileset_path": result.tileset_path,
         "glb_path": result.glb_path,
+        "textured": result.ortho is not None,
     }, indent=2))
 
     _progress("Completado", 100)

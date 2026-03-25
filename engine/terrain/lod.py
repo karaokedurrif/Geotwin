@@ -50,7 +50,37 @@ def _o3d_to_terrain_mesh(o3d_mesh: o3d.geometry.TriangleMesh) -> TerrainMesh:
     vertices = np.asarray(o3d_mesh.vertices)
     faces = np.asarray(o3d_mesh.triangles)
     normals = np.asarray(o3d_mesh.triangle_normals) if o3d_mesh.has_triangle_normals() else None
+    # UVs se recomputan después (ver _recompute_uvs)
     return TerrainMesh(vertices=vertices, faces=faces, normals=normals)
+
+
+def _recompute_uvs(
+    decimated: TerrainMesh,
+    original: TerrainMesh,
+) -> TerrainMesh:
+    """Recalcula UVs para una malla decimada.
+
+    Los UVs son un mapeo lineal (lon, lat) → (u, v), así que se pueden
+    recalcular directamente usando los mismos bounds del original.
+    """
+    if original.uv_coords is None:
+        return decimated
+
+    bounds = original.bounds
+    lon_range = bounds["max_lon"] - bounds["min_lon"]
+    lat_range = bounds["max_lat"] - bounds["min_lat"]
+
+    if lon_range <= 0 or lat_range <= 0:
+        return decimated
+
+    lons = decimated.vertices[:, 0]
+    lats = decimated.vertices[:, 1]
+
+    u = np.clip((lons - bounds["min_lon"]) / lon_range, 0.0, 1.0)
+    v = np.clip((lats - bounds["min_lat"]) / lat_range, 0.0, 1.0)
+
+    decimated.uv_coords = np.column_stack([u, v])
+    return decimated
 
 
 def _estimate_geometric_error(original: TerrainMesh, decimated: TerrainMesh) -> float:
@@ -105,6 +135,7 @@ def generate_lods(
             simplified = o3d_mesh.simplify_quadric_decimation(target_tris)
             simplified.compute_triangle_normals()
             lod_mesh = _o3d_to_terrain_mesh(simplified)
+            lod_mesh = _recompute_uvs(lod_mesh, mesh)
             geo_error = _estimate_geometric_error(mesh, lod_mesh)
 
         lods.append(LODLevel(

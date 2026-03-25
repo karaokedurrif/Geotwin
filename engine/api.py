@@ -124,6 +124,7 @@ def _run_pipeline(job_id: str, req: ProcessRequest) -> None:
             "tileset_path": result.tileset_path,
             "glb_path": result.glb_path,
             "ndvi": result.ndvi,
+            "ortho": result.ortho,
         }
         logger.info("Job %s completed: %s", job_id, result.twin_id)
 

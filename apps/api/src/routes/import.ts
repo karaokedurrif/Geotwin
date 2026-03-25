@@ -77,7 +77,7 @@ export async function importRouter(fastify: FastifyInstance) {
         recipe,
       } as ImportResponse);
     } catch (error) {
-      fastify.log.error('Import error:', error);
+      fastify.log.error(`Import error: ${error}`);
       return reply.code(500).send({
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error',
@@ -221,16 +221,16 @@ export async function importRouter(fastify: FastifyInstance) {
       } catch (recipeError) {
         console.error('=== RECIPE GENERATION ERROR ===');
         console.error(recipeError);
-        fastify.log.error('Recipe generation error:', recipeError);
+        fastify.log.error(`Recipe generation error: ${recipeError}`);
         throw recipeError; // Re-throw to see full stack trace
       }
     } catch (error) {
       console.error('=== SAMPLE LOAD ERROR ===');
       console.error(error);
-      fastify.log.error('Sample load error:', error);
+      fastify.log.error(`Sample load error: ${error}`);
       const errorMessage = error instanceof Error ? error.message : 'Failed to load sample';
       const errorStack = error instanceof Error ? error.stack : '';
-      fastify.log.error('Error stack:', errorStack);
+      fastify.log.error(`Error stack: ${errorStack ?? ''}`);
       return reply.code(500).send({
         success: false,
         error: errorMessage,
