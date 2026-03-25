@@ -193,6 +193,46 @@ async function loadParcelFromSnapshot(
 }
 
 /**
+ * Loads a 3D Tileset (terrain mesh) from the API if available for this twin.
+ * Returns the Cesium3DTileset primitive, or null if not available.
+ */
+async function loadTerrainTileset(
+  viewer: any,
+  twinId: string,
+): Promise<any | null> {
+  const Cesium = window.Cesium;
+  if (!Cesium) return null;
+
+  const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3001';
+  const statusUrl = `${apiBase}/api/tiles/${encodeURIComponent(twinId)}/status`;
+
+  try {
+    const res = await fetch(statusUrl);
+    if (!res.ok) return null;
+    const status = await res.json();
+    if (!status.available) {
+      console.log('[StudioViewer] No terrain tileset available for', twinId);
+      return null;
+    }
+
+    const tilesetUrl = `${apiBase}/api/tiles/${encodeURIComponent(twinId)}/tileset.json`;
+    console.log('[StudioViewer] Loading terrain tileset:', tilesetUrl);
+
+    const tileset = await Cesium.Cesium3DTileset.fromUrl(tilesetUrl, {
+      maximumScreenSpaceError: 8,
+      maximumMemoryUsage: 256,
+    });
+
+    viewer.scene.primitives.add(tileset);
+    console.log('[StudioViewer] ✅ Terrain 3D Tileset loaded:', status.files?.length, 'files');
+    return tileset;
+  } catch (err) {
+    console.warn('[StudioViewer] Terrain tileset load failed (non-critical):', err);
+    return null;
+  }
+}
+
+/**
  * Espera que el globe tenga tiles cargados (evento real de Cesium)
  * SIN timeout artificial - usa el evento real de Cesium
  */
@@ -671,6 +711,9 @@ export default function StudioViewer({
         // Load parcel and fly to camera
         await loadParcelFromSnapshot(viewer, snapshot, visualStyle);
         await flyToParcelWithTerrain(viewer, snapshot);
+
+        // Load terrain 3D Tileset if available (non-blocking)
+        loadTerrainTileset(viewer, snapshot.twinId).catch(() => {});
 
         // ── FINAL VERIFICATION ────────────────────────────────────────
         console.log('[StudioViewer] ═══════════════════════════════════════');

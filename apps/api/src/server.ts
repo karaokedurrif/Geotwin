@@ -5,6 +5,7 @@ import multipart from '@fastify/multipart';
 import { importRouter } from './routes/import.js';
 import { ndviRouter } from './routes/ndvi.js';
 import { geospatialRouter } from './routes/geospatial.js';
+import { tilesRouter } from './routes/tiles.js';
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3001;
 const HOST = process.env.HOST || '0.0.0.0';
@@ -40,6 +41,7 @@ async function buildServer() {
   await fastify.register(importRouter, { prefix: '/api' });
   await fastify.register(ndviRouter, { prefix: '/api' });
   await fastify.register(geospatialRouter, { prefix: '/api' });
+  await fastify.register(tilesRouter, { prefix: '/api' });
 
   return fastify;
 }
