@@ -2,6 +2,7 @@
 const nextConfig = {
   // Disabled for Cesium compatibility (prevents double-mount issues)
   reactStrictMode: false,
+  output: 'standalone',
   transpilePackages: ['@geotwin/types'],
   images: {
     unoptimized: true,
