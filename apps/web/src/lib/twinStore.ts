@@ -111,6 +111,10 @@ export interface TwinSnapshot {
   // Visual appearance settings
   visualStyle?: VisualStyle;
   
+  // Mesh generation state
+  meshStatus?: 'none' | 'processing' | 'completed' | 'failed';
+  meshJobId?: string;
+  
   // ESG metrics
   esg?: ESGData;
 }
@@ -220,6 +224,21 @@ export const twinStore = {
     } catch (error) {
       console.error('[twinStore] Failed to delete snapshot:', error);
       throw new Error('Failed to delete twin snapshot');
+    }
+  },
+
+  /**
+   * Update mesh processing status for a twin
+   */
+  updateMeshStatus(twinId: string, meshStatus: 'none' | 'processing' | 'completed' | 'failed'): void {
+    try {
+      const all = this.list();
+      if (all[twinId]) {
+        all[twinId].meshStatus = meshStatus;
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(all));
+      }
+    } catch {
+      // Silently fail — this is an optimization, not critical
     }
   },
 

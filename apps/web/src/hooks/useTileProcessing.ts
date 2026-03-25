@@ -20,6 +20,7 @@ interface UseTileProcessingReturn {
   error: string | null;
   startProcessing: () => void;
   tilesAvailable: boolean;
+  geojson?: any;
 }
 
 export type TileProcessingState = UseTileProcessingReturn;
@@ -27,7 +28,7 @@ export type TileProcessingState = UseTileProcessingReturn;
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3001';
 const POLL_INTERVAL = 2000;
 
-export function useTileProcessing(twinId: string | undefined): UseTileProcessingReturn {
+export function useTileProcessing(twinId: string | undefined, geojson?: any): UseTileProcessingReturn {
   const [status, setStatus] = useState<TileJobStatus>('idle');
   const [progress, setProgress] = useState(0);
   const [currentStep, setCurrentStep] = useState('');
@@ -100,6 +101,8 @@ export function useTileProcessing(twinId: string | undefined): UseTileProcessing
     try {
       const res = await fetch(`${API_BASE}/api/tiles/${encodeURIComponent(twinId)}/process`, {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ geojson: geojson || undefined }),
       });
 
       if (!res.ok) {
@@ -117,7 +120,7 @@ export function useTileProcessing(twinId: string | undefined): UseTileProcessing
       setStatus('failed');
       setError('No se pudo conectar con el servidor');
     }
-  }, [twinId, pollJob]);
+  }, [twinId, pollJob, geojson]);
 
-  return { status, progress, currentStep, result, error, startProcessing, tilesAvailable };
+  return { status, progress, currentStep, result, error, startProcessing, tilesAvailable, geojson };
 }

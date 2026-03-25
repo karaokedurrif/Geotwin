@@ -180,7 +180,10 @@ export default function StudioTopBar({
         }),
       });
       
-      if (!res.ok) throw new Error(`API error: ${res.status} ${await res.text()}`);
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({ error: res.statusText }));
+        throw new Error(errData.error || `API error: ${res.status}`);
+      }
       const data = await res.json();
       
       if (data.image_url) {

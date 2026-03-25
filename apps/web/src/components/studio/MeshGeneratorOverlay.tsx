@@ -14,6 +14,13 @@ import type { TileProcessingState } from '@/hooks/useTileProcessing';
 
 interface MeshGeneratorOverlayProps {
   tileProcessing: TileProcessingState;
+  viewerRef?: any;        // Cesium.Viewer — for real terrain elevation
+  parcelBounds?: {        // lon/lat bbox of parcel for terrain sampling
+    west: number;
+    south: number;
+    east: number;
+    north: number;
+  };
 }
 
 // ── Stage mapping from job status + progress ─────────────────────────────────
@@ -39,10 +46,71 @@ const STAGE_LABELS: Record<VisualStage, string> = {
 };
 
 // ── Canvas animation — particles + wireframe + fill ──────────────────────────
+
+const GRID_COLS = 28;
+const GRID_ROWS = 16;
+
+/** Sample real terrain elevation from Cesium's terrain provider */
+function useTerrainElevation(
+  gridRef: React.MutableRefObject<Array<{
+    x: number; y: number; baseY: number;
+    targetY: number; currentY: number;
+  }>>,
+  viewerRef: any | undefined,
+  parcelBounds: { west: number; south: number; east: number; north: number } | undefined,
+) {
+  const sampledRef = useRef(false);
+
+  useEffect(() => {
+    if (sampledRef.current || !viewerRef || !parcelBounds || gridRef.current.length === 0) return;
+    const Cesium = (window as any).Cesium;
+    if (!Cesium || !viewerRef.terrainProvider) return;
+
+    const { west, south, east, north } = parcelBounds;
+    const positions: any[] = [];
+
+    for (let r = 0; r < GRID_ROWS; r++) {
+      for (let c = 0; c < GRID_COLS; c++) {
+        const lon = west + (c / (GRID_COLS - 1)) * (east - west);
+        const lat = south + (r / (GRID_ROWS - 1)) * (north - south);
+        positions.push(Cesium.Cartographic.fromDegrees(lon, lat));
+      }
+    }
+
+    Cesium.sampleTerrainMostDetailed(viewerRef.terrainProvider, positions)
+      .then((sampled: any[]) => {
+        if (sampledRef.current) return;
+        sampledRef.current = true;
+
+        // Find min/max height to normalize to -0.15..0.15 range for the canvas
+        let minH = Infinity, maxH = -Infinity;
+        for (const p of sampled) {
+          const h = p.height ?? 0;
+          if (h < minH) minH = h;
+          if (h > maxH) maxH = h;
+        }
+        const range = maxH - minH || 1;
+
+        for (let i = 0; i < sampled.length && i < gridRef.current.length; i++) {
+          const normalized = ((sampled[i].height ?? 0) - minH) / range;
+          // Map to canvas y offset (-0.15 to +0.15) from baseY
+          gridRef.current[i].targetY = gridRef.current[i].baseY + (normalized - 0.5) * 0.3;
+        }
+      })
+      .catch(() => {
+        // Fallback to sine wave elevation already set
+      });
+  }, [viewerRef, parcelBounds, gridRef]);
+}
+
 function useCanvasAnimation(
   canvasRef: React.RefObject<HTMLCanvasElement | null>,
   stage: VisualStage,
   progress: number,
+  externalGridRef?: React.MutableRefObject<Array<{
+    x: number; y: number; baseY: number;
+    targetY: number; currentY: number;
+  }>>,
 ) {
   const frameRef = useRef(0);
   const particlesRef = useRef<Array<{
@@ -52,11 +120,12 @@ function useCanvasAnimation(
     size: number;
   }>>([]);
 
-  // Grid vertices for wireframe
-  const gridRef = useRef<Array<{
+  // Grid vertices for wireframe — use external ref if provided
+  const internalGridRef = useRef<Array<{
     x: number; y: number; baseY: number;
     targetY: number; currentY: number;
   }>>([]);
+  const gridRef = externalGridRef || internalGridRef;
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -86,8 +155,8 @@ function useCanvasAnimation(
 
     // Initialize terrain grid
     if (gridRef.current.length === 0) {
-      const cols = 28;
-      const rows = 16;
+      const cols = GRID_COLS;
+      const rows = GRID_ROWS;
       for (let r = 0; r < rows; r++) {
         for (let c = 0; c < cols; c++) {
           const x = (c / (cols - 1)) * 2 - 1;
@@ -108,8 +177,8 @@ function useCanvasAnimation(
       }
     }
 
-    const cols = 28;
-    const rows = 16;
+    const cols = GRID_COLS;
+    const rows = GRID_ROWS;
 
     function resize() {
       const dpr = window.devicePixelRatio || 1;
@@ -289,14 +358,21 @@ function useCanvasAnimation(
 
 // ── Main Component ───────────────────────────────────────────────────────────
 
-export default function MeshGeneratorOverlay({ tileProcessing }: MeshGeneratorOverlayProps) {
+export default function MeshGeneratorOverlay({ tileProcessing, viewerRef, parcelBounds }: MeshGeneratorOverlayProps) {
   const { status, progress, currentStep, error, startProcessing, tilesAvailable } = tileProcessing;
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const stage = resolveStage(status, progress);
   const [showDone, setShowDone] = useState(false);
   const [dismissed, setDismissed] = useState(false);
 
-  useCanvasAnimation(canvasRef, stage, progress);
+  // Reference to grid for terrain sampling
+  const gridRef = useRef<Array<{
+    x: number; y: number; baseY: number;
+    targetY: number; currentY: number;
+  }>>([]);
+
+  useCanvasAnimation(canvasRef, stage, progress, gridRef);
+  useTerrainElevation(gridRef, viewerRef, parcelBounds);
 
   // Auto-dismiss done state after 3s
   useEffect(() => {

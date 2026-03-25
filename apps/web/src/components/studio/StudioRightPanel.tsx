@@ -21,6 +21,7 @@ import type { TileProcessingState } from '@/hooks/useTileProcessing';
 import type { IoTDataState } from '@/hooks/useIoTData';
 import TileProcessingCard from './TileProcessingCard';
 import IoTLivePanel from './IoTLivePanel';
+import DronePanel from '@/components/drone/DronePanel';
 import styles from '@/styles/studio.module.css';
 
 interface StudioRightPanelProps {
@@ -100,7 +101,7 @@ export default function StudioRightPanel({
           />
         )}
         {activeMode === 'ganado' && <GanadoModeContent snapshot={snapshot} />}
-        {activeMode === 'dron' && <DronModeContent snapshot={snapshot} />}
+        {activeMode === 'dron' && <DronePanel snapshot={snapshot} />}
         {activeMode === 'sim' && <SimModeContent snapshot={snapshot} />}
         {activeMode === 'bim' && (
           <PanelProximo icono={<Zap size={14} />} titulo="Infraestructura BIM" fase={3} />
@@ -450,78 +451,6 @@ function GanadoModeContent({ snapshot }: { snapshot: TwinSnapshot }) {
           </div>
         ))}
       </Section>
-    </div>
-  );
-}
-
-// ── Panel DRON ────────────────────────────────────────────────────────────────
-
-function DronModeContent({ snapshot }: { snapshot: TwinSnapshot }) {
-  const areaHa = snapshot.parcel?.area_ha ?? 0;
-  const tiempoOrto = Math.ceil((areaHa / 100) * 18); // ~18 min/100ha
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column' }}>
-      <Section label="Estado del dron">
-        <StatRow label="Altitud" value="-- m" />
-        <StatRow label="Velocidad" value="-- km/h" />
-        <StatRow label="Batería" value="--%" />
-        <StatRow label="Modo" value="En tierra" color="#F59E0B" />
-      </Section>
-
-      <Section label="Misiones disponibles">
-        {[
-          { id: 'explorar', label: 'Exploración libre', desc: 'Control WASD / joystick' },
-          { id: 'orto', label: `Ortofoto completa (~${tiempoOrto} min)`, desc: 'Grid automático sobre la finca' },
-          { id: 'sector', label: 'Por sector', desc: 'Dividir finca en secciones' },
-          { id: 'alerta', label: 'Seguir alerta', desc: 'Volar al collar en alerta' },
-        ].map((mision) => (
-          <button
-            key={mision.id}
-            style={{
-              width: '100%',
-              padding: '6px 10px',
-              marginBottom: 4,
-              background: '#2a2a2e',
-              border: '1px solid #3a3a42',
-              borderRadius: 4,
-              color: '#A0A0A8',
-              fontSize: 11,
-              cursor: 'pointer',
-              textAlign: 'left',
-              transition: 'all 0.12s',
-            }}
-          >
-            <div style={{ fontWeight: 600 }}>{mision.label}</div>
-            <div style={{ fontSize: 10, color: '#6B6B73', marginTop: 1 }}>{mision.desc}</div>
-          </button>
-        ))}
-      </Section>
-
-      <div style={{ padding: '8px 12px' }}>
-        <button
-          style={{
-            width: '100%',
-            padding: '8px',
-            background: '#3B82F6',
-            border: 'none',
-            borderRadius: 6,
-            color: '#fff',
-            fontSize: 11,
-            fontWeight: 700,
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: 6,
-            letterSpacing: '0.04em',
-            textTransform: 'uppercase',
-          }}
-        >
-          <Navigation size={12} />
-          Activar control dron
-        </button>
-      </div>
     </div>
   );
 }

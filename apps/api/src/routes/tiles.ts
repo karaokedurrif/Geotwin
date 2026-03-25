@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { join } from 'path';
-import { readFile, access, readdir } from 'fs/promises';
+import { readFile, access, readdir, mkdir, writeFile } from 'fs/promises';
 import { constants } from 'fs';
 
 const TILES_DIR = join(process.cwd(), 'data', 'tiles');
@@ -94,14 +94,22 @@ export async function tilesRouter(fastify: FastifyInstance) {
       return reply.code(400).send({ error: 'Invalid twinId' });
     }
 
-    // Find geometry file for this twin
+    // Find or create geometry file for this twin
     const dataDir = join(process.cwd(), 'data', twinId);
     const geojsonPath = join(dataDir, 'geometry.geojson');
 
     try {
       await access(geojsonPath, constants.R_OK);
     } catch {
-      return reply.code(404).send({ error: 'Twin geometry not found' });
+      // Geometry file doesn't exist — try to create from request body
+      const body = request.body as { geojson?: any } | null;
+      if (body?.geojson) {
+        await mkdir(dataDir, { recursive: true });
+        const geojsonStr = JSON.stringify(body.geojson);
+        await writeFile(geojsonPath, geojsonStr, 'utf-8');
+      } else {
+        return reply.code(404).send({ error: 'Twin geometry not found. Send geojson in request body.' });
+      }
     }
 
     // Call engine API to start processing

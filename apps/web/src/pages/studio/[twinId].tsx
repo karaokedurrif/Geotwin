@@ -14,6 +14,28 @@ import TimelineBar, { useTimeline } from '@/components/studio/TimelineBar';
 import MeshGeneratorOverlay from '@/components/studio/MeshGeneratorOverlay';
 import styles from '@/styles/studio.module.css';
 
+/** Extract lon/lat bounding box from GeoJSON for terrain sampling */
+function computeParcelBounds(geojson: any): { west: number; south: number; east: number; north: number } | undefined {
+  try {
+    const coords: number[][] = [];
+    const geometry = geojson?.geometry ?? geojson?.features?.[0]?.geometry;
+    if (!geometry) return undefined;
+    const rings = geometry.type === 'Polygon' ? geometry.coordinates : geometry.coordinates?.[0];
+    if (!rings?.[0]) return undefined;
+    for (const c of rings[0]) coords.push(c);
+    let west = Infinity, south = Infinity, east = -Infinity, north = -Infinity;
+    for (const [lon, lat] of coords) {
+      if (lon < west) west = lon;
+      if (lon > east) east = lon;
+      if (lat < south) south = lat;
+      if (lat > north) north = lat;
+    }
+    return { west, south, east, north };
+  } catch {
+    return undefined;
+  }
+}
+
 // Cesium must be loaded client-side only
 const StudioViewer = dynamic(
   () => import('@/components/studio/StudioViewer'),
@@ -49,7 +71,7 @@ export default function TwinStudioPage() {
   const [viewerRef, setViewerRef] = useState<any>(null);
   const [notFound, setNotFound] = useState(false);
   const [loading, setLoading] = useState(true);
-  const tileProcessing = useTileProcessing(typeof twinId === 'string' ? twinId : undefined);
+  const tileProcessing = useTileProcessing(typeof twinId === 'string' ? twinId : undefined, snapshot?.parcel?.geojson);
   const iot = useIoTData(typeof twinId === 'string' ? twinId : undefined);
   const timeline = useTimeline(7);
   const [selectedSensor, setSelectedSensor] = useState<string | null>(null);
@@ -69,6 +91,24 @@ export default function TwinStudioPage() {
   useEffect(() => {
     if (tileProcessing.status === 'completed') handleTileProcessingComplete();
   }, [tileProcessing.status, handleTileProcessingComplete]);
+
+  // Persist meshStatus to localStorage when it changes
+  useEffect(() => {
+    if (!twinId || typeof twinId !== 'string') return;
+    const statusMap: Record<string, 'none' | 'processing' | 'completed' | 'failed' | undefined> = {
+      idle: 'none',
+      checking: undefined,
+      queued: 'processing',
+      running: 'processing',
+      completed: 'completed',
+      failed: 'failed',
+      available: 'completed',
+    };
+    const meshStatus = statusMap[tileProcessing.status];
+    if (meshStatus) {
+      twinStore.updateMeshStatus(twinId, meshStatus);
+    }
+  }, [tileProcessing.status, twinId]);
 
   // Load snapshot from localStorage, fallback to API
   useEffect(() => {
@@ -225,7 +265,11 @@ export default function TwinStudioPage() {
           
           {/* Mesh generator overlay — tripo3d-style visual effect */}
           {activeMode === 'terrain' && (
-            <MeshGeneratorOverlay tileProcessing={tileProcessing} />
+            <MeshGeneratorOverlay
+              tileProcessing={tileProcessing}
+              viewerRef={viewerRef}
+              parcelBounds={snapshot.parcel?.geojson ? computeParcelBounds(snapshot.parcel.geojson) : undefined}
+            />
           )}
           
           {/* Simulator Mode Overlay - activo solo en modo 'sim' */}

@@ -8,6 +8,7 @@ import { geospatialRouter } from './routes/geospatial.js';
 import { tilesRouter } from './routes/tiles.js';
 import { iotRouter } from './routes/iot.js';
 import { iotSeedRouter } from './routes/iot-seed.js';
+import { dronesRouter } from './routes/drones.js';
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3001;
 const HOST = process.env.HOST || '0.0.0.0';
@@ -46,6 +47,7 @@ async function buildServer() {
   await fastify.register(tilesRouter, { prefix: '/api' });
   await fastify.register(iotRouter, { prefix: '/api' });
   await fastify.register(iotSeedRouter, { prefix: '/api' });
+  await fastify.register(dronesRouter, { prefix: '/api' });
 
   return fastify;
 }
