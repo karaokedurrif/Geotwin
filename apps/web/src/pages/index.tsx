@@ -157,6 +157,22 @@ export default function Home() {
 
   return (
     <main className="h-screen w-screen overflow-hidden flex flex-col" style={{ background: '#1a1a1e', fontFamily: "'DM Sans', 'Inter', system-ui, sans-serif" }}>
+      {/* DEBUG: fixed position test — should ALWAYS be visible */}
+      <div style={{
+        position: 'fixed',
+        top: 50,
+        right: 50,
+        zIndex: 99999,
+        background: 'red',
+        color: 'white',
+        padding: '20px 30px',
+        borderRadius: 12,
+        fontSize: 20,
+        fontWeight: 'bold',
+      }}>
+        🧪 BUILD TEST v2
+      </div>
+
       {/* TopBar — compact 36px, estilo Blender */}
       <header className="flex items-center justify-between z-20 px-3 flex-shrink-0" style={{ height: '36px', background: '#222226', borderBottom: '1px solid #2e2e34' }}>
         <div className="flex items-center gap-2">
