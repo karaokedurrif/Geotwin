@@ -11,7 +11,7 @@ Transformar datos catastrales (KML/GML) en **experiencias 3D inmersivas** que pe
 - Analizar salud de cultivos mediante NDVI (Sentinel-2)
 - Planificar infraestructura ganadera con visualización 3D del terreno
 - Exportar geometrías y metadatos para análisis externos
-- Generar vistas isométricas profesionales para documentación
+- Generar vistas isNEXT_PUBLIC_MDT02_ASSET_IDométricas profesionales para documentación
 
 ---
 

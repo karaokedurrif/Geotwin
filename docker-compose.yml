@@ -1,0 +1,148 @@
+# ==============================================================================
+# Docker Compose for GeoTwin Engine - Production Deployment
+# ==============================================================================
+# 
+# Architecture:
+#   - 3 services: API (Node.js/Fastify), Web (Next.js), Illustration (Python/FastAPI)
+#   - 1 custom network: geotwin (bridge)
+#   - 2 volumes: API data storage, illustration images
+#   - No host port exposure (Cloudflare tunnel handles routing)
+#
+# Network routing via Cloudflare tunnel:
+#   www.geotwin.es   → geotwin-web:3000
+#   geotwin.es       → geotwin-web:3000  
+#   api.geotwin.es   → geotwin-api:3001
+#
+# Usage:
+#   Build:  docker compose --env-file .env.production build
+#   Start:  docker compose --env-file .env.production up -d
+#   Logs:   docker compose logs -f
+#   Stop:   docker compose down
+#
+# ==============================================================================
+
+version: '3.8'
+
+services:
+  # ----------------------------------------------------------------------------
+  # API Service - Fastify backend
+  # ----------------------------------------------------------------------------
+  geotwin-api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    container_name: geotwin-api
+    restart: unless-stopped
+    
+    environment:
+      - NODE_ENV=${NODE_ENV:-production}
+      - PORT=3001
+      - HOST=0.0.0.0
+      - LOG_LEVEL=${LOG_LEVEL:-warn}
+      - COPERNICUS_CLIENT_ID=${COPERNICUS_CLIENT_ID}
+      - COPERNICUS_CLIENT_SECRET=${COPERNICUS_CLIENT_SECRET}
+    
+    volumes:
+      # Persistent storage for twin datasets (scene.json + geometry.geojson)
+      - geotwin-api-data:/app/data
+    
+    networks:
+      - geotwin
+    
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # ----------------------------------------------------------------------------
+  # Web Service - Next.js frontend
+  # ----------------------------------------------------------------------------
+  geotwin-web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        # CRITICAL: These are baked into the Next.js build at build time
+        # If you change these, you MUST rebuild the image
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL}
+        NEXT_PUBLIC_CESIUM_ION_TOKEN: ${NEXT_PUBLIC_CESIUM_ION_TOKEN}
+    
+    container_name: geotwin-web
+    restart: unless-stopped
+    
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - HOSTNAME=0.0.0.0
+      - ILLUSTRATION_URL=http://geotwin-illustration:8001
+    
+    depends_on:
+      geotwin-api:
+        condition: service_healthy
+    
+    networks:
+      - geotwin
+    
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  # ----------------------------------------------------------------------------
+  # Illustration Service - Python/FastAPI
+  # ----------------------------------------------------------------------------
+  geotwin-illustration:
+    build:
+      context: apps/illustration-service
+      dockerfile: Dockerfile
+    
+    container_name: geotwin-illustration
+    restart: unless-stopped
+    
+    environment:
+      - PORT=8001
+      - REPLICATE_API_TOKEN=${REPLICATE_API_TOKEN:-}
+      - FAL_KEY=${FAL_KEY:-}
+    
+    volumes:
+      # Persistent storage for generated illustration PNGs
+      - geotwin-illustrations:/app/generated
+    
+    networks:
+      - geotwin
+    
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+# ==============================================================================
+# Networks
+# ==============================================================================
+networks:
+  geotwin:
+    name: geotwin
+    driver: bridge
+    # After starting the stack, connect cloudflared to this network:
+    # docker network connect geotwin cloudflared
+
+# ==============================================================================
+# Volumes
+# ==============================================================================
+volumes:
+  # Twin datasets storage (312 existing datasets to be migrated)
+  geotwin-api-data:
+    driver: local
+    name: geotwin-api-data
+  
+  # Generated illustrations storage
+  geotwin-illustrations:
+    driver: local
+    name: geotwin-illustrations

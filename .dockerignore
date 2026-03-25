@@ -1,0 +1,58 @@
+# Dependencies
+node_modules
+**/node_modules
+*/node_modules
+
+# Build outputs
+.next
+dist
+build
+out
+
+# Development files
+.git
+.gitignore
+.vscode
+.idea
+*.log
+.DS_Store
+
+# Environment files (except examples)
+.env
+.env.local
+.env.*.local
+.env.production
+copernicus
+
+# Documentation
+*.md
+!README.md
+
+# Test files
+**/*.test.ts
+**/*.test.tsx
+**/*.spec.ts
+**/*.spec.tsx
+coverage
+
+# Data directories (mounted as volumes)
+apps/api/data
+data
+
+# Illustration service (has its own build context)
+apps/illustration-service/venv
+apps/illustration-service/__pycache__
+apps/illustration-service/**/__pycache__
+apps/illustration-service/generated
+apps/illustration-service/*.pyc
+apps/illustration-service/**/*.pyc
+
+# Temporary files
+*.swp
+*.swo
+*~
+.tmp
+tmp
+
+# CI/CD
+.github

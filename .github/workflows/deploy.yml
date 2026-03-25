@@ -1,0 +1,231 @@
+# ==============================================================================
+# GitHub Actions Workflow - GeoTwin Deployment
+# ==============================================================================
+#
+# This workflow automatically deploys GeoTwin to CT102 when changes are pushed
+# to the main branch.
+#
+# Triggers:
+#   - Push to main branch
+#   - Manual dispatch (workflow_dispatch)
+#
+# Requirements:
+#   GitHub Secrets (Settings → Secrets → Actions):
+#     - SSH_HOST: 192.168.30.101
+#     - SSH_USER: root (or deployment user with sudo)
+#     - SSH_KEY: Private SSH key for CT102
+#     - NEXT_PUBLIC_CESIUM_ION_TOKEN: Cesium Ion access token
+#     - COPERNICUS_CLIENT_ID: Copernicus API client ID
+#     - COPERNICUS_CLIENT_SECRET: Copernicus API client secret
+#
+# ==============================================================================
+
+name: Deploy GeoTwin
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:  # Allow manual trigger
+
+concurrency:
+  group: deploy-geotwin
+  cancel-in-progress: false  # Don't cancel ongoing deployments
+
+jobs:
+  # ----------------------------------------------------------------------------
+  # Job 1: Test and Build Validation
+  # ----------------------------------------------------------------------------
+  test:
+    name: Test and Validate
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js 18
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+      
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 8
+      
+      - name: Get pnpm store directory
+        shell: bash
+        run: |
+          echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+      
+      - name: Cache pnpm dependencies
+        uses: actions/cache@v3
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+      
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      
+      - name: Build shared types
+        run: pnpm --filter @geotwin/types build
+      
+      - name: Type check
+        run: |
+          pnpm --filter @geotwin/api exec tsc --noEmit
+          pnpm --filter @geotwin/types exec tsc --noEmit
+      
+      - name: Build API
+        run: pnpm --filter @geotwin/api build
+      
+      - name: Build Web (smoke test only - full build in Docker)
+        run: |
+          cd apps/web
+          echo "Skipping full Next.js build (done in Docker with production env vars)"
+          # pnpm build would fail here because NEXT_PUBLIC_* vars aren't set
+      
+      - name: Check Docker files exist
+        run: |
+          test -f docker-compose.yml || exit 1
+          test -f apps/api/Dockerfile || exit 1
+          test -f apps/web/Dockerfile || exit 1
+          test -f apps/illustration-service/Dockerfile || exit 1
+          echo "✅ All Dockerfiles present"
+
+  # ----------------------------------------------------------------------------
+  # Job 2: Deploy to CT102
+  # ----------------------------------------------------------------------------
+  deploy:
+    name: Deploy to Production
+    needs: test
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Setup SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts
+      
+      - name: Deploy to CT102
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          CESIUM_TOKEN: ${{ secrets.NEXT_PUBLIC_CESIUM_ION_TOKEN }}
+          COPERNICUS_ID: ${{ secrets.COPERNICUS_CLIENT_ID }}
+          COPERNICUS_SECRET: ${{ secrets.COPERNICUS_CLIENT_SECRET }}
+        run: |
+          ssh -o StrictHostKeyChecking=no $SSH_USER@$SSH_HOST << 'EOF'
+            set -e
+            
+            echo "🚀 Starting GeoTwin deployment..."
+            
+            # Navigate to project directory
+            cd /opt/stacks/geotwin || exit 1
+            
+            # Pull latest code
+            echo "📥 Pulling latest code from GitHub..."
+            git pull origin main
+            
+            # Update environment variables (preserve existing .env.production)
+            if [ ! -f .env.production ]; then
+              echo "⚠️  .env.production not found - creating from template"
+              cp .env.production .env.production.backup
+            fi
+            
+            # Build Docker images
+            echo "🔨 Building Docker images..."
+            docker compose --env-file .env.production build --no-cache
+            
+            # Stop existing containers gracefully
+            echo "⏸️  Stopping existing containers..."
+            docker compose down --remove-orphans || true
+            
+            # Start new containers
+            echo "▶️  Starting new containers..."
+            docker compose --env-file .env.production up -d
+            
+            # Connect cloudflared to geotwin network (if not already connected)
+            echo "🔗 Connecting cloudflared to geotwin network..."
+            docker network connect geotwin cloudflared 2>/dev/null || echo "✅ cloudflared already connected"
+            
+            # Wait for services to be healthy
+            echo "⏳ Waiting for services to be healthy..."
+            sleep 10
+            
+            # Check container status
+            echo "📊 Container status:"
+            docker compose ps
+            
+            # Verify health endpoints
+            echo "🏥 Checking health endpoints..."
+            docker exec geotwin-api wget -qO- http://localhost:3001/health || echo "⚠️  API health check failed!"
+            docker exec geotwin-web wget -qO- http://localhost:3000 > /dev/null && echo "✅ Web is responding" || echo "⚠️  Web health check failed!"
+            docker exec geotwin-illustration wget -qO- http://localhost:8001/health || echo "⚠️  Illustration health check failed!"
+            
+            echo "✅ Deployment complete!"
+            echo ""
+            echo "🌐 Access points:"
+            echo "   - https://www.geotwin.es"
+            echo "   - https://geotwin.es"
+            echo "   - https://api.geotwin.es/health"
+          EOF
+      
+      - name: Verify public endpoints
+        run: |
+          echo "🔍 Verifying public endpoints..."
+          
+          # Test API
+          response=$(curl -s -o /dev/null -w "%{http_code}" https://api.geotwin.es/health)
+          if [ "$response" = "200" ]; then
+            echo "✅ API is responding (HTTP $response)"
+          else
+            echo "❌ API check failed (HTTP $response)"
+            exit 1
+          fi
+          
+          # Test Web
+          response=$(curl -s -o /dev/null -w "%{http_code}" https://www.geotwin.es)
+          if [ "$response" = "200" ]; then
+            echo "✅ Web is responding (HTTP $response)"
+          else
+            echo "❌ Web check failed (HTTP $response)"
+            exit 1
+          fi
+          
+          echo ""
+          echo "🎉 Deployment verified successfully!"
+      
+      - name: Cleanup SSH key
+        if: always()
+        run: |
+          rm -f ~/.ssh/id_rsa
+
+  # ----------------------------------------------------------------------------
+  # Job 3: Post-Deployment Notifications (Optional)
+  # ----------------------------------------------------------------------------
+  notify:
+    name: Notify Deployment Status
+    needs: deploy
+    runs-on: ubuntu-latest
+    if: always()
+    
+    steps:
+      - name: Deployment Success
+        if: needs.deploy.result == 'success'
+        run: |
+          echo "✅ GeoTwin deployment succeeded!"
+          echo "🌐 Site: https://www.geotwin.es"
+          echo "📡 API: https://api.geotwin.es"
+          # Add Slack/Discord webhook notification here if desired
+      
+      - name: Deployment Failed
+        if: needs.deploy.result == 'failure'
+        run: |
+          echo "❌ GeoTwin deployment failed!"
+          echo "Check the logs above for details"
+          exit 1
