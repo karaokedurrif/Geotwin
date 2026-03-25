@@ -1,0 +1,187 @@
+"""
+Exportación de mallas a 3D Tiles y glTF para CesiumJS.
+
+Genera:
+- tileset.json (jerarquía 3D Tiles con bounding volumes y LODs)
+- Tiles individuales en formato glTF/GLB
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import struct
+from pathlib import Path
+
+import numpy as np
+import trimesh
+
+from .lod import LODLevel
+from .mesh import TerrainMesh
+
+logger = logging.getLogger(__name__)
+
+
+def _mesh_to_glb(mesh: TerrainMesh) -> bytes:
+    """Convierte TerrainMesh a GLB (binary glTF) usando trimesh."""
+    t_mesh = trimesh.Trimesh(
+        vertices=mesh.vertices,
+        faces=mesh.faces,
+        face_normals=mesh.normals if mesh.normals is not None else None,
+    )
+    return t_mesh.export(file_type="glb")
+
+
+def _compute_bounding_volume(mesh: TerrainMesh) -> dict:
+    """Calcula bounding volume para 3D Tiles (region format).
+
+    Region: [west, south, east, north, minHeight, maxHeight] en radianes/metros.
+    """
+    bounds = mesh.bounds
+    west = np.radians(bounds["min_lon"])
+    south = np.radians(bounds["min_lat"])
+    east = np.radians(bounds["max_lon"])
+    north = np.radians(bounds["max_lat"])
+
+    return {
+        "region": [
+            float(west),
+            float(south),
+            float(east),
+            float(north),
+            float(bounds["min_elev"]),
+            float(bounds["max_elev"]),
+        ]
+    }
+
+
+def _mesh_to_b3dm(mesh: TerrainMesh) -> bytes:
+    """Genera un archivo B3DM (Batched 3D Model) con la malla.
+
+    Formato B3DM:
+    - Header (28 bytes): magic, version, byteLength, featureTableJSONByteLength,
+      featureTableBinaryByteLength, batchTableJSONByteLength, batchTableBinaryByteLength
+    - Feature Table JSON
+    - Feature Table Binary
+    - Batch Table JSON
+    - Batch Table Binary
+    - GLB body
+    """
+    glb_data = _mesh_to_glb(mesh)
+
+    # Feature table: BATCH_LENGTH = 0 (no features)
+    feature_table_json = json.dumps({"BATCH_LENGTH": 0}).encode("utf-8")
+    # Pad to 8-byte alignment
+    ft_padding = (8 - len(feature_table_json) % 8) % 8
+    feature_table_json += b" " * ft_padding
+
+    # B3DM header
+    byte_length = 28 + len(feature_table_json) + len(glb_data)
+
+    header = struct.pack(
+        "<4sIIIIII",
+        b"b3dm",  # magic
+        1,  # version
+        byte_length,
+        len(feature_table_json),  # featureTableJSONByteLength
+        0,  # featureTableBinaryByteLength
+        0,  # batchTableJSONByteLength
+        0,  # batchTableBinaryByteLength
+    )
+
+    return header + feature_table_json + glb_data
+
+
+def export_3d_tiles(
+    lods: list[LODLevel],
+    output_dir: Path,
+    twin_id: str = "terrain",
+) -> Path:
+    """Exporta LODs como 3D Tileset.
+
+    Genera:
+    - tileset.json (raíz)
+    - lod0.b3dm, lod1.b3dm, ... (tiles por nivel)
+
+    Args:
+        lods: Lista de LODLevel (de generate_lods).
+        output_dir: Directorio de salida.
+        twin_id: ID del twin (para naming).
+
+    Returns:
+        Ruta al tileset.json generado.
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    if not lods:
+        msg = "No hay LODs para exportar"
+        raise ValueError(msg)
+
+    # L0 = máximo detalle (raíz del tileset)
+    root_mesh = lods[0].mesh
+    bounding_volume = _compute_bounding_volume(root_mesh)
+
+    # Exportar cada LOD como B3DM
+    tile_files: list[str] = []
+    for lod in lods:
+        filename = f"lod{lod.level}.b3dm"
+        b3dm_data = _mesh_to_b3dm(lod.mesh)
+        (output_dir / filename).write_bytes(b3dm_data)
+        tile_files.append(filename)
+        logger.info(
+            "Exportado %s: %d tris, %.1f KB",
+            filename, lod.mesh.face_count, len(b3dm_data) / 1024,
+        )
+
+    # También exportar GLBs para uso directo en Cesium
+    for lod in lods:
+        glb_filename = f"lod{lod.level}.glb"
+        glb_data = _mesh_to_glb(lod.mesh)
+        (output_dir / glb_filename).write_bytes(glb_data)
+
+    # Construir tileset.json con jerarquía de LODs
+    # Estructura: tile raíz (LOD más bajo) con children de mayor detalle
+    # Cesium selecciona el tile cuyo geometric error sea aceptable para la distancia
+
+    def _build_tile(lod_idx: int) -> dict:
+        lod = lods[lod_idx]
+        tile: dict = {
+            "boundingVolume": bounding_volume,
+            "geometricError": lod.geometric_error,
+            "content": {"uri": tile_files[lod_idx]},
+        }
+        # Cada tile tiene como hijo el de mayor detalle
+        if lod_idx > 0:
+            tile["children"] = [_build_tile(lod_idx - 1)]
+            tile["refine"] = "REPLACE"
+        return tile
+
+    # Raíz = LOD de menor detalle (último)
+    root_tile = _build_tile(len(lods) - 1)
+
+    tileset = {
+        "asset": {
+            "version": "1.0",
+            "generator": f"geotwin-engine/{twin_id}",
+        },
+        "geometricError": lods[-1].geometric_error * 2,
+        "root": root_tile,
+    }
+
+    tileset_path = output_dir / "tileset.json"
+    tileset_path.write_text(json.dumps(tileset, indent=2))
+
+    logger.info("Tileset exportado: %s (%d LODs)", tileset_path, len(lods))
+    return tileset_path
+
+
+def export_single_glb(mesh: TerrainMesh, output_path: Path) -> Path:
+    """Exporta una malla como archivo GLB simple (sin tileset).
+
+    Útil para exportación AR/VR (USDZ, Quick Look).
+    """
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    glb_data = _mesh_to_glb(mesh)
+    output_path.write_bytes(glb_data)
+    logger.info("GLB exportado: %s (%.1f KB)", output_path, len(glb_data) / 1024)
+    return output_path

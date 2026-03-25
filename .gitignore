@@ -42,3 +42,8 @@ Thumbs.db
 .cache/
 .vercel
 .env*.local
+data/tiles/
+data/dem/
+*.egg-info/
+__pycache__/
+.venv/
