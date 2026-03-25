@@ -1,5 +1,5 @@
 import { useRouter } from 'next/router';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import dynamic from 'next/dynamic';
 import { twinStore } from '@/lib/twinStore';
 import type { TwinSnapshot, VisualStyle } from '@/lib/twinStore';
@@ -8,6 +8,7 @@ import StudioTopBar from '@/components/studio/StudioTopBar';
 import StudioRightPanel from '@/components/studio/StudioRightPanel';
 import StudioBottomBar from '@/components/studio/StudioBottomBar';
 import StatusBar from '@/ui/shell/StatusBar';
+import { useTileProcessing } from '@/hooks/useTileProcessing';
 import styles from '@/styles/studio.module.css';
 
 // Cesium must be loaded client-side only
@@ -45,6 +46,23 @@ export default function TwinStudioPage() {
   const [viewerRef, setViewerRef] = useState<any>(null);
   const [notFound, setNotFound] = useState(false);
   const [loading, setLoading] = useState(true);
+  const tileProcessing = useTileProcessing(typeof twinId === 'string' ? twinId : undefined);
+
+  // When tile processing completes, load tileset into viewer
+  const handleTileProcessingComplete = useCallback(() => {
+    if (!viewerRef || viewerRef.isDestroyed?.()) return;
+    const Cesium = (window as any).Cesium;
+    if (!Cesium) return;
+    const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3001';
+    const url = `${apiBase}/api/tiles/${encodeURIComponent(twinId as string)}/tileset.json`;
+    Cesium.Cesium3DTileset.fromUrl(url, { maximumScreenSpaceError: 8, maximumMemoryUsage: 256 })
+      .then((tileset: any) => viewerRef.scene.primitives.add(tileset))
+      .catch((err: any) => console.warn('[Studio] Failed to load tileset after processing:', err));
+  }, [viewerRef, twinId]);
+
+  useEffect(() => {
+    if (tileProcessing.status === 'completed') handleTileProcessingComplete();
+  }, [tileProcessing.status, handleTileProcessingComplete]);
 
   // Load snapshot from localStorage
   useEffect(() => {
@@ -185,6 +203,7 @@ export default function TwinStudioPage() {
           visualStyle={visualStyle}
           layerState={layerState}
           snapshot={snapshot}
+          tileProcessing={tileProcessing}
           onVisualStyleChange={(update: Partial<VisualStyle>) => {
             const next = { ...visualStyle, ...update };
             setVisualStyle(next);

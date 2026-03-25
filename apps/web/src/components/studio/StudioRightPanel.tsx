@@ -17,6 +17,8 @@ import {
 } from 'lucide-react';
 import type { TwinSnapshot, VisualStyle } from '@/lib/twinStore';
 import type { StudioMode } from './StudioBottomBar';
+import type { TileProcessingState } from '@/hooks/useTileProcessing';
+import TileProcessingCard from './TileProcessingCard';
 import styles from '@/styles/studio.module.css';
 
 interface StudioRightPanelProps {
@@ -24,6 +26,7 @@ interface StudioRightPanelProps {
   visualStyle: VisualStyle;
   layerState: Record<string, boolean>;
   snapshot: TwinSnapshot;
+  tileProcessing?: TileProcessingState;
   onVisualStyleChange: (update: Partial<VisualStyle>) => void;
   onLayerToggle: (id: string) => void;
 }
@@ -43,6 +46,7 @@ export default function StudioRightPanel({
   visualStyle,
   layerState,
   snapshot,
+  tileProcessing,
   onVisualStyleChange,
   onLayerToggle,
 }: StudioRightPanelProps) {
@@ -54,12 +58,23 @@ export default function StudioRightPanel({
 
       <div className={styles.panelContent}>
         {activeMode === 'terrain' && (
-          <TerrainModeContent
-            style={visualStyle}
-            layers={layerState}
-            onChange={onVisualStyleChange}
-            onLayerToggle={onLayerToggle}
-          />
+          <>
+            {tileProcessing && (
+              <TileProcessingCard
+                status={tileProcessing.status}
+                progress={tileProcessing.progress}
+                currentStep={tileProcessing.currentStep}
+                error={tileProcessing.error}
+                onStart={tileProcessing.startProcessing}
+              />
+            )}
+            <TerrainModeContent
+              style={visualStyle}
+              layers={layerState}
+              onChange={onVisualStyleChange}
+              onLayerToggle={onLayerToggle}
+            />
+          </>
         )}
         {activeMode === 'iot' && <IoTModeContent snapshot={snapshot} />}
         {activeMode === 'ganado' && <GanadoModeContent snapshot={snapshot} />}
