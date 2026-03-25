@@ -249,6 +249,25 @@ export default function Home() {
 
               {/* Mesh generator overlay — tripo3d-style */}
               <MeshGeneratorOverlay tileProcessing={tileProcessing} />
+
+              {/* DEBUG TEST — hardcoded button to verify rendering */}
+              <div style={{
+                position: 'absolute',
+                bottom: 80,
+                left: '50%',
+                transform: 'translateX(-50%)',
+                zIndex: 9999,
+                background: 'lime',
+                padding: '16px 32px',
+                borderRadius: 12,
+                color: 'black',
+                fontSize: 18,
+                fontWeight: 'bold',
+                pointerEvents: 'auto',
+                cursor: 'pointer',
+              }}>
+                🧪 TEST BUTTON — SI VES ESTO FUNCIONA
+              </div>
             </>
           ) : (
             <div className="h-full flex items-center justify-center">
