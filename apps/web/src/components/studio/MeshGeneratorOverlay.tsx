@@ -319,7 +319,7 @@ export default function MeshGeneratorOverlay({ tileProcessing }: MeshGeneratorOv
         bottom: 80,
         left: '50%',
         transform: 'translateX(-50%)',
-        zIndex: 20,
+        zIndex: 1000,
         animation: 'meshCTAFloat 3s ease-in-out infinite',
       }}>
         <button
@@ -373,7 +373,7 @@ export default function MeshGeneratorOverlay({ tileProcessing }: MeshGeneratorOv
         bottom: 80,
         left: '50%',
         transform: 'translateX(-50%)',
-        zIndex: 20,
+        zIndex: 1000,
       }}>
         <div style={{
           display: 'flex',
@@ -424,7 +424,7 @@ export default function MeshGeneratorOverlay({ tileProcessing }: MeshGeneratorOv
     <div style={{
       position: 'absolute',
       inset: 0,
-      zIndex: 15,
+      zIndex: 999,
       pointerEvents: isActive ? 'auto' : 'none',
       transition: 'opacity 1.2s ease',
       opacity: fadeOut ? 0 : 1,
