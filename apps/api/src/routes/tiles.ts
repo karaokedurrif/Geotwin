@@ -3,7 +3,8 @@ import { join } from 'path';
 import { readFile, access, readdir } from 'fs/promises';
 import { constants } from 'fs';
 
-const TILES_DIR = join(process.cwd(), '..', '..', 'data', 'tiles');
+const TILES_DIR = join(process.cwd(), 'data', 'tiles');
+const ENGINE_URL = process.env.ENGINE_URL || 'http://geotwin-engine:8002';
 
 /**
  * Validates twinId to prevent path traversal.
@@ -82,7 +83,7 @@ export async function tilesRouter(fastify: FastifyInstance) {
     }
   });
 
-  // Trigger terrain processing (spawn Python engine)
+  // Trigger terrain processing via engine service (async)
   fastify.post('/tiles/:twinId/process', async (request: FastifyRequest, reply: FastifyReply) => {
     const { twinId } = request.params as { twinId: string };
 
@@ -100,43 +101,54 @@ export async function tilesRouter(fastify: FastifyInstance) {
       return reply.code(404).send({ error: 'Twin geometry not found' });
     }
 
-    // Spawn Python pipeline in background
-    const { spawn } = await import('child_process');
-    const outputDir = join(TILES_DIR, twinId);
-
-    const pythonProcess = spawn('python', [
-      '-m', 'engine',
-      '--input', geojsonPath,
-      '--twin-id', twinId,
-      '--output', outputDir,
-    ], {
-      cwd: join(process.cwd(), '..', '..'),  // repo root
-      env: { ...process.env },
-    });
-
-    let stdout = '';
-    let stderr = '';
-
-    pythonProcess.stdout.on('data', (data: Buffer) => { stdout += data.toString(); });
-    pythonProcess.stderr.on('data', (data: Buffer) => { stderr += data.toString(); });
-
-    return new Promise((resolve) => {
-      pythonProcess.on('close', (code: number) => {
-        if (code === 0) {
-          resolve(reply.send({
-            success: true,
-            twinId,
-            tilesetUrl: `/api/tiles/${twinId}/tileset.json`,
-            output: stdout,
-          }));
-        } else {
-          resolve(reply.code(500).send({
-            success: false,
-            error: `Pipeline failed with code ${code}`,
-            stderr,
-          }));
-        }
+    // Call engine API to start processing
+    try {
+      const engineResp = await fetch(`${ENGINE_URL}/process`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          twin_id: twinId,
+          input_file: `/app/data/twins/${twinId}/geometry.geojson`,
+        }),
       });
-    });
+
+      if (!engineResp.ok) {
+        const err = await engineResp.text();
+        return reply.code(502).send({ error: 'Engine error', detail: err });
+      }
+
+      const job = await engineResp.json() as { job_id: string; status: string };
+      return reply.send({
+        success: true,
+        twinId,
+        jobId: job.job_id,
+        status: job.status,
+        statusUrl: `/api/tiles/${twinId}/job/${job.job_id}`,
+      });
+    } catch (err) {
+      return reply.code(502).send({ error: 'Engine unreachable', detail: String(err) });
+    }
+  });
+
+  // Poll job status from engine
+  fastify.get('/tiles/:twinId/job/:jobId', async (request: FastifyRequest, reply: FastifyReply) => {
+    const { twinId, jobId } = request.params as { twinId: string; jobId: string };
+
+    if (!isValidTwinId(twinId)) {
+      return reply.code(400).send({ error: 'Invalid twinId' });
+    }
+
+    try {
+      const engineResp = await fetch(`${ENGINE_URL}/jobs/${encodeURIComponent(jobId)}`);
+
+      if (!engineResp.ok) {
+        return reply.code(engineResp.status).send({ error: 'Job not found' });
+      }
+
+      const job = await engineResp.json() as Record<string, unknown>;
+      return reply.send(job);
+    } catch (err) {
+      return reply.code(502).send({ error: 'Engine unreachable', detail: String(err) });
+    }
   });
 }
