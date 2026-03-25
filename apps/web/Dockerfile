@@ -15,7 +15,7 @@ ARG NEXT_PUBLIC_CESIUM_ION_TOKEN
 FROM node:18-alpine AS deps
 
 # Install pnpm globally
-RUN npm install -g pnpm@8
+RUN npm install -g pnpm@9
 
 WORKDIR /app
 
@@ -45,7 +45,7 @@ ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL \
     NEXT_PUBLIC_CESIUM_ION_TOKEN=$NEXT_PUBLIC_CESIUM_ION_TOKEN
 
 # Install pnpm globally
-RUN npm install -g pnpm@8
+RUN npm install -g pnpm@9
 
 WORKDIR /app
 

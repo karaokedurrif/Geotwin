@@ -9,7 +9,7 @@
 FROM node:18-alpine AS deps
 
 # Install pnpm globally
-RUN npm install -g pnpm@8
+RUN npm install -g pnpm@9
 
 WORKDIR /app
 
@@ -29,7 +29,7 @@ RUN pnpm install --frozen-lockfile --shamefully-hoist
 FROM node:18-alpine AS builder
 
 # Install pnpm globally
-RUN npm install -g pnpm@8
+RUN npm install -g pnpm@9
 
 WORKDIR /app
 
