@@ -137,7 +137,7 @@ services:
   # TimescaleDB — PostgreSQL + PostGIS + TimescaleDB for IoT time-series
   # ----------------------------------------------------------------------------
   geotwin-db:
-    image: timescale/timescaledb-ha:pg16-ts2.14-postgis
+    image: timescale/timescaledb-ha:pg16
     container_name: geotwin-db
     restart: unless-stopped
     
