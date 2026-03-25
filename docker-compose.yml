@@ -42,6 +42,7 @@ services:
       - COPERNICUS_CLIENT_ID=${COPERNICUS_CLIENT_ID}
       - COPERNICUS_CLIENT_SECRET=${COPERNICUS_CLIENT_SECRET}
       - ENGINE_URL=http://geotwin-engine:8002
+      - DATABASE_URL=postgresql://${DB_USER:-geotwin}:${DB_PASSWORD:-geotwin_secret}@geotwin-db:5432/${DB_NAME:-geotwin}
     
     volumes:
       # Persistent storage for twin datasets (scene.json + geometry.geojson)
@@ -133,6 +134,33 @@ services:
       start_period: 15s
 
   # ----------------------------------------------------------------------------
+  # TimescaleDB — PostgreSQL + PostGIS + TimescaleDB for IoT time-series
+  # ----------------------------------------------------------------------------
+  geotwin-db:
+    image: timescale/timescaledb-ha:pg16-ts2.14-postgis
+    container_name: geotwin-db
+    restart: unless-stopped
+    
+    environment:
+      - POSTGRES_USER=${DB_USER:-geotwin}
+      - POSTGRES_PASSWORD=${DB_PASSWORD:-geotwin_secret}
+      - POSTGRES_DB=${DB_NAME:-geotwin}
+    
+    volumes:
+      - geotwin-db-data:/home/postgres/pgdata/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/001-init.sql:ro
+    
+    networks:
+      - geotwin
+    
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U geotwin"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ----------------------------------------------------------------------------
   # Illustration Service - Python/FastAPI
   # ----------------------------------------------------------------------------
   geotwin-illustration:
@@ -195,3 +223,8 @@ volumes:
   geotwin-dem-cache:
     driver: local
     name: geotwin-dem-cache
+  
+  # PostgreSQL + TimescaleDB data
+  geotwin-db-data:
+    driver: local
+    name: geotwin-db-data

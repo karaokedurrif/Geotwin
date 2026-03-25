@@ -9,6 +9,8 @@ import StudioRightPanel from '@/components/studio/StudioRightPanel';
 import StudioBottomBar from '@/components/studio/StudioBottomBar';
 import StatusBar from '@/ui/shell/StatusBar';
 import { useTileProcessing } from '@/hooks/useTileProcessing';
+import { useIoTData } from '@/hooks/useIoTData';
+import TimelineBar, { useTimeline } from '@/components/studio/TimelineBar';
 import styles from '@/styles/studio.module.css';
 
 // Cesium must be loaded client-side only
@@ -47,6 +49,9 @@ export default function TwinStudioPage() {
   const [notFound, setNotFound] = useState(false);
   const [loading, setLoading] = useState(true);
   const tileProcessing = useTileProcessing(typeof twinId === 'string' ? twinId : undefined);
+  const iot = useIoTData(typeof twinId === 'string' ? twinId : undefined);
+  const timeline = useTimeline(7);
+  const [selectedSensor, setSelectedSensor] = useState<string | null>(null);
 
   // When tile processing completes, load tileset into viewer
   const handleTileProcessingComplete = useCallback(() => {
@@ -234,6 +239,9 @@ export default function TwinStudioPage() {
           layerState={layerState}
           snapshot={snapshot}
           tileProcessing={tileProcessing}
+          iot={iot}
+          selectedSensor={selectedSensor}
+          onSelectSensor={setSelectedSensor}
           onVisualStyleChange={(update: Partial<VisualStyle>) => {
             const next = { ...visualStyle, ...update };
             setVisualStyle(next);
@@ -254,6 +262,20 @@ export default function TwinStudioPage() {
         snapshot={snapshot}
         onModeChange={setActiveMode}
       />
+
+      {/* Timeline bar: visible when in IoT mode */}
+      {activeMode === 'iot' && iot.hasData && (
+        <TimelineBar
+          startTime={timeline.startTime}
+          endTime={timeline.endTime}
+          currentTime={timeline.currentTime}
+          onTimeChange={timeline.setCurrentTime}
+          playing={timeline.playing}
+          onTogglePlay={timeline.togglePlay}
+          speed={timeline.speed}
+          onSpeedChange={timeline.setSpeed}
+        />
+      )}
 
       {/* Status bar: FPS, coords, altitud */}
       <StatusBar viewerRef={viewerRef} version={snapshot.version} />

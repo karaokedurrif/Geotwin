@@ -18,7 +18,9 @@ import {
 import type { TwinSnapshot, VisualStyle } from '@/lib/twinStore';
 import type { StudioMode } from './StudioBottomBar';
 import type { TileProcessingState } from '@/hooks/useTileProcessing';
+import type { IoTDataState } from '@/hooks/useIoTData';
 import TileProcessingCard from './TileProcessingCard';
+import IoTLivePanel from './IoTLivePanel';
 import styles from '@/styles/studio.module.css';
 
 interface StudioRightPanelProps {
@@ -27,6 +29,9 @@ interface StudioRightPanelProps {
   layerState: Record<string, boolean>;
   snapshot: TwinSnapshot;
   tileProcessing?: TileProcessingState;
+  iot?: IoTDataState;
+  selectedSensor: string | null;
+  onSelectSensor: (id: string | null) => void;
   onVisualStyleChange: (update: Partial<VisualStyle>) => void;
   onLayerToggle: (id: string) => void;
 }
@@ -47,6 +52,9 @@ export default function StudioRightPanel({
   layerState,
   snapshot,
   tileProcessing,
+  iot,
+  selectedSensor,
+  onSelectSensor,
   onVisualStyleChange,
   onLayerToggle,
 }: StudioRightPanelProps) {
@@ -76,7 +84,21 @@ export default function StudioRightPanel({
             />
           </>
         )}
-        {activeMode === 'iot' && <IoTModeContent snapshot={snapshot} />}
+        {activeMode === 'iot' && iot && (
+          <IoTLivePanel
+            sensors={iot.sensors}
+            stats={iot.stats}
+            alerts={iot.alerts}
+            timeSeries={iot.timeSeries}
+            loading={iot.loading}
+            hasData={iot.hasData}
+            onSeed={iot.seedData}
+            onRefresh={iot.refresh}
+            onFetchTimeSeries={iot.fetchTimeSeries}
+            selectedSensor={selectedSensor}
+            onSelectSensor={onSelectSensor}
+          />
+        )}
         {activeMode === 'ganado' && <GanadoModeContent snapshot={snapshot} />}
         {activeMode === 'dron' && <DronModeContent snapshot={snapshot} />}
         {activeMode === 'sim' && <SimModeContent snapshot={snapshot} />}
