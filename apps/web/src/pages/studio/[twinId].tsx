@@ -64,35 +64,65 @@ export default function TwinStudioPage() {
     if (tileProcessing.status === 'completed') handleTileProcessingComplete();
   }, [tileProcessing.status, handleTileProcessingComplete]);
 
-  // Load snapshot from localStorage
+  // Load snapshot from localStorage, fallback to API
   useEffect(() => {
     if (!twinId || typeof twinId !== 'string') return;
     
     setLoading(true);
     const snap = twinStore.get(twinId);
     
-    if (!snap) {
-      setNotFound(true);
-      setLoading(false);
+    if (snap) {
+      applySnapshot(snap);
       return;
     }
-    
+
+    // Fallback: load from API (server-side twinId URL)
+    const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3001';
+    fetch(`${apiBase}/api/twin/${encodeURIComponent(twinId)}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (data?.recipe) {
+          // Build minimal snapshot from recipe
+          const recipe = data.recipe;
+          const minSnap: TwinSnapshot = {
+            version: '1.0',
+            twinId,
+            timestamp: new Date().toISOString(),
+            parcel: {
+              sourceFile: recipe.parcel?.file || 'api',
+              name: recipe.parcel?.name || twinId,
+              geojson: recipe.parcel?.geometry || recipe.geometry || null,
+              area_ha: recipe.parcel?.area_ha || 0,
+              centroid: recipe.parcel?.centroid || [0, 0],
+            },
+            layers: {},
+            camera: recipe.camera || { headingDeg: 0, pitchDeg: -45, range_m: 3000, centerLon: 0, centerLat: 0 },
+          } as TwinSnapshot;
+          applySnapshot(minSnap);
+        } else {
+          setNotFound(true);
+          setLoading(false);
+        }
+      })
+      .catch(() => {
+        setNotFound(true);
+        setLoading(false);
+      });
+  }, [twinId]);
+
+  function applySnapshot(snap: TwinSnapshot) {
     setSnapshot(snap);
     setLayerState(snap.layers ?? {});
     
-    // Merge snapshot visualStyle with defaults, ensuring minimum terrain exaggeration
     const loadedStyle = snap.visualStyle ?? DEFAULT_VISUAL_STYLE;
     const mergedStyle: VisualStyle = {
       ...DEFAULT_VISUAL_STYLE,
       ...loadedStyle,
-      // Ensure terrain exaggeration is at least 2.0 for visible relief
       terrainExaggeration: Math.max(loadedStyle.terrainExaggeration ?? 2.5, 2.0),
     };
     setVisualStyle(mergedStyle);
-    console.log('[Studio] Loaded visual style with terrain exaggeration:', mergedStyle.terrainExaggeration);
-    
     setLoading(false);
-  }, [twinId]);
+  }
 
   // Handle dropped JSON files (for sharing)
   const handleDropSnapshot = (e: React.DragEvent) => {

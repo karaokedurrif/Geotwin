@@ -56,6 +56,21 @@ export async function importRouter(fastify: FastifyInstance) {
 
       fastify.log.info(`Twin created: ${recipe.twinId}`);
 
+      // Auto-trigger tile processing (fire-and-forget)
+      const ENGINE_URL = process.env.ENGINE_URL || 'http://geotwin-engine:8002';
+      fetch(`${ENGINE_URL}/process`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          twin_id: recipe.twinId,
+          input_file: `/app/data/twins/${recipe.twinId}/geometry.geojson`,
+        }),
+      }).then(() => {
+        fastify.log.info(`Tile processing triggered for ${recipe.twinId}`);
+      }).catch((err) => {
+        fastify.log.warn(`Tile processing trigger failed for ${recipe.twinId}: ${err}`);
+      });
+
       return reply.send({
         success: true,
         twinId: recipe.twinId,
