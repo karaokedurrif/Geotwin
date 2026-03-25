@@ -109,7 +109,7 @@ export async function dronesRouter(fastify: FastifyInstance) {
       return reply.send({ twinId, missions: [] });
     }
 
-    const missions = [];
+    const missions: any[] = [];
     for (const id of ids) {
       const m = await readJson(missionPath(twinId, id));
       if (m) missions.push(m);
