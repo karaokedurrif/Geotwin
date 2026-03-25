@@ -84,8 +84,8 @@ export default function CesiumViewer({
   terrainEnabled = true, 
   terrainSource = 'world',
   realNDVIEnabled = false,
-  framingMargin = 1.45,
-  terrainExaggeration = 1.0,
+  framingMargin = 1.15,
+  terrainExaggeration = 1.5,
   onViewerReady,
   onLogMessage,
   onStatusUpdate,
@@ -453,7 +453,7 @@ export default function CesiumViewer({
         viewer.clock.shouldAnimate = false; // freeze time — no day/night cycle
         
         // Terrain detail — more triangles visible (lower = more detail)
-        viewer.scene.globe.maximumScreenSpaceError = 1.0; // default is 2.0
+        viewer.scene.globe.maximumScreenSpaceError = 0.5; // default is 2.0, lower = sharper tiles
         
         // Depth test against terrain (prevents entities clipping through ground)
         viewer.scene.globe.depthTestAgainstTerrain = true;
@@ -1784,7 +1784,7 @@ async function flyToIsometric(
 
   // PHASE 1 FIX: Better camera angle to show terrain relief
   const heading = Cesium.Math.toRadians(315); // 315° = looking from SE toward NW (classic isometric)
-  const pitch = Cesium.Math.toRadians(-38);   // -38° = slightly less steep than -45° to show more terrain face
+  const pitch = Cesium.Math.toRadians(-32);   // -32° = more oblique to emphasize terrain relief
   
   // Sample terrain at parcel center for true ground height
   const centerCarto = Cesium.Cartographic.fromCartesian(boundingSphere.center);
@@ -1806,8 +1806,8 @@ async function flyToIsometric(
     const radius = boundingSphere.radius;
 
     // Range: close enough to see terrain detail, far enough to see full parcel
-    // For 134 ha (radius ~650m), target range ~1800-2200m
-    const range = Math.max(radius * 2.0 * marginFactor, 400);
+    // Pitch-compensated: at -32° the horizontal FOV captures more ground
+    const range = Math.max(radius * 1.6 * marginFactor, 350);
 
     if (!sampledCenter) {
       throw new Error('Terrain sampling returned no results');
@@ -1835,7 +1835,7 @@ async function flyToIsometric(
   } catch (error) {
     console.warn('[flyToIsometric] Terrain sampling failed, using fallback:', error);
     // Fallback to old method
-    const range = Math.max(boundingSphere.radius * 2.2 * marginFactor, 150);
+    const range = Math.max(boundingSphere.radius * 1.8 * marginFactor, 150);
     await viewer.camera.flyToBoundingSphere(boundingSphere, {
       offset: new Cesium.HeadingPitchRange(heading, pitch, range),
       duration: 1.2,
