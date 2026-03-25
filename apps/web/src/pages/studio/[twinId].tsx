@@ -11,6 +11,7 @@ import StatusBar from '@/ui/shell/StatusBar';
 import { useTileProcessing } from '@/hooks/useTileProcessing';
 import { useIoTData } from '@/hooks/useIoTData';
 import TimelineBar, { useTimeline } from '@/components/studio/TimelineBar';
+import MeshGeneratorOverlay from '@/components/studio/MeshGeneratorOverlay';
 import styles from '@/styles/studio.module.css';
 
 // Cesium must be loaded client-side only
@@ -221,6 +222,11 @@ export default function TwinStudioPage() {
             activeMode={activeMode}
             onViewerReady={setViewerRef}
           />
+          
+          {/* Mesh generator overlay — tripo3d-style visual effect */}
+          {activeMode === 'terrain' && (
+            <MeshGeneratorOverlay tileProcessing={tileProcessing} />
+          )}
           
           {/* Simulator Mode Overlay - activo solo en modo 'sim' */}
           {activeMode === 'sim' && viewerRef && (
