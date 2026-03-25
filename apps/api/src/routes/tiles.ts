@@ -51,7 +51,7 @@ export async function tilesRouter(fastify: FastifyInstance) {
     }
 
     // Whitelist allowed extensions
-    const allowedExtensions = ['.json', '.b3dm', '.glb', '.geojson'];
+    const allowedExtensions = ['.json', '.b3dm', '.glb', '.geojson', '.tif', '.png', '.pgw'];
     const ext = filename.slice(filename.lastIndexOf('.'));
     if (!allowedExtensions.includes(ext)) {
       return reply.code(403).send({ error: 'File type not allowed' });
@@ -72,6 +72,9 @@ export async function tilesRouter(fastify: FastifyInstance) {
         '.b3dm': 'application/octet-stream',
         '.glb': 'model/gltf-binary',
         '.geojson': 'application/geo+json',
+        '.tif': 'image/tiff',
+        '.png': 'image/png',
+        '.pgw': 'text/plain',
       };
 
       return reply

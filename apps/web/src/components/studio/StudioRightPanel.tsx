@@ -225,7 +225,7 @@ function TerrainModeContent({
           { id: 'parcel-fill', label: 'Relleno catastral' },
           { id: 'parcel-boundary-line', label: 'Contorno dorado' },
           { id: 'parcel-plinth', label: 'Corte geológico' },
-          { id: 'ndvi', label: 'NDVI vegetación' },
+          { id: 'ndvi', label: 'NDVI Real (Sentinel-2)' },
         ].map((layer) => (
           <ToggleRow
             key={layer.id}

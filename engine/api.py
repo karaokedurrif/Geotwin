@@ -123,6 +123,7 @@ def _run_pipeline(job_id: str, req: ProcessRequest) -> None:
             "processing_time_s": round(result.processing_time_s, 2),
             "tileset_path": result.tileset_path,
             "glb_path": result.glb_path,
+            "ndvi": result.ndvi,
         }
         logger.info("Job %s completed: %s", job_id, result.twin_id)
 
@@ -159,3 +160,33 @@ def get_job(job_id: str):
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     return job
+
+
+@app.get("/ndvi/{twin_id}")
+def get_ndvi_status(twin_id: str):
+    """Check if NDVI data exists for a twin."""
+    import re
+    if not re.match(r"^[a-zA-Z0-9_-]{1,64}$", twin_id):
+        raise HTTPException(status_code=400, detail="Invalid twinId")
+
+    tiles_dir = settings.tiles_dir / twin_id
+    ndvi_tif = tiles_dir / "ndvi_real.tif"
+    colormap = tiles_dir / "ndvi_colormap.png"
+
+    if ndvi_tif.exists():
+        import json
+        result_file = tiles_dir / "pipeline_result.json"
+        ndvi_info = {}
+        if result_file.exists():
+            data = json.loads(result_file.read_text())
+            ndvi_info = data.get("ndvi", {}) or {}
+
+        return {
+            "available": True,
+            "twin_id": twin_id,
+            "ndvi_tif": str(ndvi_tif),
+            "colormap_png": str(colormap) if colormap.exists() else None,
+            **ndvi_info,
+        }
+
+    return {"available": False, "twin_id": twin_id}

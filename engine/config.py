@@ -34,6 +34,10 @@ class EngineSettings(BaseSettings):
     # CRS
     target_crs: str = Field(default="EPSG:4326", description="CRS de salida")
 
+    # Copernicus Data Space (Sentinel-2 NDVI)
+    copernicus_client_id: str = Field(default="", description="CDSE OAuth2 client ID")
+    copernicus_client_secret: str = Field(default="", description="CDSE OAuth2 client secret")
+
     model_config = {"env_prefix": "GEOTWIN_ENGINE_"}
 
 

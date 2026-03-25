@@ -46,6 +46,7 @@ class PipelineResult:
     lod_count: int
     processing_time_s: float
     steps_completed: list[str]
+    ndvi: dict | None = None  # NDVI real stats if available
 
 
 def process_twin(
@@ -164,7 +165,35 @@ def process_twin(
     glb_path = output_dir / f"{twin_id}.glb"
     export_single_glb(mesh, glb_path)
 
-    # ─── 7. Guardar metadatos ───────────────────────────────────────────
+    # ─── 7. NDVI real desde Sentinel-2 (opcional) ───────────────────────
+    ndvi_result = None
+    copernicus_id = settings.copernicus_client_id
+    copernicus_secret = settings.copernicus_client_secret
+
+    if copernicus_id and copernicus_secret:
+        try:
+            _progress("Calculando NDVI real (Sentinel-2)", 90)
+            from .raster.sentinel import compute_ndvi_from_sentinel
+
+            ndvi_result = compute_ndvi_from_sentinel(
+                aoi_feature,
+                output_dir,
+                client_id=copernicus_id,
+                client_secret=copernicus_secret,
+                max_cloud_cover=30.0,
+                days_back=120,
+            )
+            logger.info(
+                "NDVI real: mean=%.3f, fecha=%s",
+                ndvi_result["stats"]["mean"], ndvi_result["date"],
+            )
+        except Exception as e:
+            logger.warning("NDVI real no disponible: %s", e)
+            ndvi_result = None
+    else:
+        logger.info("NDVI real omitido: credenciales Copernicus no configuradas")
+
+    # ─── 8. Guardar metadatos ───────────────────────────────────────────
     _progress("Finalizando", 95)
 
     elapsed = time.monotonic() - t0
@@ -180,6 +209,12 @@ def process_twin(
         lod_count=len(lods),
         processing_time_s=elapsed,
         steps_completed=steps,
+        ndvi={
+            "date": ndvi_result["date"],
+            "stats": ndvi_result["stats"],
+            "ndvi_path": ndvi_result["ndvi_path"],
+            "colormap_path": ndvi_result["colormap_path"],
+        } if ndvi_result else None,
     )
 
     # Guardar resumen

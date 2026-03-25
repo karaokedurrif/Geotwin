@@ -233,6 +233,69 @@ async function loadTerrainTileset(
 }
 
 /**
+ * Loads real NDVI colormap overlay from the tiles API if available.
+ * Uses SingleTileImageryProvider to display the PNG over the parcel bbox.
+ */
+async function loadNDVIOverlay(
+  viewer: any,
+  twinId: string,
+  snapshot: any,
+): Promise<any | null> {
+  const Cesium = window.Cesium;
+  if (!Cesium) return null;
+
+  const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3001';
+
+  try {
+    // Check if NDVI colormap exists
+    const statusUrl = `${apiBase}/api/tiles/${encodeURIComponent(twinId)}/status`;
+    const res = await fetch(statusUrl);
+    if (!res.ok) return null;
+    const status = await res.json();
+
+    if (!status.available || !status.files?.includes('ndvi_colormap.png')) {
+      console.log('[StudioViewer] No NDVI overlay available for', twinId);
+      return null;
+    }
+
+    // Get bbox from snapshot parcel geometry
+    const coords = snapshot?.parcel?.geojson?.features?.[0]?.geometry?.coordinates?.[0]
+      || snapshot?.parcel?.geojson?.geometry?.coordinates?.[0];
+    if (!coords) return null;
+
+    let minLon = Infinity, minLat = Infinity, maxLon = -Infinity, maxLat = -Infinity;
+    for (const c of coords) {
+      if (c[0] < minLon) minLon = c[0];
+      if (c[0] > maxLon) maxLon = c[0];
+      if (c[1] < minLat) minLat = c[1];
+      if (c[1] > maxLat) maxLat = c[1];
+    }
+
+    const colormapUrl = `${apiBase}/api/tiles/${encodeURIComponent(twinId)}/ndvi_colormap.png`;
+    console.log('[StudioViewer] Loading NDVI overlay:', colormapUrl);
+
+    const provider = await Cesium.SingleTileImageryProvider.fromUrl(colormapUrl, {
+      rectangle: Cesium.Rectangle.fromDegrees(minLon, minLat, maxLon, maxLat),
+    });
+
+    const layer = viewer.imageryLayers.addImageryProvider(provider);
+    layer.alpha = 0.55;
+    layer.brightness = 1.0;
+    layer.contrast = 1.1;
+    layer.show = false; // Start hidden, toggled via 'ndvi' layer toggle
+    viewer.imageryLayers.raiseToTop(layer);
+
+    // Store reference for layer toggling
+    (viewer as any)._ndviOverlayLayer = layer;
+    console.log('[StudioViewer] ✅ NDVI real overlay loaded (hidden by default, toggle with ndvi layer)');
+    return layer;
+  } catch (err) {
+    console.warn('[StudioViewer] NDVI overlay load failed (non-critical):', err);
+    return null;
+  }
+}
+
+/**
  * Espera que el globe tenga tiles cargados (evento real de Cesium)
  * SIN timeout artificial - usa el evento real de Cesium
  */
@@ -715,6 +778,9 @@ export default function StudioViewer({
         // Load terrain 3D Tileset if available (non-blocking)
         loadTerrainTileset(viewer, snapshot.twinId).catch(() => {});
 
+        // Load NDVI real overlay if available (non-blocking)
+        loadNDVIOverlay(viewer, snapshot.twinId, snapshot).catch(() => {});
+
         // ── FINAL VERIFICATION ────────────────────────────────────────
         console.log('[StudioViewer] ═══════════════════════════════════════');
         console.log('[StudioViewer] FINAL TERRAIN STATUS:');
@@ -826,6 +892,16 @@ export default function StudioViewer({
 
     // Update entity visibility based on layerState
     Object.entries(layerState).forEach(([layerId, visible]) => {
+      // Special case: NDVI is an imagery layer, not an entity
+      if (layerId === 'ndvi') {
+        const ndviLayer = (viewer as any)._ndviOverlayLayer;
+        if (ndviLayer) {
+          ndviLayer.show = visible;
+          console.log(`[StudioViewer] ndvi overlay: ${visible ? 'visible' : 'hidden'}`);
+        }
+        return;
+      }
+
       const entity = viewer.entities.getById(layerId);
       if (entity) {
         entity.show = visible;

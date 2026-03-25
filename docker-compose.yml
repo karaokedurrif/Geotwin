@@ -111,6 +111,8 @@ services:
       - GEOTWIN_ENGINE_DATA_DIR=/app/data
       - GEOTWIN_ENGINE_TILES_DIR=/app/data/tiles
       - GEOTWIN_ENGINE_DEM_DIR=/app/data/dem
+      - GEOTWIN_ENGINE_COPERNICUS_CLIENT_ID=${COPERNICUS_CLIENT_ID}
+      - GEOTWIN_ENGINE_COPERNICUS_CLIENT_SECRET=${COPERNICUS_CLIENT_SECRET}
     
     volumes:
       # Shared tiles volume — API reads, engine writes
