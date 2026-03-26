@@ -19,7 +19,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         'Referer': 'https://www.ign.es/',
       },
       signal: controller.signal,
-    });
+      cache: 'no-store',
+    } as any);
     clearTimeout(timeout);
 
     // Forward the upstream HTTP status — don't mask errors as 200
@@ -40,7 +41,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     res.setHeader('Cache-Control', 'public, max-age=86400');
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.status(200).send(Buffer.from(buffer));
-  } catch (error) {
+  } catch (error: any) {
+    console.error('[PNOA proxy] Error:', error?.name, error?.message);
     res.status(502).send('PNOA proxy error');
   }
 }
