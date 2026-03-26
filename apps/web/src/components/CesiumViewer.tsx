@@ -920,28 +920,23 @@ export default function CesiumViewer({
       if (currentSessionRef.current !== session) return;
       if (!viewer || viewer.isDestroyed() || !viewer.imageryLayers) return;
       
-      // ── Always add PNOA for Spain (works without Ion, high-res orthophoto) ──
+      // ── PNOA via WMTS (tiles pre-renderizados, más rápido y nítido que WMS) ──
       try {
         const layers = viewer.imageryLayers;
-        const pnoaWMS = new Cesium.WebMapServiceImageryProvider({
-          url: '/api/pnoa',
-          layers: 'OI.OrthoimageCoverage',
-          parameters: {
-            transparent: false,
-            format: 'image/jpeg',
-            VERSION: '1.3.0',
-          },
-          rectangle: Cesium.Rectangle.fromDegrees(-9.5, 35.5, 4.5, 44.0), // Spain bounds
-          tileWidth: 512,   // Mayor resolución por tile (default 256)
-          tileHeight: 512,
+        const pnoaWMTS = new Cesium.WebMapTileServiceImageryProvider({
+          url: '/api/pnoa-wmts',
+          layer: 'OI.OrthoimageCoverage',
+          style: 'default',
+          tileMatrixSetID: 'GoogleMapsCompatible',
+          format: 'image/jpeg',
           maximumLevel: 20,
           credit: 'PNOA - IGN España',
         });
         
-        layers.addImageryProvider(pnoaWMS);
-        logMessage('✓ PNOA imagery added (IGN España)', 'success');
+        layers.addImageryProvider(pnoaWMTS);
+        logMessage('✓ PNOA WMTS imagery added (IGN España)', 'success');
       } catch (pnoaError) {
-        logMessage('PNOA imagery failed (optional)', 'warn');
+        logMessage('PNOA WMTS failed (optional)', 'warn');
       }
       
       // Set final status - OSM + PNOA is perfectly good even without Ion

@@ -695,39 +695,32 @@ export default function StudioViewer({
 
         console.log('[StudioViewer] ✓ Viewer created with OSM base imagery');
         
-        // ── UPGRADE TO PNOA FOR SPAIN via PROXY (resuelve CORS) ──────────────────
-        // El WMS del IGN bloquea requests directos desde browser (CORS).
-        // Usamos /api/pnoa como proxy local que re-envía las peticiones al IGN.
-        // El proxy está en: src/pages/api/pnoa.ts
+        // ── UPGRADE TO PNOA via WMTS (tiles pre-renderizados, más rápido y nítido) ──
+        // WMTS sirve tiles ya cacheados por IGN (vs WMS que renderiza al vuelo).
+        // Proxy en: src/pages/api/pnoa-wmts.ts → https://www.ign.es/wmts/pnoa-ma
         try {
-          const pnoaWMS = new Cesium.WebMapServiceImageryProvider({
-            url: '/api/pnoa',  // ← PROXY LOCAL, no el IGN directamente
-            layers: 'OI.OrthoimageCoverage',
-            parameters: {
-              transparent: false,
-              format: 'image/jpeg',  // jpeg más rápido que png para ortofoto
-              VERSION: '1.3.0',
-              CRS: 'CRS:84',
-            },
-            rectangle: Cesium.Rectangle.fromDegrees(-9.5, 35.5, 4.5, 44.0),
-            tileWidth: 512,   // Mayor resolución por tile (default 256)
-            tileHeight: 512,
+          const pnoaWMTS = new Cesium.WebMapTileServiceImageryProvider({
+            url: '/api/pnoa-wmts',
+            layer: 'OI.OrthoimageCoverage',
+            style: 'default',
+            tileMatrixSetID: 'GoogleMapsCompatible',
+            format: 'image/jpeg',
             maximumLevel: 20,
             credit: 'PNOA © IGN España',
           });
           
-          const pnoaLayer = viewer.imageryLayers.addImageryProvider(pnoaWMS);
+          const pnoaLayer = viewer.imageryLayers.addImageryProvider(pnoaWMTS);
           // Raise PNOA above the Bing base so it's the visible layer
           viewer.imageryLayers.raiseToTop(pnoaLayer);
           
           // Log tile errors so we can diagnose dark terrain issues
-          pnoaWMS.errorEvent.addEventListener((err: any) => {
+          pnoaWMTS.errorEvent.addEventListener((err: any) => {
             console.warn('[StudioViewer] ⚠️ PNOA tile error:', err.message || err);
           });
           
-          console.log('[StudioViewer] ✓ PNOA imagery via proxy /api/pnoa');
+          console.log('[StudioViewer] ✓ PNOA WMTS imagery loaded');
         } catch (pnoaError) {
-          console.warn('[StudioViewer] PNOA proxy failed:', pnoaError);
+          console.warn('[StudioViewer] PNOA WMTS failed:', pnoaError);
         }
 
         // ── Enhanced Free Flight Camera Controls (Helicopter Mode) ──────────────
