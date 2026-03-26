@@ -18,7 +18,7 @@ function isValidTwinId(id: string): boolean {
  */
 export async function tilesRouter(fastify: FastifyInstance) {
 
-  // Check if tiles exist for a twin
+  // Check if tiles exist for a twin (checks both tiles/{twinId}/ and data/{twinId}/tiles/)
   fastify.get('/tiles/:twinId/status', async (request: FastifyRequest, reply: FastifyReply) => {
     const { twinId } = request.params as { twinId: string };
 
@@ -26,20 +26,27 @@ export async function tilesRouter(fastify: FastifyInstance) {
       return reply.code(400).send({ error: 'Invalid twinId' });
     }
 
-    const tilesetPath = join(TILES_DIR, twinId, 'tileset.json');
+    // Try primary location first
+    const primaryDir = join(TILES_DIR, twinId);
+    const primaryTileset = join(primaryDir, 'tileset.json');
+    // Also check alternative location (engine may write here)
+    const altDir = join(process.cwd(), 'data', twinId, 'tiles');
+    const altTileset = join(altDir, 'tileset.json');
 
-    try {
-      await access(tilesetPath, constants.R_OK);
-      const files = await readdir(join(TILES_DIR, twinId));
-      return reply.send({
-        available: true,
-        twinId,
-        files,
-        tilesetUrl: `/api/tiles/${twinId}/tileset.json`,
-      });
-    } catch {
-      return reply.send({ available: false, twinId });
+    for (const [dir, tileset] of [[primaryDir, primaryTileset], [altDir, altTileset]] as const) {
+      try {
+        await access(tileset, constants.R_OK);
+        const files = await readdir(dir);
+        return reply.send({
+          available: true,
+          twinId,
+          files,
+          tilesetUrl: `/api/tiles/${twinId}/tileset.json`,
+        });
+      } catch { /* not found here, try next */ }
     }
+
+    return reply.send({ available: false, twinId });
   });
 
   // Serve tile files (tileset.json, *.b3dm, *.glb)

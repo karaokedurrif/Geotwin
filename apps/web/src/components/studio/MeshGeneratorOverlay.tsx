@@ -21,6 +21,7 @@ interface MeshGeneratorOverlayProps {
     east: number;
     north: number;
   };
+  polygonCoords?: [number, number][]; // lon/lat ring for point-in-polygon test
 }
 
 // ── Stage mapping from job status + progress ─────────────────────────────────
@@ -50,12 +51,28 @@ const STAGE_LABELS: Record<VisualStage, string> = {
 const GRID_COLS = 28;
 const GRID_ROWS = 16;
 
+/** Ray-casting point-in-polygon test */
+function pointInPolygon(px: number, py: number, ring: [number, number][]): boolean {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const xi = ring[i][0], yi = ring[i][1];
+    const xj = ring[j][0], yj = ring[j][1];
+    if ((yi > py) !== (yj > py) && px < (xj - xi) * (py - yi) / (yj - yi) + xi) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
+interface GridVertex {
+  x: number; y: number; baseY: number;
+  targetY: number; currentY: number;
+  inside: boolean; // true if inside polygon
+}
+
 /** Sample real terrain elevation from Cesium's terrain provider */
 function useTerrainElevation(
-  gridRef: React.MutableRefObject<Array<{
-    x: number; y: number; baseY: number;
-    targetY: number; currentY: number;
-  }>>,
+  gridRef: React.MutableRefObject<GridVertex[]>,
   viewerRef: any | undefined,
   parcelBounds: { west: number; south: number; east: number; north: number } | undefined,
 ) {
@@ -107,10 +124,9 @@ function useCanvasAnimation(
   canvasRef: React.RefObject<HTMLCanvasElement | null>,
   stage: VisualStage,
   progress: number,
-  externalGridRef?: React.MutableRefObject<Array<{
-    x: number; y: number; baseY: number;
-    targetY: number; currentY: number;
-  }>>,
+  externalGridRef?: React.MutableRefObject<GridVertex[]>,
+  polygonCoords?: [number, number][],
+  parcelBounds?: { west: number; south: number; east: number; north: number },
 ) {
   const frameRef = useRef(0);
   const particlesRef = useRef<Array<{
@@ -121,10 +137,7 @@ function useCanvasAnimation(
   }>>([]);
 
   // Grid vertices for wireframe — use external ref if provided
-  const internalGridRef = useRef<Array<{
-    x: number; y: number; baseY: number;
-    targetY: number; currentY: number;
-  }>>([]);
+  const internalGridRef = useRef<GridVertex[]>([]);
   const gridRef = externalGridRef || internalGridRef;
 
   useEffect(() => {
@@ -166,12 +179,21 @@ function useCanvasAnimation(
             Math.sin(x * 3.2) * 0.12 +
             Math.cos(baseY * 2.8 + x) * 0.08 +
             Math.sin(x * 5 + baseY * 3) * 0.04;
+          // Check if this grid cell is inside the polygon (if polygon coords available)
+          let inside = true;
+          if (polygonCoords && polygonCoords.length > 2 && parcelBounds) {
+            const { west, south, east, north } = parcelBounds;
+            const lon = west + (c / (cols - 1)) * (east - west);
+            const lat = south + (r / (rows - 1)) * (north - south);
+            inside = pointInPolygon(lon, lat, polygonCoords);
+          }
           gridRef.current.push({
             x,
             y: baseY,
             baseY,
             targetY: baseY + elev,
             currentY: baseY,
+            inside,
           });
         }
       }
@@ -274,6 +296,9 @@ function useCanvasAnimation(
               const i2 = (r + 1) * cols + c;
               const i3 = (r + 1) * cols + c + 1;
 
+              // Skip quads where any vertex is outside polygon
+              if (!grid[i0].inside || !grid[i1].inside || !grid[i2].inside || !grid[i3].inside) continue;
+
               const [x0, y0] = project(grid[i0].x, grid[i0].currentY);
               const [x1, y1] = project(grid[i1].x, grid[i1].currentY);
               const [x2, y2] = project(grid[i2].x, grid[i2].currentY);
@@ -302,33 +327,38 @@ function useCanvasAnimation(
           : `rgba(59, 130, 246, ${0.4 + 0.3 * morphProgress})`;
         ctx!.lineWidth = stage === 'texturing' ? 0.5 : 0.8;
 
-        // Horizontal lines
+        // Horizontal lines (only between inside vertices)
         for (let r = 0; r < rows; r++) {
           ctx!.beginPath();
+          let drawing = false;
           for (let c = 0; c < cols; c++) {
             const v = grid[r * cols + c];
+            if (!v.inside) { drawing = false; continue; }
             const [px, py] = project(v.x, v.currentY);
-            if (c === 0) ctx!.moveTo(px, py);
+            if (!drawing) { ctx!.moveTo(px, py); drawing = true; }
             else ctx!.lineTo(px, py);
           }
           ctx!.stroke();
         }
 
-        // Vertical lines
+        // Vertical lines (only between inside vertices)
         for (let c = 0; c < cols; c++) {
           ctx!.beginPath();
+          let drawing = false;
           for (let r = 0; r < rows; r++) {
             const v = grid[r * cols + c];
+            if (!v.inside) { drawing = false; continue; }
             const [px, py] = project(v.x, v.currentY);
-            if (r === 0) ctx!.moveTo(px, py);
+            if (!drawing) { ctx!.moveTo(px, py); drawing = true; }
             else ctx!.lineTo(px, py);
           }
           ctx!.stroke();
         }
 
-        // Vertex dots
+        // Vertex dots (only inside vertices)
         if (stage === 'meshing') {
           for (const v of grid) {
+            if (!v.inside) continue;
             const [px, py] = project(v.x, v.currentY);
             ctx!.beginPath();
             ctx!.arc(px, py, 1.5, 0, Math.PI * 2);
@@ -358,7 +388,7 @@ function useCanvasAnimation(
 
 // ── Main Component ───────────────────────────────────────────────────────────
 
-export default function MeshGeneratorOverlay({ tileProcessing, viewerRef, parcelBounds }: MeshGeneratorOverlayProps) {
+export default function MeshGeneratorOverlay({ tileProcessing, viewerRef, parcelBounds, polygonCoords }: MeshGeneratorOverlayProps) {
   const { status, progress, currentStep, error, startProcessing, tilesAvailable } = tileProcessing;
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const stage = resolveStage(status, progress);
@@ -366,12 +396,9 @@ export default function MeshGeneratorOverlay({ tileProcessing, viewerRef, parcel
   const [dismissed, setDismissed] = useState(false);
 
   // Reference to grid for terrain sampling
-  const gridRef = useRef<Array<{
-    x: number; y: number; baseY: number;
-    targetY: number; currentY: number;
-  }>>([]);
+  const gridRef = useRef<GridVertex[]>([]);
 
-  useCanvasAnimation(canvasRef, stage, progress, gridRef);
+  useCanvasAnimation(canvasRef, stage, progress, gridRef, polygonCoords, parcelBounds);
   useTerrainElevation(gridRef, viewerRef, parcelBounds);
 
   // Auto-dismiss done state after 3s

@@ -1,12 +1,15 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import {
   ChevronLeft,
+  ChevronDown,
   Image,
   Palette,
-  FileImage,
   Map,
   Package,
+  Download,
+  Box,
   Loader2,
+  Glasses,
 } from 'lucide-react';
 import type { TwinSnapshot, VisualStyle } from '@/lib/twinStore';
 import styles from '@/styles/studio.module.css';
@@ -19,8 +22,9 @@ interface StudioTopBarProps {
   viewerRef?: any;  // Cesium.Viewer reference
   onExport: () => void;
   onBackToCapture: () => void;
-  onGenerateMesh?: () => void;  // Trigger 3D terrain mesh generation (GLB + 3D Tiles)
-  meshStatus?: string;  // 'idle' | 'running' | 'completed' | etc.
+  onGenerateMesh?: () => void;
+  meshStatus?: string;
+  twinId?: string;
 }
 
 export default function StudioTopBar({
@@ -31,101 +35,81 @@ export default function StudioTopBar({
   onBackToCapture,
   onGenerateMesh,
   meshStatus,
+  twinId,
 }: StudioTopBarProps) {
   const [illustrationUrl, setIllustrationUrl] = useState<string | null>(null);
   const [illustrationBlob, setIllustrationBlob] = useState<Blob | null>(null);
   const [showIllustrationModal, setShowIllustrationModal] = useState(false);
-  const [capturingHQ, setCapturingHQ] = useState(false);
-  const [capturingRaw, setCapturingRaw] = useState(false);
-  const [capturingCenital, setCapturingCenital] = useState(false);
+  const [exporting, setExporting] = useState<string | null>(null); // track which export is running
+  const [showExportMenu, setShowExportMenu] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
 
-  // Captura HQ directa desde canvas de Cesium (contorno)
-  const handleCaptureHQ = async (viewAngle: 'helicopter' | 'isometric' | 'lateral' | 'current' = 'current') => {
-    if (!viewerRef) {
-      alert('Viewer no disponible. Espera a que el visor 3D esté cargado.');
-      return;
-    }
-    
-    setCapturingHQ(true);
+  // Close dropdown on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setShowExportMenu(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  // ── Capture helpers ────────────────────────────────────────────────
+  const runCapture = async (name: string, viewAngle: string, pixelRatio: number, boundaryOnly: boolean, download?: string) => {
+    if (!viewerRef) return;
+    setExporting(name);
     try {
-      console.log('[TopBar] 📸 Iniciando captura HQ desde canvas (SOLO CONTORNO)...');
-      
       const blob = await captureHQIllustration({
-        viewer: viewerRef,
-        snapshot,
-        viewAngle,
-        pixelRatio: 3,
-        style: visualStyle?.preset as any ?? 'natural',
-        boundaryOnly: true,
+        viewer: viewerRef, snapshot, viewAngle: viewAngle as any,
+        pixelRatio, style: visualStyle?.preset as any ?? 'natural', boundaryOnly,
       });
-      
-      const url = URL.createObjectURL(blob);
-      setIllustrationUrl(url);
-      setIllustrationBlob(blob);
-      setShowIllustrationModal(true);
-      
-      console.log('[TopBar] ✅ Captura HQ completada (recortada a contorno)');
-    } catch (error) {
-      console.error('[TopBar] ❌ Error en captura HQ:', error);
-      alert('Error capturando imagen. Verifica que el visor 3D esté completamente cargado.');
+      if (download) {
+        downloadBlob(blob, download);
+      } else {
+        const url = URL.createObjectURL(blob);
+        setIllustrationUrl(url);
+        setIllustrationBlob(blob);
+        setShowIllustrationModal(true);
+      }
+    } catch (e: any) {
+      console.error(`[Export] ${name} failed:`, e);
+      alert(`Error: ${e.message}`);
     } finally {
-      setCapturingHQ(false);
+      setExporting(null);
+      setShowExportMenu(false);
     }
   };
 
-  // Captura 4K Raw (5x resolución, canvas completo sin recorte)
-  const handleCapture4KRaw = async () => {
-    if (!viewerRef) {
-      alert('Viewer no disponible. Espera a que el visor 3D esté cargado.');
-      return;
-    }
-    setCapturingRaw(true);
+  const handleCenitalHD = () => runCapture('cenital', 'top', 3, true, `geotwin_${snapshot.twinId}_cenital_HD.png`);
+  const handleVista3D = () => runCapture('vista3d', 'current', 2, false);
+  const handleNDVIMap = () => runCapture('ndvi', 'top', 3, true, `geotwin_${snapshot.twinId}_ndvi_map.png`);
+
+  const handleDownloadGLB = async () => {
+    setExporting('glb');
+    setShowExportMenu(false);
     try {
-      console.log('[TopBar] 🖼️ Capturando canvas 4K raw (5x sin recorte)...');
-      const blob = await captureHQIllustration({
-        viewer: viewerRef,
-        snapshot,
-        viewAngle: 'current',
-        pixelRatio: 5,
-        style: visualStyle?.preset as any ?? 'natural',
-        boundaryOnly: false,
-      });
-      downloadBlob(blob, `geotwin_${snapshot.twinId}_4K_raw.png`);
-      console.log('[TopBar] ✅ 4K Raw descargado');
-    } catch (error) {
-      console.error('[TopBar] ❌ Error en captura 4K Raw:', error);
-      alert('Error capturando 4K Raw');
+      const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3001';
+      const id = twinId || snapshot.twinId;
+      const res = await fetch(`${apiBase}/api/tiles/${encodeURIComponent(id)}/terrain_lod0.glb`);
+      if (!res.ok) throw new Error('GLB not available — generate mesh first');
+      const blob = await res.blob();
+      downloadBlob(blob, `geotwin_${id}_3d_model.glb`);
+    } catch (e: any) {
+      alert(e.message);
     } finally {
-      setCapturingRaw(false);
+      setExporting(null);
     }
   };
 
-  // Captura cenital (vista 90° desde arriba)
-  const handleCaptureCenital = async () => {
-    if (!viewerRef) {
-      alert('Viewer no disponible. Espera a que el visor 3D esté cargado.');
-      return;
-    }
-    setCapturingCenital(true);
-    try {
-      console.log('[TopBar] 🗺️ Capturando vista cenital...');
-      const blob = await captureHQIllustration({
-        viewer: viewerRef,
-        snapshot,
-        viewAngle: 'top',
-        pixelRatio: 3,
-        style: visualStyle?.preset as any ?? 'natural',
-        boundaryOnly: true,
-      });
-      downloadBlob(blob, `geotwin_${snapshot.twinId}_cenital.png`);
-      console.log('[TopBar] ✅ Mapa cenital descargado');
-    } catch (error) {
-      console.error('[TopBar] ❌ Error en captura cenital:', error);
-      alert('Error capturando mapa cenital');
-    } finally {
-      setCapturingCenital(false);
-    }
+  const handleDownloadKML = () => {
+    const geojson = snapshot.parcel?.geojson;
+    if (!geojson) { alert('No geometry available'); return; }
+    const blob = new Blob([JSON.stringify(geojson, null, 2)], { type: 'application/geo+json' });
+    downloadBlob(blob, `geotwin_${snapshot.twinId}_polygon.geojson`);
+    setShowExportMenu(false);
   };
+
+  const meshRunning = meshStatus === 'running' || meshStatus === 'queued';
+  const meshDone = meshStatus === 'completed' || meshStatus === 'available';
 
   return (
     <>
@@ -161,63 +145,56 @@ export default function StudioTopBar({
           <code className={styles.twinId}>{snapshot.twinId}</code>
         </div>
 
-        {/* 1: HQ Contorno — captura recortada al polígono */}
-        <button
-          className={styles.actionBtn}
-          onClick={() => handleCaptureHQ('current')}
-          disabled={capturingHQ || !viewerRef}
-          style={{ borderColor: '#10B98160', color: capturingHQ ? '#10B981' : undefined }}
-          title="Captura PNG 3x recortada al polígono, fondo transparente"
-        >
-          {capturingHQ ? <Loader2 size={10} style={{ animation: 'spin 1s linear infinite' }} /> : <Image size={10} />}
-          HQ Contorno
-        </button>
-
-        {/* 2: Mallado 3D — Genera mesh real con textura PNOA en el visor */}
+        {/* Mallado 3D */}
         <button
           className={styles.actionBtn}
           onClick={() => onGenerateMesh?.()}
-          disabled={!onGenerateMesh || meshStatus === 'running' || meshStatus === 'queued' || meshStatus === 'completed' || meshStatus === 'available'}
-          style={{ borderColor: '#6366f160', color: (meshStatus === 'running' || meshStatus === 'queued') ? '#6366f1' : meshStatus === 'completed' || meshStatus === 'available' ? '#10B981' : undefined }}
-          title="Genera malla 3D real con textura PNOA sobre el polígono — rotable y zoomable"
+          disabled={!onGenerateMesh || meshRunning || meshDone}
+          style={{ borderColor: '#6366f160', color: meshRunning ? '#6366f1' : meshDone ? '#10B981' : undefined }}
+          title="Genera malla 3D real con textura PNOA"
         >
-          {(meshStatus === 'running' || meshStatus === 'queued') ? <Loader2 size={10} style={{ animation: 'spin 1s linear infinite' }} /> : <Palette size={10} />}
-          {(meshStatus === 'running' || meshStatus === 'queued') ? 'Generando...' : (meshStatus === 'completed' || meshStatus === 'available') ? 'Mallado 3D ✓' : 'Mallado 3D'}
+          {meshRunning ? <Loader2 size={10} style={{ animation: 'spin 1s linear infinite' }} /> : <Palette size={10} />}
+          {meshRunning ? 'Generando...' : meshDone ? 'Mallado 3D \u2713' : 'Mallado 3D'}
         </button>
 
-        {/* 3: 4K Raw — canvas completo 5x para Photoshop */}
-        <button
-          className={styles.actionBtn}
-          onClick={handleCapture4KRaw}
-          disabled={capturingRaw || !viewerRef}
-          style={{ borderColor: '#F59E0B60', color: capturingRaw ? '#F59E0B' : undefined }}
-          title="Captura PNG 5x del canvas completo para edición profesional"
-        >
-          {capturingRaw ? <Loader2 size={10} style={{ animation: 'spin 1s linear infinite' }} /> : <FileImage size={10} />}
-          4K Raw
-        </button>
-
-        {/* 4: Mapa Cenital — vista 90° desde arriba */}
-        <button
-          className={styles.actionBtn}
-          onClick={handleCaptureCenital}
-          disabled={capturingCenital || !viewerRef}
-          style={{ borderColor: '#3B82F660', color: capturingCenital ? '#3B82F6' : undefined }}
-          title="Vista cenital 90° para usar como mapa base en Digital Twin"
-        >
-          {capturingCenital ? <Loader2 size={10} style={{ animation: 'spin 1s linear infinite' }} /> : <Map size={10} />}
-          Mapa Cenital
-        </button>
-
-        {/* Exportar */}
-        <button className={styles.actionBtn} onClick={onExport} title="Exportar snapshot JSON">
-          <Package size={10} />
-          Exportar
-        </button>
+        {/* Export dropdown */}
+        <div ref={menuRef} style={{ position: 'relative' }}>
+          <button
+            className={styles.actionBtn}
+            onClick={() => setShowExportMenu(!showExportMenu)}
+            disabled={!!exporting}
+            style={{ borderColor: '#10B98160', gap: '3px' }}
+          >
+            {exporting ? <Loader2 size={10} style={{ animation: 'spin 1s linear infinite' }} /> : <Download size={10} />}
+            Exportar
+            <ChevronDown size={8} />
+          </button>
+          {showExportMenu && (
+            <div style={{
+              position: 'absolute', top: '100%', right: 0, marginTop: 4,
+              background: '#1a1a2e', border: '1px solid #333', borderRadius: 8,
+              padding: '6px 0', minWidth: 240, zIndex: 9999,
+              boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
+            }}>
+              <div style={{ padding: '4px 12px', fontSize: 10, color: '#888', textTransform: 'uppercase', letterSpacing: 1 }}>Im\u00e1genes 2D</div>
+              <DropItem icon={<Map size={13}/>} label="Cenital HD (PNG)" desc="Vista top-down, todo el pol\u00edgono" onClick={handleCenitalHD} disabled={!viewerRef} />
+              <DropItem icon={<Image size={13}/>} label="Vista actual (PNG)" desc="Captura la vista actual del visor" onClick={handleVista3D} disabled={!viewerRef} />
+              <DropItem icon={<Image size={13}/>} label="NDVI Map (PNG)" desc="Mapa NDVI cenital con colores" onClick={handleNDVIMap} disabled={!viewerRef} />
+              <div style={{ height: 1, background: '#333', margin: '6px 0' }} />
+              <div style={{ padding: '4px 12px', fontSize: 10, color: '#888', textTransform: 'uppercase', letterSpacing: 1 }}>Modelos 3D</div>
+              <DropItem icon={<Box size={13}/>} label="Modelo 3D (GLB)" desc="Mesh texturizado — Blender, Sketchfab" onClick={handleDownloadGLB} disabled={!meshDone} />
+              <DropItem icon={<Box size={13}/>} label="Pol\u00edgono (GeoJSON)" desc="Contorno catastral para QGIS" onClick={handleDownloadKML} />
+              <div style={{ height: 1, background: '#333', margin: '6px 0' }} />
+              <DropItem icon={<Glasses size={13}/>} label="VR Experience" desc="Abrir visor WebXR inmersivo" onClick={() => { window.open(`/vr/${twinId || snapshot.twinId}`, '_blank'); setShowExportMenu(false); }} disabled={!meshDone} />
+              <div style={{ height: 1, background: '#333', margin: '6px 0' }} />
+              <DropItem icon={<Package size={13}/>} label="Exportar JSON" desc="Snapshot completo del Digital Twin" onClick={() => { onExport(); setShowExportMenu(false); }} />
+            </div>
+          )}
+        </div>
       </div>
     </header>
 
-      {/* Illustration Modal */}
+      {/* Illustration Modal (preview captures) */}
       {showIllustrationModal && illustrationUrl && (
         <IllustrationModal
           imageUrl={illustrationUrl}
@@ -231,11 +208,37 @@ export default function StudioTopBar({
           }}
           onDownload={() => {
             if (illustrationBlob) {
-              downloadBlob(illustrationBlob, `geotwin_${snapshot.twinId}_HQ.png`);
+              downloadBlob(illustrationBlob, `geotwin_${snapshot.twinId}_vista3D.png`);
             }
           }}
         />
       )}
     </>
+  );
+}
+
+/** Dropdown menu item */
+function DropItem({ icon, label, desc, onClick, disabled }: {
+  icon: React.ReactNode; label: string; desc: string; onClick: () => void; disabled?: boolean;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 10, width: '100%',
+        padding: '8px 12px', background: 'none', border: 'none', cursor: disabled ? 'default' : 'pointer',
+        color: disabled ? '#555' : '#ccc', textAlign: 'left', fontSize: 13,
+        transition: 'background 0.15s',
+      }}
+      onMouseEnter={e => { if (!disabled) (e.target as HTMLElement).style.background = '#ffffff10'; }}
+      onMouseLeave={e => { (e.target as HTMLElement).style.background = 'none'; }}
+    >
+      <span style={{ flexShrink: 0, opacity: disabled ? 0.3 : 0.7 }}>{icon}</span>
+      <span style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+        <span style={{ fontWeight: 500, fontSize: 13 }}>{label}</span>
+        <span style={{ fontSize: 10, color: '#777' }}>{desc}</span>
+      </span>
+    </button>
   );
 }

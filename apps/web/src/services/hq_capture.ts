@@ -2,7 +2,7 @@
  * hq_capture.ts — GeoTwin HQ Canvas Capture
  * ==========================================
  * Captura PNG de alta resolución del viewer de Cesium con MDT02 y PNOA reales.
- * NO usa IA ni renderizado externo - captura directamente el canvas 3D.
+ * Usa renderForSpecs() para render síncrono fiable.
  */
 
 export interface HQCaptureOptions {
@@ -38,9 +38,28 @@ export async function captureHQIllustration(
   
   console.log('[HQ Capture] 🎬 Iniciando captura', { viewAngle, pixelRatio, style, boundaryOnly });
 
+  // ── Compute polygon bbox for cenital views ──────────────────────────
+  const geojson = snapshot.parcel?.geojson;
+  const geom = geojson?.geometry ?? geojson?.features?.[0]?.geometry;
+  const coords: number[][] = geom?.type === 'Polygon' ? geom.coordinates?.[0] : geom?.coordinates?.[0]?.[0] ?? [];
+  let bboxW = lon - 0.01, bboxE = lon + 0.01, bboxS = lat - 0.01, bboxN = lat + 0.01;
+  if (coords.length > 2) {
+    bboxW = Infinity; bboxE = -Infinity; bboxS = Infinity; bboxN = -Infinity;
+    for (const c of coords) { bboxW = Math.min(bboxW, c[0]); bboxE = Math.max(bboxE, c[0]); bboxS = Math.min(bboxS, c[1]); bboxN = Math.max(bboxN, c[1]); }
+  }
+  const bboxCenterLon = (bboxW + bboxE) / 2;
+  const bboxCenterLat = (bboxS + bboxN) / 2;
+  const extentM = Math.max(
+    (bboxE - bboxW) * 111000 * Math.cos(bboxCenterLat * Math.PI / 180),
+    (bboxN - bboxS) * 111000
+  );
+
   // ── PASO 1: Configurar vistas con lookAt (siempre centrado en parcela) ────
   const distanceM = Math.max(1500, Math.min(5000, Math.sqrt(areaHa) * 160));
-  const center3D = Cesium.Cartesian3.fromDegrees(lon, lat, 1100); // altura real terreno
+  const center3D = Cesium.Cartesian3.fromDegrees(lon, lat, 1100);
+
+  // For cenital: altitude that covers entire polygon with margin
+  const cenitalAltitude = extentM * 1.3;
 
   type LookAtConfig = { center: any; hpr: any } | null;
   const viewConfigs: Record<string, LookAtConfig> = {
@@ -68,14 +87,7 @@ export async function captureHQIllustration(
         distanceM,
       ),
     },
-    top: {
-      center: Cesium.Cartesian3.fromDegrees(lon, lat, 0),
-      hpr: new Cesium.HeadingPitchRange(
-        0,
-        Cesium.Math.toRadians(-90),  // cenital puro
-        distanceM * 1.8,
-      ),
-    },
+    top: null,  // Special handling — uses setView with bbox-computed altitude
     current: null,  // Usar la vista actual sin cambiar cámara
   };
 
@@ -87,125 +99,51 @@ export async function captureHQIllustration(
   try {
     // ── PASO 3: Posicionar cámara ──────────────────────────────────────────
     const config = viewConfigs[viewAngle];
-    if (config) {
-      console.log('[HQ Capture] 🚁 Positioning to', viewAngle, 'view...');
-      
-      // lookAt garantiza que la parcela está centrada en pantalla
-      viewer.camera.lookAt(config.center, config.hpr);
-      
-      // Esperar a que Cesium cargue los tiles de la nueva vista
-      await new Promise<void>(resolve => {
-        let done = false;
-        const unsub = viewer.scene.globe.tileLoadProgressEvent.addEventListener((n: number) => {
-          if (n === 0 && !done) {
-            done = true;
-            unsub();
-            resolve();
-          }
-        });
-        // Timeout 8s
-        setTimeout(() => { if (!done) { done = true; unsub(); resolve(); } }, 8000);
-        viewer.scene.requestRender();
+    if (viewAngle === 'top') {
+      // Cenital: use setView with bbox-computed altitude covering ENTIRE polygon
+      console.log('[HQ Capture] 🗺️ Positioning cenital view to cover full polygon...');
+      viewer.camera.setView({
+        destination: Cesium.Cartesian3.fromDegrees(bboxCenterLon, bboxCenterLat, cenitalAltitude),
+        orientation: { heading: 0, pitch: -Math.PI / 2, roll: 0 },
       });
-      
-      // Liberar el lookAt lock para que el viewer siga siendo interactivo
+      await waitForTilesLoaded(viewer);
+      console.log('[HQ Capture] ✅ Cenital camera positioned, altitude:', Math.round(cenitalAltitude) + 'm');
+    } else if (config) {
+      console.log('[HQ Capture] 🚁 Positioning to', viewAngle, 'view...');
+      viewer.camera.lookAt(config.center, config.hpr);
+      await waitForTilesLoaded(viewer);
+      // Liberar el lookAt lock
       viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
       console.log('[HQ Capture] ✅ Camera positioned');
     } else {
-      // viewAngle === 'current': no mover cámara, pero forzar re-render al nuevo
-      // resolutionScale. Sin esto el canvas queda negro porque Cesium no detecta
-      // que necesita tiles de mayor resolución sin un cambio de cámara.
+      // viewAngle === 'current': no mover cámara, forzar re-render al nuevo resolutionScale
       console.log('[HQ Capture] 🔄 Forcing tile reload at new resolution...');
-      viewer.render();
-      await new Promise(r => setTimeout(r, 300));
-      viewer.render();
-      await new Promise(r => setTimeout(r, 300));
-
-      // Esperar a que Cesium cargue tiles a la nueva resolución
-      await new Promise<void>(resolve => {
-        let done = false;
-        let sawLoading = false;
-        const unsub = viewer.scene.globe.tileLoadProgressEvent.addEventListener((n: number) => {
-          if (n > 0) sawLoading = true;
-          if (n === 0 && sawLoading && !done) {
-            done = true;
-            unsub();
-            resolve();
-          }
-        });
-        // Si nunca se detectan tiles nuevos, resolver tras 4s (tiles ya cacheados)
-        setTimeout(() => { if (!done) { done = true; unsub(); resolve(); } }, 4000);
-        viewer.scene.requestRender();
-      });
+      viewer.scene.renderForSpecs();
+      await waitForTilesLoaded(viewer);
       console.log('[HQ Capture] ✅ Tiles refreshed at new resolution');
     }
 
     // ── PASO 4: Configurar para máxima calidad ───────────────────────
     const originalSSE = viewer.scene.globe.maximumScreenSpaceError;
-    viewer.scene.globe.maximumScreenSpaceError = 0.5;  // Máxima calidad de tiles
-    console.log('[HQ Capture] 🎨 Max quality enabled (SSE=0.5)');
+    viewer.scene.globe.maximumScreenSpaceError = 0.5;
 
     // ── PASO 5: Esperar terrain + imagery completamente cargados ────────────
-    console.log('[HQ Capture] ⏳ Waiting for terrain + imagery tiles...');
-
-    // Forzar renders síncronos para que Cesium detecte tiles faltantes con SSE=0.5
-    viewer.render();
-    await new Promise(r => setTimeout(r, 200));
-    viewer.render();
+    viewer.scene.renderForSpecs();
+    await waitForTilesLoaded(viewer);
     
-    await new Promise<void>(resolve => {
-      let done = false;
-      let sawLoading = false;
-      
-      const unsub = viewer.scene.globe.tileLoadProgressEvent.addEventListener(
-        (n: number) => {
-          console.log(`[HQ Capture] 🗺️ Tiles remaining: ${n}`);
-          if (n > 0) sawLoading = true;
-          if (n === 0 && !done) {
-            // Si vimos carga activa, resolver al llegar a 0
-            // Si nunca vimos carga, esperar un poco más por si los tiles
-            // aún no se han detectado
-            if (sawLoading) {
-              done = true;
-              unsub();
-              console.log('[HQ Capture] ✅ All tiles loaded');
-              resolve();
-            }
-          }
-        }
-      );
-      
-      // Fallback: si tras 6s no se completaron (o nunca hubo carga), continuar
-      setTimeout(() => {
-        if (!done) {
-          done = true;
-          unsub();
-          console.warn('[HQ Capture] ⚠️ Tile loading timeout (6s), proceeding');
-          resolve();
-        }
-      }, 6000);
-      
-      viewer.scene.requestRender();
-    });
-    
-    // Esperar 3s para que la imagery (PNOA proxy) termine de pintar completamente.
-    // Las tiles de imagery cargan por red y necesitan tiempo extra tras terrain.
-    console.log('[HQ Capture] ⏳ Waiting for imagery to stabilize (3s)...');
-    viewer.render();
+    // Esperar imagery (PNOA proxy) — 2s estabilización
+    viewer.scene.renderForSpecs();
     await new Promise(r => setTimeout(r, 1000));
-    viewer.render();
-    await new Promise(r => setTimeout(r, 1000));
-    viewer.render();
+    viewer.scene.renderForSpecs();
     await new Promise(r => setTimeout(r, 1000));
 
     // ── PASO 6: Renders finales para máxima calidad ────────────────────────
-    console.log('[HQ Capture] 🎬 Rendering final frames...');
-    for (let i = 0; i < 6; i++) {
-      viewer.render();
-      await new Promise(r => setTimeout(r, 200));
+    for (let i = 0; i < 4; i++) {
+      viewer.scene.renderForSpecs();
+      await new Promise(r => setTimeout(r, 150));
     }
 
-    // Flush WebGL pipeline to ensure all GPU operations complete before capture
+    // Flush WebGL pipeline
     const gl = viewer.scene.canvas.getContext('webgl2') ?? viewer.scene.canvas.getContext('webgl');
     if (gl) gl.finish();
 
@@ -216,22 +154,13 @@ export async function captureHQIllustration(
     let finalBlob: Blob;
     
     if (boundaryOnly) {
-      // Recortar a solo la geometría de la parcela con fondo transparente
       console.log('[HQ Capture] ✂️ Applying boundary mask...');
       finalBlob = await applyBoundaryMask(viewer, canvas, snapshot);
     } else {
-      // Captura completa del canvas
       finalBlob = await new Promise<Blob>((resolve, reject) => {
         canvas.toBlob(
-          (b: Blob | null) => {
-            if (b) {
-              resolve(b);
-            } else {
-              reject(new Error('Canvas capture failed - check preserveDrawingBuffer'));
-            }
-          },
-          'image/png',
-          1.0  // Máxima calidad PNG
+          (b: Blob | null) => b ? resolve(b) : reject(new Error('Canvas capture failed')),
+          'image/png', 1.0
         );
       });
     }
@@ -246,13 +175,29 @@ export async function captureHQIllustration(
     return finalBlob;
     
   } catch (error) {
-    // Restaurar en caso de error
     viewer.resolutionScale = originalScale;
     console.error('[HQ Capture] ❌ Capture failed:', error);
     throw error;
   }
 }
 
+/**
+ * Wait for globe tiles to finish loading (max 10s timeout).
+ */
+async function waitForTilesLoaded(viewer: any): Promise<void> {
+  return new Promise(resolve => {
+    let done = false;
+    const check = () => {
+      if (viewer.scene.globe.tilesLoaded) {
+        if (!done) { done = true; requestAnimationFrame(() => requestAnimationFrame(() => resolve())); }
+      } else if (!done) {
+        requestAnimationFrame(check);
+      }
+    };
+    setTimeout(() => { if (!done) { done = true; resolve(); } }, 10000);
+    check();
+  });
+}
 
 /**
  * Aplica máscara de contorno de parcela - Recorta la imagen a solo la geometría.

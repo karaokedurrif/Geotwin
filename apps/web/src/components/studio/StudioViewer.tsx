@@ -969,6 +969,12 @@ export default function StudioViewer({
         if (ndviLayer) {
           ndviLayer.show = visible;
           console.log(`[StudioViewer] ndvi overlay: ${visible ? 'visible' : 'hidden'}`);
+        } else if (visible) {
+          // Try to load NDVI on-demand when toggled on but not yet loaded
+          console.log('[StudioViewer] NDVI layer not loaded yet, attempting on-demand load...');
+          loadNDVIOverlay(viewer, snapshot.twinId, snapshot).then(layer => {
+            if (layer) { layer.show = true; }
+          }).catch(() => {});
         }
         return;
       }

@@ -14,6 +14,12 @@ import TimelineBar, { useTimeline } from '@/components/studio/TimelineBar';
 import MeshGeneratorOverlay from '@/components/studio/MeshGeneratorOverlay';
 import styles from '@/styles/studio.module.css';
 
+// Three.js viewer — client-side only
+const ModelViewer3D = dynamic(
+  () => import('@/components/studio/ModelViewer3D'),
+  { ssr: false }
+);
+
 /** Extract lon/lat bounding box from GeoJSON for terrain sampling */
 function computeParcelBounds(geojson: any): { west: number; south: number; east: number; north: number } | undefined {
   try {
@@ -31,6 +37,19 @@ function computeParcelBounds(geojson: any): { west: number; south: number; east:
       if (lat > north) north = lat;
     }
     return { west, south, east, north };
+  } catch {
+    return undefined;
+  }
+}
+
+/** Extract the outer ring coordinates [lon,lat][] from GeoJSON */
+function extractPolygonRing(geojson: any): [number, number][] | undefined {
+  try {
+    const geometry = geojson?.geometry ?? geojson?.features?.[0]?.geometry;
+    if (!geometry) return undefined;
+    const rings = geometry.type === 'Polygon' ? geometry.coordinates : geometry.coordinates?.[0];
+    if (!rings?.[0]) return undefined;
+    return rings[0] as [number, number][];
   } catch {
     return undefined;
   }
@@ -75,6 +94,7 @@ export default function TwinStudioPage() {
   const iot = useIoTData(typeof twinId === 'string' ? twinId : undefined);
   const timeline = useTimeline(7);
   const [selectedSensor, setSelectedSensor] = useState<string | null>(null);
+  const [showModelViewer, setShowModelViewer] = useState(false);
 
   // When tile processing completes, load tileset into viewer
   const handleTileProcessingComplete = useCallback(() => {
@@ -89,7 +109,8 @@ export default function TwinStudioPage() {
   }, [viewerRef, twinId]);
 
   useEffect(() => {
-    if (tileProcessing.status === 'completed') handleTileProcessingComplete();
+    if (tileProcessing.status === 'completed' || tileProcessing.status === 'available') handleTileProcessingComplete();
+    if (tileProcessing.status === 'completed') setShowModelViewer(true);
   }, [tileProcessing.status, handleTileProcessingComplete]);
 
   // Persist meshStatus to localStorage when it changes
@@ -266,8 +287,12 @@ export default function TwinStudioPage() {
           URL.revokeObjectURL(url);
         }}
         onBackToCapture={() => router.push('/')}
-        onGenerateMesh={tileProcessing.startProcessing}
+        onGenerateMesh={tileProcessing.tilesAvailable
+          ? () => setShowModelViewer(true)
+          : tileProcessing.startProcessing
+        }
         meshStatus={tileProcessing.status}
+        twinId={typeof twinId === 'string' ? twinId : undefined}
       />
 
       <div className={styles.studioBody}>
@@ -287,6 +312,7 @@ export default function TwinStudioPage() {
               tileProcessing={tileProcessing}
               viewerRef={viewerRef}
               parcelBounds={snapshot.parcel?.geojson ? computeParcelBounds(snapshot.parcel.geojson) : undefined}
+              polygonCoords={snapshot.parcel?.geojson ? extractPolygonRing(snapshot.parcel.geojson) : undefined}
             />
           )}
           
@@ -296,6 +322,15 @@ export default function TwinStudioPage() {
               viewerRef={viewerRef}
               snapshot={snapshot}
               active={activeMode === 'sim'}
+            />
+          )}
+
+          {/* 3D Model inspector (Three.js) — shown after mesh completes */}
+          {typeof twinId === 'string' && (
+            <ModelViewer3D
+              twinId={twinId}
+              visible={showModelViewer}
+              onClose={() => setShowModelViewer(false)}
             />
           )}
         </div>
