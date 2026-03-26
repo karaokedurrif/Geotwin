@@ -165,7 +165,7 @@ def process_twin(
             bbox=aoi_meta.bbox,
             output_dir=output_dir,
             resolution_cm=25,
-            max_pixels=4096,
+            max_pixels=8192,
         )
         # Extraer JPEG para usar como textura en GLB
         from pathlib import Path as P

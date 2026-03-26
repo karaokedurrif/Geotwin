@@ -27,7 +27,7 @@ def download_pnoa_ortho(
     bbox: tuple[float, float, float, float],
     output_path: Path,
     resolution_cm: int = 25,
-    max_pixels: int = 4096,
+    max_pixels: int = 8192,
 ) -> Path:
     """Descarga ortofoto PNOA para un bounding box.
 
@@ -135,7 +135,7 @@ def get_ortho_for_aoi(
     bbox: tuple[float, float, float, float],
     output_dir: Path,
     resolution_cm: int = 25,
-    max_pixels: int = 4096,
+    max_pixels: int = 8192,
 ) -> dict:
     """Descarga ortofoto PNOA y devuelve metadata.
 
