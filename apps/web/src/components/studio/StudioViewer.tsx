@@ -710,7 +710,9 @@ export default function StudioViewer({
               CRS: 'CRS:84',
             },
             rectangle: Cesium.Rectangle.fromDegrees(-9.5, 35.5, 4.5, 44.0),
-            maximumLevel: 19,
+            tileWidth: 512,   // Mayor resolución por tile (default 256)
+            tileHeight: 512,
+            maximumLevel: 20,
             credit: 'PNOA © IGN España',
           });
           

@@ -932,7 +932,9 @@ export default function CesiumViewer({
             VERSION: '1.3.0',
           },
           rectangle: Cesium.Rectangle.fromDegrees(-9.5, 35.5, 4.5, 44.0), // Spain bounds
-          maximumLevel: 19,
+          tileWidth: 512,   // Mayor resolución por tile (default 256)
+          tileHeight: 512,
+          maximumLevel: 20,
           credit: 'PNOA - IGN España',
         });
         
