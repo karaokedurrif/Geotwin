@@ -132,66 +132,72 @@ export default function StudioTopBar({
     }
     setGeneratingIllustration(true);
     try {
-      // PASO 1: Capturar HQ Contorno como base para Replicate
-      console.log('[Illustration] 📸 Capturando HQ Contorno como base...');
-      const baseBlob = await captureHQIllustration({
-        viewer: viewerRef,
-        snapshot,
-        viewAngle: 'current',
-        pixelRatio: 3,
-        style: visualStyle?.preset as any ?? 'natural',
-        boundaryOnly: true,
-      });
-      
-      // PASO 2: Convertir blob a base64 para Replicate img2img
-      const base64 = await new Promise<string>((resolve) => {
-        const reader = new FileReader();
-        reader.onloadend = () => resolve(reader.result as string);
-        reader.readAsDataURL(baseBlob);
-      });
-      
-      // PASO 3: Enviar a Replicate via FastAPI
-      const parcel = snapshot.parcel;
       const stylePreset = visualStyle?.preset ?? 'natural';
       
-      const stylePrompts: Record<string, string> = {
-        natural: `Isometric 3D artistic illustration of a ${parcel.area_ha?.toFixed(0)}ha Spanish dehesa parcel in Sistema Central mountains, holm oak trees, rocky terrain, golden cadastral boundary glowing, aerial perspective 45 degrees, painterly style, cinematic lighting, high detail`,
-        ndvi: `Isometric 3D satellite vegetation analysis of a ${parcel.area_ha?.toFixed(0)}ha Spanish parcel, NDVI false color, green healthy zones, yellows sparse vegetation, golden boundary, scientific illustration style`,
-        night: `Isometric 3D night view of a ${parcel.area_ha?.toFixed(0)}ha Spanish dehesa, moonlit terrain, blue atmosphere, golden glowing cadastral boundary, dramatic shadows, cinematic`,
-        topo: `Isometric 3D topographic illustration of a ${parcel.area_ha?.toFixed(0)}ha Spanish mountain parcel, contour lines, elevation colors, golden cadastral boundary, technical map style`,
-      };
+      console.log('[Illustration] 🎨 Iniciando renderizado 3D isométrico...');
       
-      const prompt = stylePrompts[stylePreset] || stylePrompts.natural;
-      
-      console.log('[Illustration] 🎨 Enviando a Replicate Flux...');
+      // PASO 1: Enviar snapshot al renderer 3D Python (NO Replicate)
       const res = await fetch('/api/illustration', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          prompt,
-          cesium_screenshot: base64,
-          snapshot_context: {
-            area_ha: parcel.area_ha,
-            centroid: parcel.centroid,
-            twin_id: snapshot.twinId,
-            style: stylePreset,
-          },
+          snapshot: snapshot,
+          style: stylePreset,
+          width: 1600,
+          height: 1200,
+          z_scale: 130,
           boundary_only: false,
         }),
       });
       
       if (!res.ok) {
         const errData = await res.json().catch(() => ({ error: res.statusText }));
-        throw new Error(errData.error || `API error: ${res.status}`);
+        throw new Error(errData.detail || errData.error || `API error: ${res.status}`);
       }
       const data = await res.json();
+      const jobId = data.job_id;
       
-      if (data.image_url) {
-        setIllustrationUrl(data.image_url);
-        setIllustrationBlob(null);
-        setShowIllustrationModal(true);
-        console.log('[Illustration] ✅ Ilustración generada:', data.image_url);
+      if (!jobId) {
+        throw new Error('No job_id returned from illustration service');
       }
+      
+      console.log('[Illustration] ⏳ Job iniciado:', jobId, '— polling status...');
+      
+      // PASO 2: Poll hasta que termine (max 120s)
+      const maxAttempts = 60;  // 60 × 2s = 120s
+      for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        await new Promise(r => setTimeout(r, 2000));
+        
+        const statusRes = await fetch(`/api/illustration-status?job_id=${encodeURIComponent(jobId)}`);
+        if (!statusRes.ok) continue;
+        
+        const status = await statusRes.json();
+        console.log(`[Illustration] 📊 Status (${attempt + 1}):`, status.status);
+        
+        if (status.status === 'completed' && status.image_url) {
+          // image_url es relativo al illustration service (e.g. /generated/illustration_xxx.png)
+          // Necesitamos construir la URL completa via el proxy
+          const imageUrl = `/api/illustration-image?path=${encodeURIComponent(status.image_url)}`;
+          
+          // Descargar la imagen como blob para preview
+          const imgRes = await fetch(imageUrl);
+          if (imgRes.ok) {
+            const blob = await imgRes.blob();
+            const url = URL.createObjectURL(blob);
+            setIllustrationUrl(url);
+            setIllustrationBlob(blob);
+            setShowIllustrationModal(true);
+            console.log('[Illustration] ✅ Ilustración 3D completada');
+          }
+          return;
+        }
+        
+        if (status.status === 'error') {
+          throw new Error(status.error || 'Error en el renderizado');
+        }
+      }
+      
+      throw new Error('Timeout: la ilustración tardó demasiado (>120s)');
     } catch (e: any) {
       console.error('[Illustration] ❌ Error:', e);
       alert(`Error: ${e.message}`);

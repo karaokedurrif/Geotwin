@@ -111,66 +111,103 @@ export async function captureHQIllustration(
       // Liberar el lookAt lock para que el viewer siga siendo interactivo
       viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
       console.log('[HQ Capture] ✅ Camera positioned');
+    } else {
+      // viewAngle === 'current': no mover cámara, pero forzar re-render al nuevo
+      // resolutionScale. Sin esto el canvas queda negro porque Cesium no detecta
+      // que necesita tiles de mayor resolución sin un cambio de cámara.
+      console.log('[HQ Capture] 🔄 Forcing tile reload at new resolution...');
+      viewer.render();
+      await new Promise(r => setTimeout(r, 300));
+      viewer.render();
+      await new Promise(r => setTimeout(r, 300));
+
+      // Esperar a que Cesium cargue tiles a la nueva resolución
+      await new Promise<void>(resolve => {
+        let done = false;
+        let sawLoading = false;
+        const unsub = viewer.scene.globe.tileLoadProgressEvent.addEventListener((n: number) => {
+          if (n > 0) sawLoading = true;
+          if (n === 0 && sawLoading && !done) {
+            done = true;
+            unsub();
+            resolve();
+          }
+        });
+        // Si nunca se detectan tiles nuevos, resolver tras 4s (tiles ya cacheados)
+        setTimeout(() => { if (!done) { done = true; unsub(); resolve(); } }, 4000);
+        viewer.scene.requestRender();
+      });
+      console.log('[HQ Capture] ✅ Tiles refreshed at new resolution');
     }
-    // Si viewAngle === 'current': no mover cámara, capturar lo que hay en pantalla
 
     // ── PASO 4: Configurar para máxima calidad ───────────────────────
     const originalSSE = viewer.scene.globe.maximumScreenSpaceError;
     viewer.scene.globe.maximumScreenSpaceError = 0.5;  // Máxima calidad de tiles
     console.log('[HQ Capture] 🎨 Max quality enabled (SSE=0.5)');
 
-    // Aplicar estilo visual si es necesario
-    if (style !== 'natural') {
-      // Puedes modificar saturación, contraste, etc. aquí según el estilo
-      console.log('[HQ Capture] 🎨 Style:', style);
-    }
-
     // ── PASO 5: Esperar terrain + imagery completamente cargados ────────────
     console.log('[HQ Capture] ⏳ Waiting for terrain + imagery tiles...');
-    viewer.scene.requestRender();
+
+    // Forzar renders síncronos para que Cesium detecte tiles faltantes con SSE=0.5
+    viewer.render();
+    await new Promise(r => setTimeout(r, 200));
+    viewer.render();
     
     await new Promise<void>(resolve => {
       let done = false;
+      let sawLoading = false;
       
       const unsub = viewer.scene.globe.tileLoadProgressEvent.addEventListener(
         (n: number) => {
           console.log(`[HQ Capture] 🗺️ Tiles remaining: ${n}`);
+          if (n > 0) sawLoading = true;
           if (n === 0 && !done) {
-            done = true;
-            unsub();
-            console.log('[HQ Capture] ✅ Terrain tiles fully loaded');
-            resolve();
+            // Si vimos carga activa, resolver al llegar a 0
+            // Si nunca vimos carga, esperar un poco más por si los tiles
+            // aún no se han detectado
+            if (sawLoading) {
+              done = true;
+              unsub();
+              console.log('[HQ Capture] ✅ All tiles loaded');
+              resolve();
+            }
           }
         }
       );
       
-      // Fallback 30s
+      // Fallback: si tras 6s no se completaron (o nunca hubo carga), continuar
       setTimeout(() => {
         if (!done) {
           done = true;
           unsub();
-          console.warn('[HQ Capture] ⚠️ Tile loading timeout (30s), proceeding anyway');
+          console.warn('[HQ Capture] ⚠️ Tile loading timeout (6s), proceeding');
           resolve();
         }
-      }, 30000);
+      }, 6000);
       
       viewer.scene.requestRender();
     });
     
-    // Esperar 2s adicionales para que la imagery (PNOA proxy) termine de pintar
-    // Sin esto el canvas se captura con tiles grises/negros parciales
-    console.log('[HQ Capture] ⏳ Waiting for imagery to stabilize (2s)...');
+    // Esperar 3s para que la imagery (PNOA proxy) termine de pintar completamente.
+    // Las tiles de imagery cargan por red y necesitan tiempo extra tras terrain.
+    console.log('[HQ Capture] ⏳ Waiting for imagery to stabilize (3s)...');
+    viewer.render();
+    await new Promise(r => setTimeout(r, 1000));
     viewer.render();
     await new Promise(r => setTimeout(r, 1000));
     viewer.render();
     await new Promise(r => setTimeout(r, 1000));
 
-    // ── PASO 6: Renders adicionales para máxima calidad ────────────────────────
+    // ── PASO 6: Renders finales para máxima calidad ────────────────────────
     console.log('[HQ Capture] 🎬 Rendering final frames...');
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 6; i++) {
       viewer.render();
-      await new Promise(r => setTimeout(r, 150));
+      await new Promise(r => setTimeout(r, 200));
     }
+
+    // Flush WebGL pipeline to ensure all GPU operations complete before capture
+    const gl = viewer.scene.canvas.getContext('webgl2') ?? viewer.scene.canvas.getContext('webgl');
+    if (gl) gl.finish();
 
     // ── PASO 7: Capturar canvas como PNG ─────────────────────────────
     console.log('[HQ Capture] 📸 Capturing canvas...');
