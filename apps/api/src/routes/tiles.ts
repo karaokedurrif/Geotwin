@@ -119,7 +119,7 @@ export async function tilesRouter(fastify: FastifyInstance) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           twin_id: twinId,
-          input_file: `/app/data/${twinId}/geometry.geojson`,
+          input_file: `/app/data/twins/${twinId}/geometry.geojson`,
         }),
       });
 
