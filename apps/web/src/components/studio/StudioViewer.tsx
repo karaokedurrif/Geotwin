@@ -714,10 +714,18 @@ export default function StudioViewer({
             credit: 'PNOA © IGN España',
           });
           
-          viewer.imageryLayers.addImageryProvider(pnoaWMS);
+          const pnoaLayer = viewer.imageryLayers.addImageryProvider(pnoaWMS);
+          // Raise PNOA above the Bing base so it's the visible layer
+          viewer.imageryLayers.raiseToTop(pnoaLayer);
+          
+          // Log tile errors so we can diagnose dark terrain issues
+          pnoaWMS.errorEvent.addEventListener((err: any) => {
+            console.warn('[StudioViewer] ⚠️ PNOA tile error:', err.message || err);
+          });
+          
           console.log('[StudioViewer] ✓ PNOA imagery via proxy /api/pnoa');
         } catch (pnoaError) {
-          console.warn('[StudioViewer] PNOA proxy failed, using OSM:', pnoaError);
+          console.warn('[StudioViewer] PNOA proxy failed:', pnoaError);
         }
 
         // ── Enhanced Free Flight Camera Controls (Helicopter Mode) ──────────────

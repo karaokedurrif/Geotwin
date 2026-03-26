@@ -19,6 +19,8 @@ interface StudioTopBarProps {
   viewerRef?: any;  // Cesium.Viewer reference
   onExport: () => void;
   onBackToCapture: () => void;
+  onGenerateMesh?: () => void;  // Trigger 3D terrain mesh generation (GLB + 3D Tiles)
+  meshStatus?: string;  // 'idle' | 'running' | 'completed' | etc.
 }
 
 export default function StudioTopBar({
@@ -27,8 +29,9 @@ export default function StudioTopBar({
   viewerRef,
   onExport,
   onBackToCapture,
+  onGenerateMesh,
+  meshStatus,
 }: StudioTopBarProps) {
-  const [generatingIllustration, setGeneratingIllustration] = useState(false);
   const [illustrationUrl, setIllustrationUrl] = useState<string | null>(null);
   const [illustrationBlob, setIllustrationBlob] = useState<Blob | null>(null);
   const [showIllustrationModal, setShowIllustrationModal] = useState(false);
@@ -36,7 +39,7 @@ export default function StudioTopBar({
   const [capturingRaw, setCapturingRaw] = useState(false);
   const [capturingCenital, setCapturingCenital] = useState(false);
 
-  // Nueva función: Captura HQ directa desde canvas de Cesium
+  // Captura HQ directa desde canvas de Cesium (contorno)
   const handleCaptureHQ = async (viewAngle: 'helicopter' | 'isometric' | 'lateral' | 'current' = 'current') => {
     if (!viewerRef) {
       alert('Viewer no disponible. Espera a que el visor 3D esté cargado.');
@@ -51,12 +54,11 @@ export default function StudioTopBar({
         viewer: viewerRef,
         snapshot,
         viewAngle,
-        pixelRatio: 3,  // 3x = excelente calidad sin archivos gigantes
+        pixelRatio: 3,
         style: visualStyle?.preset as any ?? 'natural',
-        boundaryOnly: true,  // ✂️ Recortar a solo la geometría de la parcela
+        boundaryOnly: true,
       });
       
-      // Crear URL para vista previa
       const url = URL.createObjectURL(blob);
       setIllustrationUrl(url);
       setIllustrationBlob(blob);
@@ -71,7 +73,7 @@ export default function StudioTopBar({
     }
   };
 
-  // Nueva función: Captura 4K Raw (5x resolución, canvas completo sin recorte)
+  // Captura 4K Raw (5x resolución, canvas completo sin recorte)
   const handleCapture4KRaw = async () => {
     if (!viewerRef) {
       alert('Viewer no disponible. Espera a que el visor 3D esté cargado.');
@@ -83,10 +85,10 @@ export default function StudioTopBar({
       const blob = await captureHQIllustration({
         viewer: viewerRef,
         snapshot,
-        viewAngle: 'current',  // vista actual sin mover cámara
-        pixelRatio: 5,          // 5x = 4K+ para trabajar en Photoshop
+        viewAngle: 'current',
+        pixelRatio: 5,
         style: visualStyle?.preset as any ?? 'natural',
-        boundaryOnly: false,    // canvas completo sin recorte
+        boundaryOnly: false,
       });
       downloadBlob(blob, `geotwin_${snapshot.twinId}_4K_raw.png`);
       console.log('[TopBar] ✅ 4K Raw descargado');
@@ -98,7 +100,7 @@ export default function StudioTopBar({
     }
   };
 
-  // Nueva función: Captura cenital (vista 90° desde arriba)
+  // Captura cenital (vista 90° desde arriba)
   const handleCaptureCenital = async () => {
     if (!viewerRef) {
       alert('Viewer no disponible. Espera a que el visor 3D esté cargado.');
@@ -110,10 +112,10 @@ export default function StudioTopBar({
       const blob = await captureHQIllustration({
         viewer: viewerRef,
         snapshot,
-        viewAngle: 'top',      // 90° cenital
+        viewAngle: 'top',
         pixelRatio: 3,
         style: visualStyle?.preset as any ?? 'natural',
-        boundaryOnly: true,   // ✂️ Recortar al polígono de la parcela
+        boundaryOnly: true,
       });
       downloadBlob(blob, `geotwin_${snapshot.twinId}_cenital.png`);
       console.log('[TopBar] ✅ Mapa cenital descargado');
@@ -122,87 +124,6 @@ export default function StudioTopBar({
       alert('Error capturando mapa cenital');
     } finally {
       setCapturingCenital(false);
-    }
-  };
-
-  const handleGenerateIllustration = async () => {
-    if (!viewerRef) {
-      alert('Viewer no disponible');
-      return;
-    }
-    setGeneratingIllustration(true);
-    try {
-      const stylePreset = visualStyle?.preset ?? 'natural';
-      
-      console.log('[Illustration] 🎨 Iniciando renderizado 3D isométrico...');
-      
-      // PASO 1: Enviar snapshot al renderer 3D Python (NO Replicate)
-      const res = await fetch('/api/illustration', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          snapshot: snapshot,
-          style: stylePreset,
-          width: 1600,
-          height: 1200,
-          z_scale: 130,
-          boundary_only: false,
-        }),
-      });
-      
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({ error: res.statusText }));
-        throw new Error(errData.detail || errData.error || `API error: ${res.status}`);
-      }
-      const data = await res.json();
-      const jobId = data.job_id;
-      
-      if (!jobId) {
-        throw new Error('No job_id returned from illustration service');
-      }
-      
-      console.log('[Illustration] ⏳ Job iniciado:', jobId, '— polling status...');
-      
-      // PASO 2: Poll hasta que termine (max 120s)
-      const maxAttempts = 60;  // 60 × 2s = 120s
-      for (let attempt = 0; attempt < maxAttempts; attempt++) {
-        await new Promise(r => setTimeout(r, 2000));
-        
-        const statusRes = await fetch(`/api/illustration-status?job_id=${encodeURIComponent(jobId)}`);
-        if (!statusRes.ok) continue;
-        
-        const status = await statusRes.json();
-        console.log(`[Illustration] 📊 Status (${attempt + 1}):`, status.status);
-        
-        if (status.status === 'completed' && status.image_url) {
-          // image_url es relativo al illustration service (e.g. /generated/illustration_xxx.png)
-          // Necesitamos construir la URL completa via el proxy
-          const imageUrl = `/api/illustration-image?path=${encodeURIComponent(status.image_url)}`;
-          
-          // Descargar la imagen como blob para preview
-          const imgRes = await fetch(imageUrl);
-          if (imgRes.ok) {
-            const blob = await imgRes.blob();
-            const url = URL.createObjectURL(blob);
-            setIllustrationUrl(url);
-            setIllustrationBlob(blob);
-            setShowIllustrationModal(true);
-            console.log('[Illustration] ✅ Ilustración 3D completada');
-          }
-          return;
-        }
-        
-        if (status.status === 'error') {
-          throw new Error(status.error || 'Error en el renderizado');
-        }
-      }
-      
-      throw new Error('Timeout: la ilustración tardó demasiado (>120s)');
-    } catch (e: any) {
-      console.error('[Illustration] ❌ Error:', e);
-      alert(`Error: ${e.message}`);
-    } finally {
-      setGeneratingIllustration(false);
     }
   };
 
@@ -252,16 +173,16 @@ export default function StudioTopBar({
           HQ Contorno
         </button>
 
-        {/* 2: Ilustración 3D — HQ Contorno → Replicate Flux */}
+        {/* 2: Mallado 3D — Genera mesh real con textura PNOA en el visor */}
         <button
           className={styles.actionBtn}
-          onClick={() => handleGenerateIllustration()}
-          disabled={generatingIllustration || !viewerRef}
-          style={{ borderColor: '#6366f160', color: generatingIllustration ? '#6366f1' : undefined }}
-          title="Genera ilustración artística isométrica via Replicate Flux"
+          onClick={() => onGenerateMesh?.()}
+          disabled={!onGenerateMesh || meshStatus === 'running' || meshStatus === 'queued' || meshStatus === 'completed' || meshStatus === 'available'}
+          style={{ borderColor: '#6366f160', color: (meshStatus === 'running' || meshStatus === 'queued') ? '#6366f1' : meshStatus === 'completed' || meshStatus === 'available' ? '#10B981' : undefined }}
+          title="Genera malla 3D real con textura PNOA sobre el polígono — rotable y zoomable"
         >
-          {generatingIllustration ? <Loader2 size={10} style={{ animation: 'spin 1s linear infinite' }} /> : <Palette size={10} />}
-          {generatingIllustration ? 'Generando...' : 'Ilustración 3D'}
+          {(meshStatus === 'running' || meshStatus === 'queued') ? <Loader2 size={10} style={{ animation: 'spin 1s linear infinite' }} /> : <Palette size={10} />}
+          {(meshStatus === 'running' || meshStatus === 'queued') ? 'Generando...' : (meshStatus === 'completed' || meshStatus === 'available') ? 'Mallado 3D ✓' : 'Mallado 3D'}
         </button>
 
         {/* 3: 4K Raw — canvas completo 5x para Photoshop */}

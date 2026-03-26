@@ -130,6 +130,86 @@ export async function importRouter(fastify: FastifyInstance) {
     }
   });
 
+  // Sync twin from frontend — persists geometry + minimal scene.json so that
+  // engine services (Sentinel-2, illustration, etc.) can find the parcel.
+  fastify.put('/twin/:twinId/sync', async (request: FastifyRequest, reply: FastifyReply) => {
+    const { twinId } = request.params as { twinId: string };
+
+    // Validate twinId format
+    if (!/^[a-zA-Z0-9_-]{1,64}$/.test(twinId)) {
+      return reply.code(400).send({ success: false, error: 'Invalid twinId' });
+    }
+
+    const body = request.body as {
+      geojson?: any;
+      area_ha?: number;
+      centroid?: [number, number];
+      name?: string;
+    };
+
+    if (!body?.geojson) {
+      return reply.code(400).send({ success: false, error: 'Missing geojson in body' });
+    }
+
+    try {
+      const fs = await import('fs/promises');
+      const path = await import('path');
+
+      const dataDir = path.join(process.cwd(), 'data', twinId);
+      await fs.mkdir(dataDir, { recursive: true });
+
+      // Extract raw geometry from the provided GeoJSON (could be Feature, FeatureCollection, or raw Geometry)
+      let rawGeometry: any;
+      if (body.geojson.type === 'FeatureCollection') {
+        rawGeometry = body.geojson.features?.[0]?.geometry;
+      } else if (body.geojson.type === 'Feature') {
+        rawGeometry = body.geojson.geometry;
+      } else {
+        rawGeometry = body.geojson;
+      }
+
+      if (!rawGeometry?.coordinates) {
+        return reply.code(400).send({ success: false, error: 'Invalid geometry — no coordinates' });
+      }
+
+      // Write geometry.geojson (Feature format expected by engine)
+      const geojsonFeature = {
+        type: 'Feature',
+        properties: { twinId, area_ha: body.area_ha ?? 0 },
+        geometry: rawGeometry,
+      };
+      await fs.writeFile(
+        path.join(dataDir, 'geometry.geojson'),
+        JSON.stringify(geojsonFeature, null, 2),
+        'utf-8',
+      );
+
+      // Write minimal scene.json if it doesn't exist yet
+      const scenePath = path.join(dataDir, 'scene.json');
+      try {
+        await fs.access(scenePath);
+      } catch {
+        const minimalRecipe = {
+          twinId,
+          area_ha: body.area_ha ?? 0,
+          centroid: body.centroid ?? [0, 0],
+          parcel: { name: body.name ?? twinId },
+          createdAt: new Date().toISOString(),
+        };
+        await fs.writeFile(scenePath, JSON.stringify(minimalRecipe, null, 2), 'utf-8');
+      }
+
+      fastify.log.info(`Twin ${twinId} synced from frontend`);
+      return reply.send({ success: true, twinId });
+    } catch (error) {
+      fastify.log.error(`Sync error for ${twinId}: ${error}`);
+      return reply.code(500).send({
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+    }
+  });
+
   // Load sample data endpoint
   fastify.get('/sample', async (request: FastifyRequest, reply: FastifyReply) => {
     try {

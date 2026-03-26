@@ -168,6 +168,22 @@ export default function TwinStudioPage() {
     };
     setVisualStyle(mergedStyle);
     setLoading(false);
+
+    // Sync twin geometry to server (fire-and-forget) so that engine
+    // services like Sentinel-2, illustration, tile processing work.
+    if (snap.parcel?.geojson) {
+      const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3001';
+      fetch(`${apiBase}/api/twin/${encodeURIComponent(snap.twinId)}/sync`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          geojson: snap.parcel.geojson,
+          area_ha: snap.parcel.area_ha,
+          centroid: snap.parcel.centroid,
+          name: snap.parcel.name,
+        }),
+      }).catch(() => {});  // Non-critical, don't block UI
+    }
   }
 
   // Handle dropped JSON files (for sharing)
@@ -250,6 +266,8 @@ export default function TwinStudioPage() {
           URL.revokeObjectURL(url);
         }}
         onBackToCapture={() => router.push('/')}
+        onGenerateMesh={tileProcessing.startProcessing}
+        meshStatus={tileProcessing.status}
       />
 
       <div className={styles.studioBody}>
