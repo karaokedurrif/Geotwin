@@ -8,7 +8,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   try {
-    const response = await fetch(`${ILLUSTRATION_URL}/generate-ai-illustration`, {
+    const response = await fetch(`${ILLUSTRATION_URL}/generate-illustration`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(req.body),
