@@ -32,13 +32,38 @@ def set_texture(texture_path: Path | None) -> None:
     _shared_texture_path = texture_path
 
 
-def _mesh_to_glb(mesh: TerrainMesh, texture_path: Path | None = None) -> bytes:
+def _degrees_to_local_meters(vertices: np.ndarray) -> np.ndarray:
+    """Convierte vértices [lon, lat, elev] a coordenadas locales ENU en metros.
+
+    Centra el mesh en su centroide y escala lon/lat a metros usando
+    la proyección local aproximada (válida para áreas < 500 km).
+    """
+    centroid_lon = vertices[:, 0].mean()
+    centroid_lat = vertices[:, 1].mean()
+    min_elev = vertices[:, 2].min()
+
+    lat_rad = np.radians(centroid_lat)
+    m_per_deg_lat = 111_320.0
+    m_per_deg_lon = 111_320.0 * np.cos(lat_rad)
+
+    local = np.empty_like(vertices)
+    local[:, 0] = (vertices[:, 0] - centroid_lon) * m_per_deg_lon  # East
+    local[:, 1] = (vertices[:, 1] - centroid_lat) * m_per_deg_lat  # North
+    local[:, 2] = vertices[:, 2] - min_elev                        # Up (from ground)
+    return local
+
+
+def _mesh_to_glb(mesh: TerrainMesh, texture_path: Path | None = None, *, local_coords: bool = True) -> bytes:
     """Convierte TerrainMesh a GLB (binary glTF) usando trimesh.
 
-    Si mesh.uv_coords y texture_path existen, se incluye la textura.
+    Args:
+        local_coords: Si True, reproyecta vértices de grados a metros locales (ENU).
+            Usar True para GLBs standalone (Three.js, Blender).
+            Usar False para GLBs embebidos en B3DM (Cesium 3D Tiles).
     """
+    verts = _degrees_to_local_meters(mesh.vertices) if local_coords else mesh.vertices
     t_mesh = trimesh.Trimesh(
-        vertices=mesh.vertices,
+        vertices=verts,
         faces=mesh.faces,
     )
     # Force vertex normals into cache so glTF export includes NORMAL attribute
@@ -104,7 +129,7 @@ def _mesh_to_b3dm(mesh: TerrainMesh) -> bytes:
     - Batch Table Binary
     - GLB body
     """
-    glb_data = _mesh_to_glb(mesh)
+    glb_data = _mesh_to_glb(mesh, local_coords=False)
 
     # Feature table: BATCH_LENGTH = 0 (no features)
     feature_table_json = json.dumps({"BATCH_LENGTH": 0}).encode("utf-8")
