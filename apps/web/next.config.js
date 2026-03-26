@@ -20,6 +20,14 @@ const nextConfig = {
         http: false,
         https: false,
       };
+
+      // Ensure single Three.js instance (prevents "Multiple instances" warning
+      // which breaks PBR materials in @react-three/fiber)
+      // three$ matches exact 'three' imports only, not subpath like 'three/src/...'
+      config.resolve.alias = {
+        ...config.resolve.alias,
+        'three$': require.resolve('three'),
+      };
     }
 
     // Copy Cesium static assets

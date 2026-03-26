@@ -935,6 +935,7 @@ export default function CesiumViewer({
         const layers = viewer.imageryLayers;
         const pnoaProv = new Cesium.UrlTemplateImageryProvider({
           url: '/api/pnoa-tile/{z}/{x}/{y}',
+          minimumLevel: 5,
           maximumLevel: 19,
           credit: 'PNOA © IGN España',
         });

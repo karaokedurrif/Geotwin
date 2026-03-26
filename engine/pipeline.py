@@ -127,11 +127,7 @@ def process_twin(
     # ─── 3. Obtener DEM ─────────────────────────────────────────────────
     _progress("Obteniendo DEM", 25)
 
-    # Auto-seleccionar MDT02 (2m) para parcelas pequeñas
     effective_coverage = coverage
-    if aoi_meta.area_ha < 5 and coverage == "mdt05":
-        effective_coverage = "mdt02"
-        logger.info("Parcela pequeña (%.1f ha): usando MDT02 (2m)", aoi_meta.area_ha)
 
     if dem_path and dem_path.exists():
         dem_data = crop_dem_by_aoi(dem_path, aoi_feature)

@@ -26,7 +26,8 @@ logger = logging.getLogger(__name__)
 IGN_WCS_MDT = "https://servicios.idee.es/wcs-inspire/mdt"
 IGN_WCS_COVERAGE = {
     "mdt05": "Elevacion4258_5",
-    "mdt02": "Elevacion4258_2",
+    "mdt02": "Elevacion4258_5",  # MDT02 no existe en WCS; fallback a MDT05 (5m)
+    "mdt25": "Elevacion4258_25",
 }
 
 
@@ -292,11 +293,22 @@ def get_dem_for_aoi(
     Returns:
         dict con elevation recortado + metadatos.
     """
+    # Expandir bbox de descarga con buffer para tener suficientes puntos DEM
+    # Especialmente importante para parcelas pequeñas
+    lat_mid = (bbox[1] + bbox[3]) / 2
+    buf_deg = buffer_m / 111_320
+    dl_bbox = (
+        bbox[0] - buf_deg / np.cos(np.radians(lat_mid)),
+        bbox[1] - buf_deg,
+        bbox[2] + buf_deg / np.cos(np.radians(lat_mid)),
+        bbox[3] + buf_deg,
+    )
+
     # Hash simple para cache
-    bbox_str = f"{bbox[0]:.4f}_{bbox[1]:.4f}_{bbox[2]:.4f}_{bbox[3]:.4f}"
+    bbox_str = f"{dl_bbox[0]:.4f}_{dl_bbox[1]:.4f}_{dl_bbox[2]:.4f}_{dl_bbox[3]:.4f}"
     dem_cached = cache_dir / f"{coverage}_{bbox_str}.tif"
 
     if not dem_cached.exists():
-        download_dem_ign(bbox, dem_cached, coverage=coverage, resolution_m=resolution_m)
+        download_dem_ign(dl_bbox, dem_cached, coverage=coverage, resolution_m=resolution_m)
 
     return crop_dem_by_aoi(dem_cached, aoi_feature, buffer_m=buffer_m)

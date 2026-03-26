@@ -16,6 +16,7 @@ import numpy as np
 from lxml import etree
 from pyproj import Transformer
 from shapely.geometry import mapping, shape
+from shapely.geometry.polygon import orient
 from shapely.ops import unary_union
 
 
@@ -113,13 +114,59 @@ def _parse_gml_poslist(poslist_text: str, dim: int = 2) -> list[tuple[float, flo
     return coords
 
 
+def _extract_ring_coords(elem: etree._Element) -> list[tuple[float, float]]:
+    """Extrae coordenadas de un <LinearRing> o <coordinates> hijo."""
+    for child in elem.iter():
+        child_local = etree.QName(child).localname
+        if child_local == "coordinates" and child.text:
+            coords = _parse_kml_coordinates(child.text)
+            if len(coords) >= 3:
+                return coords
+    return []
+
+
+def _parse_kml_polygons(root: etree._Element) -> list[dict]:
+    """Parsea todos los <Polygon> del KML respetando outer/innerBoundaryIs."""
+    polygons: list[dict] = []
+    for elem in root.iter():
+        local = etree.QName(elem).localname
+        if local != "Polygon":
+            continue
+
+        exterior: list[tuple[float, float]] = []
+        holes: list[list[tuple[float, float]]] = []
+
+        for child in elem:
+            child_local = etree.QName(child).localname
+            if child_local == "outerBoundaryIs":
+                exterior = _extract_ring_coords(child)
+            elif child_local == "innerBoundaryIs":
+                hole = _extract_ring_coords(child)
+                if hole:
+                    holes.append(hole)
+
+        if not exterior:
+            # Fallback: buscar LinearRing directamente bajo Polygon
+            exterior = _extract_ring_coords(elem)
+
+        if exterior:
+            coords = [exterior, *holes] if holes else [exterior]
+            polygons.append({"type": "Polygon", "coordinates": coords})
+
+    return polygons
+
+
 def parse_kml(kml_path: Path) -> dict:
     """Parsea un archivo KML catastral y devuelve GeoJSON Feature.
 
     Soporta:
-    - KML estándar (<coordinates>)
+    - KML estándar con múltiples Placemarks/Polygons
+    - Estructura outerBoundaryIs / innerBoundaryIs
     - GML embebido en KML (<posList>)
     - Detección automática de CRS (UTM España → WGS84)
+
+    Para KML catastrales con subparcelas, une todos los polígonos
+    en una sola geometría de parcela.
 
     Args:
         kml_path: Ruta al archivo KML o GML.
@@ -130,36 +177,12 @@ def parse_kml(kml_path: Path) -> dict:
     tree = etree.parse(str(kml_path))  # noqa: S320
     root = tree.getroot()
 
-    all_coords: list[tuple[float, float]] = []
-    rings: list[list[tuple[float, float]]] = []
+    # 1. Parsear Polygons respetando estructura outer/inner
+    polygon_dicts = _parse_kml_polygons(root)
 
-    # Intentar KML: buscar <coordinates> dentro de <LinearRing> (polígonos)
-    for elem in root.iter():
-        local = etree.QName(elem).localname
-        if local == "LinearRing":
-            for child in elem.iter():
-                child_local = etree.QName(child).localname
-                if child_local == "coordinates" and child.text:
-                    coords = _parse_kml_coordinates(child.text)
-                    if len(coords) >= 3:
-                        rings.append(coords)
-                        all_coords.extend(coords)
-
-    # Si no hay LinearRing, buscar <coordinates> directas dentro de <Polygon>
-    if not rings:
-        for elem in root.iter():
-            local = etree.QName(elem).localname
-            if local == "Polygon":
-                for child in elem.iter():
-                    child_local = etree.QName(child).localname
-                    if child_local == "coordinates" and child.text:
-                        coords = _parse_kml_coordinates(child.text)
-                        if len(coords) >= 3:
-                            rings.append(coords)
-                            all_coords.extend(coords)
-
-    # Si no hay KML coords, intentar GML <posList>
-    if not rings:
+    # 2. Si no hay polígonos KML, intentar GML <posList>
+    if not polygon_dicts:
+        rings: list[list[tuple[float, float]]] = []
         for elem in root.iter():
             local = etree.QName(elem).localname
             if local == "posList" and elem.text:
@@ -167,22 +190,47 @@ def parse_kml(kml_path: Path) -> dict:
                 coords = _parse_gml_poslist(elem.text, dim)
                 if coords:
                     rings.append(coords)
-                    all_coords.extend(coords)
+        if rings:
+            polygon_dicts = [{"type": "Polygon", "coordinates": [r]} for r in rings]
 
-    if not rings:
+    if not polygon_dicts:
         msg = f"No se encontraron coordenadas en {kml_path}"
         raise ValueError(msg)
 
-    # Detectar y reproyectar CRS
-    source_crs = _detect_utm_zone(all_coords)
-    if source_crs:
-        rings = [_reproject_coords(ring, source_crs) for ring in rings]
+    # 3. Recopilar todas las coordenadas para detección CRS
+    all_coords: list[tuple[float, float]] = []
+    for pd in polygon_dicts:
+        for ring in pd["coordinates"]:
+            all_coords.extend(ring)
 
-    # Construir geometría: primer ring = exterior, resto = huecos
-    if len(rings) == 1:
-        geometry = {"type": "Polygon", "coordinates": [rings[0]]}
-    else:
-        geometry = {"type": "Polygon", "coordinates": rings}
+    source_crs = _detect_utm_zone(all_coords)
+
+    # 4. Reproyectar si es UTM
+    if source_crs:
+        for pd in polygon_dicts:
+            pd["coordinates"] = [
+                _reproject_coords(ring, source_crs)
+                for ring in pd["coordinates"]
+            ]
+
+    # 5. Construir geometría: unir todos los polígonos
+    polygons = []
+    for pd in polygon_dicts:
+        geom = shape(pd)
+        geom = orient(geom)
+        if not geom.is_valid:
+            geom = geom.buffer(0)
+        if not geom.is_empty:
+            polygons.append(geom)
+
+    if not polygons:
+        msg = f"Todos los polígonos vacíos en {kml_path}"
+        raise ValueError(msg)
+
+    # Unir en una sola geometría
+    merged = unary_union(polygons)
+    merged = orient(merged) if merged.geom_type == "Polygon" else merged
+    geometry = mapping(merged)
 
     return {
         "type": "Feature",
@@ -273,7 +321,7 @@ def compute_aoi_metadata(feature: dict, source_crs: str | None = None) -> AOIMet
 
     projected = ops.transform(transformer.transform, geom)
 
-    area_m2 = projected.area
+    area_m2 = abs(projected.area)
     perimeter_m = projected.length
     bounds = geom.bounds  # (minx, miny, maxx, maxy)
 
@@ -303,7 +351,7 @@ def select_resolution(area_ha: float) -> dict:
         dict con dem_resolution_m, ortho_resolution_cm, max_triangles.
     """
     if area_ha < 100:
-        return {"dem_resolution_m": 2, "ortho_resolution_cm": 10, "max_triangles": 50_000}
+        return {"dem_resolution_m": 5, "ortho_resolution_cm": 10, "max_triangles": 50_000}
     elif area_ha < 500:
         return {"dem_resolution_m": 5, "ortho_resolution_cm": 25, "max_triangles": 200_000}
     elif area_ha < 2000:

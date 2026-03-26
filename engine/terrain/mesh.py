@@ -249,8 +249,15 @@ def clip_mesh_to_aoi(mesh: TerrainMesh, aoi_geojson: dict) -> TerrainMesh:
     """
     from shapely.geometry import Point, shape
 
+    from shapely.geometry.polygon import orient
+    from shapely.validation import make_valid
+
     geom_dict = aoi_geojson.get("geometry", aoi_geojson)
     polygon = shape(geom_dict)
+    if polygon.geom_type == "Polygon":
+        polygon = orient(polygon)
+    if not polygon.is_valid:
+        polygon = make_valid(polygon)
 
     # Centroide de cada triángulo
     centroids = mesh.vertices[mesh.faces].mean(axis=1)  # (M, 3)

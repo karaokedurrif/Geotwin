@@ -707,6 +707,7 @@ export default function StudioViewer({
         try {
           const pnoaProv = new Cesium.UrlTemplateImageryProvider({
             url: '/api/pnoa-tile/{z}/{x}/{y}',
+            minimumLevel: 5,
             maximumLevel: 19,
             credit: 'PNOA © IGN España',
           });
