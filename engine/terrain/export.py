@@ -40,8 +40,10 @@ def _mesh_to_glb(mesh: TerrainMesh, texture_path: Path | None = None) -> bytes:
     t_mesh = trimesh.Trimesh(
         vertices=mesh.vertices,
         faces=mesh.faces,
-        face_normals=mesh.normals if mesh.normals is not None else None,
     )
+    # Force vertex normals into cache so glTF export includes NORMAL attribute
+    # (required by Cesium's PBR shader when textures are present)
+    _ = t_mesh.vertex_normals
 
     tex = texture_path or _shared_texture_path
     if mesh.uv_coords is not None and tex is not None and tex.exists():
