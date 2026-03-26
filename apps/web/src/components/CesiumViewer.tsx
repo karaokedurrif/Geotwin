@@ -930,23 +930,19 @@ export default function CesiumViewer({
       if (currentSessionRef.current !== session) return;
       if (!viewer || viewer.isDestroyed() || !viewer.imageryLayers) return;
       
-      // ── PNOA via WMTS (tiles pre-renderizados, más rápido y nítido que WMS) ──
+      // ── PNOA via proxy directo (URL template — evita errores 400 del WMTS KVP) ──
       try {
         const layers = viewer.imageryLayers;
-        const pnoaWMTS = new Cesium.WebMapTileServiceImageryProvider({
-          url: '/api/pnoa-wmts',
-          layer: 'OI.OrthoimageCoverage',
-          style: 'default',
-          tileMatrixSetID: 'GoogleMapsCompatible',
-          format: 'image/jpeg',
-          maximumLevel: 20,
-          credit: 'PNOA - IGN España',
+        const pnoaProv = new Cesium.UrlTemplateImageryProvider({
+          url: '/api/pnoa-tile/{z}/{x}/{y}',
+          maximumLevel: 19,
+          credit: 'PNOA © IGN España',
         });
         
-        layers.addImageryProvider(pnoaWMTS);
-        logMessage('✓ PNOA WMTS imagery added (IGN España)', 'success');
+        layers.addImageryProvider(pnoaProv);
+        logMessage('✓ PNOA imagery added (IGN España)', 'success');
       } catch (pnoaError) {
-        logMessage('PNOA WMTS failed (optional)', 'warn');
+        logMessage('PNOA imagery failed (optional)', 'warn');
       }
       
       // Set final status - OSM + PNOA is perfectly good even without Ion

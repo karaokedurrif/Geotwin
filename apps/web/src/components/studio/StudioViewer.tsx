@@ -705,28 +705,18 @@ export default function StudioViewer({
         // WMTS sirve tiles ya cacheados por IGN (vs WMS que renderiza al vuelo).
         // Proxy en: src/pages/api/pnoa-wmts.ts → https://www.ign.es/wmts/pnoa-ma
         try {
-          const pnoaWMTS = new Cesium.WebMapTileServiceImageryProvider({
-            url: '/api/pnoa-wmts',
-            layer: 'OI.OrthoimageCoverage',
-            style: 'default',
-            tileMatrixSetID: 'GoogleMapsCompatible',
-            format: 'image/jpeg',
-            maximumLevel: 20,
+          const pnoaProv = new Cesium.UrlTemplateImageryProvider({
+            url: '/api/pnoa-tile/{z}/{x}/{y}',
+            maximumLevel: 19,
             credit: 'PNOA © IGN España',
           });
           
-          const pnoaLayer = viewer.imageryLayers.addImageryProvider(pnoaWMTS);
-          // Raise PNOA above the Bing base so it's the visible layer
+          const pnoaLayer = viewer.imageryLayers.addImageryProvider(pnoaProv);
           viewer.imageryLayers.raiseToTop(pnoaLayer);
           
-          // Log tile errors so we can diagnose dark terrain issues
-          pnoaWMTS.errorEvent.addEventListener((err: any) => {
-            console.warn('[StudioViewer] ⚠️ PNOA tile error:', err.message || err);
-          });
-          
-          console.log('[StudioViewer] ✓ PNOA WMTS imagery loaded');
+          console.log('[StudioViewer] ✓ PNOA imagery loaded (direct tile proxy)');
         } catch (pnoaError) {
-          console.warn('[StudioViewer] PNOA WMTS failed:', pnoaError);
+          console.warn('[StudioViewer] PNOA imagery failed:', pnoaError);
         }
 
         // ── Enhanced Free Flight Camera Controls (Helicopter Mode) ──────────────

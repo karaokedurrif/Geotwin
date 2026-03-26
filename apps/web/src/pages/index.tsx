@@ -56,6 +56,13 @@ export default function Home() {
       .filter((l: any) => l.visible)
       .map((l: any) => l.id);
     setEnabledLayers(new Set(visibleLayers));
+
+    // Zoom adaptativo: solo parcelas < 1ha arrancan en 2.5x, el resto más abierto
+    const ha = loadedRecipe.area_ha ?? 0;
+    if (ha < 1)       setFramingMargin(1.0);  // Zoom 2.5x — máximo detalle
+    else if (ha < 10) setFramingMargin(1.5);  // Zoom 2.0x
+    else if (ha < 50) setFramingMargin(2.0);  // Zoom 1.5x
+    else              setFramingMargin(2.5);  // Zoom 1.0x — vista amplia
   };
 
   const toggleLayer = (layerId: LayerType) => {
