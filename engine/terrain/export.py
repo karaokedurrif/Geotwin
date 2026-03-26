@@ -75,10 +75,9 @@ def _mesh_to_glb(mesh: TerrainMesh, texture_path: Path | None = None, *, local_c
         from PIL import Image
         image = Image.open(tex)
 
-        # trimesh TextureVisuals: UV (0,0) = top-left en imagen,
-        # pero nuestros UVs tienen v=0 en min_lat (abajo).
-        # Flip V para que coincida con la orientación de la imagen.
         uv = mesh.uv_coords.copy()
+        uv = np.clip(uv, 0.0, 1.0)
+        # Flip V: nuestros UVs tienen v=0 en min_lat (abajo), glTF espera top-left
         uv[:, 1] = 1.0 - uv[:, 1]
 
         material = trimesh.visual.material.PBRMaterial(
@@ -90,6 +89,19 @@ def _mesh_to_glb(mesh: TerrainMesh, texture_path: Path | None = None, *, local_c
             uv=uv,
             material=material,
         )
+        logger.info(
+            "Textura %s aplicada (%dx%d), UVs [%.3f, %.3f]",
+            tex.name, image.size[0], image.size[1], uv.min(), uv.max(),
+        )
+    else:
+        reasons = []
+        if tex is None:
+            reasons.append("no texture path")
+        elif not tex.exists():
+            reasons.append(f"file not found: {tex}")
+        if mesh.uv_coords is None:
+            reasons.append("no UVs")
+        logger.warning("GLB sin textura: %s", ", ".join(reasons))
 
     return t_mesh.export(file_type="glb")
 

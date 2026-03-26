@@ -12,14 +12,19 @@
  *  - Mesh processing completes (auto-show)
  *  - User clicks "Mallado 3D" in TopBar
  */
-import React, { Suspense, useEffect, useMemo, useState } from 'react';
-import { Canvas } from '@react-three/fiber';
+import React, { Suspense, useEffect, useMemo, useState, useRef } from 'react';
+import { Canvas, useThree } from '@react-three/fiber';
 import { OrbitControls, useGLTF, Environment, Grid, Html } from '@react-three/drei';
-import { X, Box, Eye, Grid3x3 } from 'lucide-react';
+import { X, Box, Eye, Grid3x3, Download, Info } from 'lucide-react';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3001';
 
 type ViewMode = 'textured' | 'wireframe';
+
+interface MeshStats {
+  vertices: number;
+  triangles: number;
+}
 
 interface ModelViewer3DProps {
   twinId: string;
@@ -27,7 +32,7 @@ interface ModelViewer3DProps {
   onClose: () => void;
 }
 
-function TerrainMesh({ url, viewMode }: { url: string; viewMode: ViewMode }) {
+function TerrainMesh({ url, viewMode, onStats }: { url: string; viewMode: ViewMode; onStats?: (s: MeshStats) => void }) {
   const { scene } = useGLTF(url);
 
   // Center and scale
@@ -43,7 +48,19 @@ function TerrainMesh({ url, viewMode }: { url: string; viewMode: ViewMode }) {
     if (maxDim > 0) {
       scene.scale.setScalar(2 / maxDim);
     }
-  }, [scene]);
+
+    // Collect stats
+    let verts = 0;
+    let tris = 0;
+    scene.traverse((child: any) => {
+      if (child.isMesh && child.geometry) {
+        const geo = child.geometry;
+        verts += geo.attributes.position ? geo.attributes.position.count : 0;
+        tris += geo.index ? geo.index.count / 3 : (geo.attributes.position ? geo.attributes.position.count / 3 : 0);
+      }
+    });
+    onStats?.({ vertices: verts, triangles: Math.round(tris) });
+  }, [scene, onStats]);
 
   // Toggle wireframe on all materials
   useEffect(() => {
@@ -81,6 +98,8 @@ function LoadingSpinner() {
 export default function ModelViewer3D({ twinId, visible, onClose }: ModelViewer3DProps) {
   const [viewMode, setViewMode] = useState<ViewMode>('textured');
   const [glbReady, setGlbReady] = useState(false);
+  const [meshStats, setMeshStats] = useState<MeshStats | null>(null);
+  const [showInfo, setShowInfo] = useState(false);
 
   const glbUrl = useMemo(
     () => `${API_BASE}/api/tiles/${encodeURIComponent(twinId)}/lod0.glb`,
@@ -147,13 +166,50 @@ export default function ModelViewer3D({ twinId, visible, onClose }: ModelViewer3
           </button>
         </div>
 
-        <button onClick={onClose} style={closeBtn} title="Cerrar">
-          <X size={18} />
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <button
+            onClick={() => setShowInfo(!showInfo)}
+            style={{
+              ...modeBtn,
+              background: showInfo ? 'rgba(168,85,247,0.2)' : 'transparent',
+              borderColor: showInfo ? 'rgba(168,85,247,0.5)' : 'rgba(255,255,255,0.1)',
+            }}
+            title="Info del modelo"
+          >
+            <Info size={14} />
+          </button>
+          <a
+            href={glbUrl}
+            download={`${twinId}.glb`}
+            style={{
+              ...modeBtn,
+              textDecoration: 'none',
+            }}
+            title="Descargar GLB"
+          >
+            <Download size={14} /> GLB
+          </a>
+          <button onClick={onClose} style={closeBtn} title="Cerrar">
+            <X size={18} />
+          </button>
+        </div>
       </div>
 
       {/* 3D Canvas */}
       <div style={{ flex: 1, position: 'relative' }}>
+        {/* Info overlay */}
+        {showInfo && meshStats && (
+          <div style={{
+            position: 'absolute', bottom: 16, left: 16, zIndex: 10,
+            background: 'rgba(10, 10, 14, 0.85)',
+            border: '1px solid rgba(255,255,255,0.08)',
+            borderRadius: 8, padding: '10px 14px',
+            color: '#9ca3af', fontSize: 12, fontFamily: 'monospace',
+          }}>
+            <div>Vértices: <span style={{ color: '#e4e4e7' }}>{meshStats.vertices.toLocaleString()}</span></div>
+            <div>Triángulos: <span style={{ color: '#e4e4e7' }}>{meshStats.triangles.toLocaleString()}</span></div>
+          </div>
+        )}
         {!glbReady ? (
           <div style={{
             position: 'absolute', inset: 0,
@@ -169,11 +225,12 @@ export default function ModelViewer3D({ twinId, visible, onClose }: ModelViewer3
             gl={{ antialias: true, alpha: false }}
           >
             <color attach="background" args={['#0a0a0e']} />
-            <ambientLight intensity={0.4} />
-            <directionalLight position={[5, 8, 5]} intensity={1.2} castShadow />
+            <ambientLight intensity={0.5} />
+            <directionalLight position={[5, 8, 5]} intensity={1.0} castShadow />
+            <directionalLight position={[-3, 4, -2]} intensity={0.3} />
 
             <Suspense fallback={<LoadingSpinner />}>
-              <TerrainMesh url={glbUrl} viewMode={viewMode} />
+              <TerrainMesh url={glbUrl} viewMode={viewMode} onStats={setMeshStats} />
             </Suspense>
 
             <Grid
@@ -189,7 +246,7 @@ export default function ModelViewer3D({ twinId, visible, onClose }: ModelViewer3
               infiniteGrid
             />
 
-            <Environment preset="night" />
+            <Environment preset="studio" />
             <OrbitControls
               makeDefault
               enableDamping

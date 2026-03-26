@@ -127,6 +127,12 @@ def process_twin(
     # ─── 3. Obtener DEM ─────────────────────────────────────────────────
     _progress("Obteniendo DEM", 25)
 
+    # Auto-seleccionar MDT02 (2m) para parcelas pequeñas
+    effective_coverage = coverage
+    if aoi_meta.area_ha < 5 and coverage == "mdt05":
+        effective_coverage = "mdt02"
+        logger.info("Parcela pequeña (%.1f ha): usando MDT02 (2m)", aoi_meta.area_ha)
+
     if dem_path and dem_path.exists():
         dem_data = crop_dem_by_aoi(dem_path, aoi_feature)
     else:
@@ -134,7 +140,7 @@ def process_twin(
             aoi_feature=aoi_feature,
             bbox=aoi_meta.bbox,
             cache_dir=settings.dem_dir,
-            coverage=coverage,
+            coverage=effective_coverage,
             resolution_m=resolution["dem_resolution_m"],
         )
 
@@ -161,11 +167,21 @@ def process_twin(
         _progress("Descargando ortofoto PNOA", 63)
         from .raster.ortho import extract_texture_image, get_ortho_for_aoi
 
+        # Resolución adaptativa según el tamaño de la parcela
+        if aoi_meta.area_ha < 1:
+            ortho_res_cm = 10   # HD para parcelas pequeñas
+        elif aoi_meta.area_ha < 10:
+            ortho_res_cm = 15
+        elif aoi_meta.area_ha < 100:
+            ortho_res_cm = 25
+        else:
+            ortho_res_cm = 50   # Parcelas grandes: bajar res para caber en 4096px
+
         ortho_result = get_ortho_for_aoi(
             bbox=aoi_meta.bbox,
             output_dir=output_dir,
-            resolution_cm=25,
-            max_pixels=8192,
+            resolution_cm=ortho_res_cm,
+            max_pixels=4096,
         )
         # Extraer JPEG para usar como textura en GLB
         from pathlib import Path as P
@@ -181,7 +197,10 @@ def process_twin(
             ortho_result["width"], ortho_result["height"], texture_path,
         )
     except Exception as e:
-        logger.warning("Ortofoto PNOA no disponible: %s", e)
+        logger.error(
+            "Ortofoto PNOA FALLÓ para %.1f ha (bbox=%s): %s",
+            aoi_meta.area_ha, aoi_meta.bbox, e,
+        )
         ortho_result = None
         texture_path = None
         set_texture(None)

@@ -975,6 +975,11 @@ export default function StudioViewer({
         const rgbLayer = (viewer as any)._sentinelRGBLayer;
         if (rgbLayer) {
           rgbLayer.show = visible;
+          if (visible) {
+            // Raise to top so it's above PNOA/Bing
+            viewer.imageryLayers.raiseToTop(rgbLayer);
+            rgbLayer.alpha = 0.85;
+          }
           console.log(`[StudioViewer] sentinel-rgb overlay: ${visible ? 'visible' : 'hidden'}`);
         }
         // When Sentinel-2 is active, hide cadastral fill so imagery is visible

@@ -96,17 +96,42 @@ export default function TwinStudioPage() {
   const [selectedSensor, setSelectedSensor] = useState<string | null>(null);
   const [showModelViewer, setShowModelViewer] = useState(false);
 
-  // When tile processing completes, load tileset into viewer
+  // When tile processing completes, load tileset into viewer and fly back to parcel
   const handleTileProcessingComplete = useCallback(() => {
     if (!viewerRef || viewerRef.isDestroyed?.()) return;
     const Cesium = (window as any).Cesium;
-    if (!Cesium) return;
+    if (!Cesium || !snapshot) return;
     const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3001';
     const url = `${apiBase}/api/tiles/${encodeURIComponent(twinId as string)}/tileset.json`;
     Cesium.Cesium3DTileset.fromUrl(url, { maximumScreenSpaceError: 8, maximumMemoryUsage: 256 })
-      .then((tileset: any) => viewerRef.scene.primitives.add(tileset))
+      .then((tileset: any) => {
+        viewerRef.scene.primitives.add(tileset);
+        // Fly camera back to parcel instead of letting it drift
+        const parcel = snapshot.parcel;
+        if (parcel?.centroid) {
+          const [lon, lat] = parcel.centroid;
+          const areaHa = parcel.area_ha ?? 100;
+          let dist = 400;
+          if (areaHa < 0.5) dist = 150;
+          else if (areaHa < 5) dist = 400;
+          else if (areaHa < 50) dist = 1200;
+          else if (areaHa < 200) dist = 2500;
+          else dist = 4000;
+
+          const center = Cesium.Cartesian3.fromDegrees(lon, lat, 0);
+          viewerRef.camera.flyTo({
+            destination: center,
+            orientation: {
+              heading: Cesium.Math.toRadians(225),
+              pitch: Cesium.Math.toRadians(-35),
+              roll: 0,
+            },
+            duration: 1.5,
+          });
+        }
+      })
       .catch((err: any) => console.warn('[Studio] Failed to load tileset after processing:', err));
-  }, [viewerRef, twinId]);
+  }, [viewerRef, twinId, snapshot]);
 
   useEffect(() => {
     if (tileProcessing.status === 'completed' || tileProcessing.status === 'available') handleTileProcessingComplete();
