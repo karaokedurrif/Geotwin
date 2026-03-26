@@ -193,6 +193,66 @@ def get_ndvi_status(twin_id: str):
     return {"available": False, "twin_id": twin_id}
 
 
+@app.get("/sentinel-latest/{twin_id}")
+def get_sentinel_latest(twin_id: str):
+    """Download/serve latest Sentinel-2 RGB image for a twin."""
+    import re
+    import json
+    if not re.match(r"^[a-zA-Z0-9_-]{1,64}$", twin_id):
+        raise HTTPException(status_code=400, detail="Invalid twinId")
+
+    tiles_dir = settings.tiles_dir / twin_id
+    tiles_dir.mkdir(parents=True, exist_ok=True)
+    rgb_png = tiles_dir / "sentinel_rgb.png"
+    meta_file = tiles_dir / "sentinel_rgb_meta.json"
+
+    # Return cached if fresh (< 5 days old)
+    if rgb_png.exists() and meta_file.exists():
+        import time
+        age_days = (time.time() - rgb_png.stat().st_mtime) / 86400
+        if age_days < 5:
+            meta = json.loads(meta_file.read_text())
+            return {"available": True, "cached": True, **meta}
+
+    # Load geometry from twin data
+    geojson_path = settings.data_dir / "twins" / twin_id / "geometry.geojson"
+    if not geojson_path.exists():
+        raise HTTPException(status_code=404, detail="Twin geometry not found")
+
+    aoi = json.loads(geojson_path.read_text())
+
+    copernicus_id = settings.copernicus_client_id
+    copernicus_secret = settings.copernicus_client_secret
+    if not copernicus_id or not copernicus_secret:
+        raise HTTPException(status_code=503, detail="Copernicus credentials not configured")
+
+    from .raster.sentinel_rgb import get_latest_sentinel_rgb
+
+    result = get_latest_sentinel_rgb(
+        aoi,
+        tiles_dir,
+        client_id=copernicus_id,
+        client_secret=copernicus_secret,
+        max_cloud_cover=20.0,
+        days_back=30,
+    )
+
+    # Save metadata for caching
+    meta = {
+        "twin_id": twin_id,
+        "date": result["date"],
+        "cloud_cover": result["cloud_cover"],
+        "resolution_m": result["resolution_m"],
+        "bands": result["bands"],
+        "bounds": result["bounds"],
+        "width": result["width"],
+        "height": result["height"],
+    }
+    meta_file.write_text(json.dumps(meta))
+
+    return {"available": True, "cached": False, **meta}
+
+
 # ─── Drone endpoints ────────────────────────────────────────────────────────
 
 class FlightPlanRequest(BaseModel):

@@ -249,6 +249,7 @@ function TerrainModeContent({
           { id: 'parcel-boundary-line', label: 'Contorno dorado' },
           { id: 'parcel-plinth', label: 'Corte geológico' },
           { id: 'ndvi', label: 'NDVI Real (Sentinel-2)' },
+          { id: 'sentinel-rgb', label: 'Sentinel-2 RGB (satélite)' },
         ].map((layer) => (
           <ToggleRow
             key={layer.id}

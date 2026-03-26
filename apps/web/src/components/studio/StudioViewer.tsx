@@ -296,6 +296,66 @@ async function loadNDVIOverlay(
 }
 
 /**
+ * Loads Sentinel-2 RGB (true color) overlay from the tiles API.
+ * Fetches metadata first (triggers download on engine if needed),
+ * then loads the PNG as a SingleTileImageryProvider.
+ */
+async function loadSentinelRGBOverlay(
+  viewer: any,
+  twinId: string,
+  snapshot: any,
+): Promise<any | null> {
+  const Cesium = window.Cesium;
+  if (!Cesium) return null;
+
+  const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3001';
+
+  try {
+    // Request metadata (this may trigger a download on the engine)
+    const metaUrl = `${apiBase}/api/tiles/${encodeURIComponent(twinId)}/sentinel-latest`;
+    const res = await fetch(metaUrl);
+    if (!res.ok) return null;
+    const meta = await res.json() as {
+      available?: boolean;
+      bounds?: number[];
+      date?: string;
+      cloud_cover?: number;
+    };
+
+    if (!meta.available || !meta.bounds) {
+      console.log('[StudioViewer] No Sentinel-2 RGB available for', twinId);
+      return null;
+    }
+
+    const [minLon, minLat, maxLon, maxLat] = meta.bounds;
+    const rgbUrl = `${apiBase}/api/tiles/${encodeURIComponent(twinId)}/sentinel_rgb.png`;
+    console.log('[StudioViewer] Loading Sentinel-2 RGB overlay:', rgbUrl, 'date:', meta.date);
+
+    const provider = await Cesium.SingleTileImageryProvider.fromUrl(rgbUrl, {
+      rectangle: Cesium.Rectangle.fromDegrees(minLon, minLat, maxLon, maxLat),
+    });
+
+    const layer = viewer.imageryLayers.addImageryProvider(provider);
+    layer.alpha = 0.75;
+    layer.brightness = 1.0;
+    layer.contrast = 1.05;
+    layer.show = false; // Hidden by default, toggled via 'sentinel-rgb' layer
+    viewer.imageryLayers.raiseToTop(layer);
+
+    (viewer as any)._sentinelRGBLayer = layer;
+    (viewer as any)._sentinelRGBMeta = meta;
+    console.log(
+      '[StudioViewer] ✅ Sentinel-2 RGB overlay loaded (date: %s, clouds: %s%%)',
+      meta.date, meta.cloud_cover,
+    );
+    return layer;
+  } catch (err) {
+    console.warn('[StudioViewer] Sentinel-2 RGB overlay load failed (non-critical):', err);
+    return null;
+  }
+}
+
+/**
  * Espera que el globe tenga tiles cargados (evento real de Cesium)
  * SIN timeout artificial - usa el evento real de Cesium
  */
@@ -781,6 +841,9 @@ export default function StudioViewer({
         // Load NDVI real overlay if available (non-blocking)
         loadNDVIOverlay(viewer, snapshot.twinId, snapshot).catch(() => {});
 
+        // Load Sentinel-2 RGB overlay if available (non-blocking)
+        loadSentinelRGBOverlay(viewer, snapshot.twinId, snapshot).catch(() => {});
+
         // ── FINAL VERIFICATION ────────────────────────────────────────
         console.log('[StudioViewer] ═══════════════════════════════════════');
         console.log('[StudioViewer] FINAL TERRAIN STATUS:');
@@ -898,6 +961,16 @@ export default function StudioViewer({
         if (ndviLayer) {
           ndviLayer.show = visible;
           console.log(`[StudioViewer] ndvi overlay: ${visible ? 'visible' : 'hidden'}`);
+        }
+        return;
+      }
+
+      // Special case: Sentinel-2 RGB is an imagery layer
+      if (layerId === 'sentinel-rgb') {
+        const rgbLayer = (viewer as any)._sentinelRGBLayer;
+        if (rgbLayer) {
+          rgbLayer.show = visible;
+          console.log(`[StudioViewer] sentinel-rgb overlay: ${visible ? 'visible' : 'hidden'}`);
         }
         return;
       }

@@ -162,4 +162,27 @@ export async function tilesRouter(fastify: FastifyInstance) {
       return reply.code(502).send({ error: 'Engine unreachable', detail: String(err) });
     }
   });
+
+  // Proxy Sentinel-2 RGB latest to engine
+  fastify.get('/tiles/:twinId/sentinel-latest', async (request: FastifyRequest, reply: FastifyReply) => {
+    const { twinId } = request.params as { twinId: string };
+
+    if (!isValidTwinId(twinId)) {
+      return reply.code(400).send({ error: 'Invalid twinId' });
+    }
+
+    try {
+      const engineResp = await fetch(`${ENGINE_URL}/sentinel-latest/${encodeURIComponent(twinId)}`);
+
+      if (!engineResp.ok) {
+        const err = await engineResp.text();
+        return reply.code(engineResp.status).send({ error: 'Engine error', detail: err });
+      }
+
+      const data = await engineResp.json() as Record<string, unknown>;
+      return reply.send(data);
+    } catch (err) {
+      return reply.code(502).send({ error: 'Engine unreachable', detail: String(err) });
+    }
+  });
 }
