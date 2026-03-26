@@ -73,7 +73,7 @@ const DEFAULT_VISUAL_STYLE: VisualStyle = {
   fillOpacity: 0.09,
   boundaryColor: '#f0c040',
   boundaryWidth: 2.0,
-  terrainExaggeration: 2.5,
+  terrainExaggeration: 1.0,
   enableLighting: true,
   timeOfDay: new Date(2024, 0, 1, 8, 0, 0).toISOString(),
   atmosphereDensity: 1.0,
@@ -185,7 +185,7 @@ export default function TwinStudioPage() {
     const mergedStyle: VisualStyle = {
       ...DEFAULT_VISUAL_STYLE,
       ...loadedStyle,
-      terrainExaggeration: Math.max(loadedStyle.terrainExaggeration ?? 2.5, 2.0),
+      terrainExaggeration: loadedStyle.terrainExaggeration ?? 1.0,
     };
     setVisualStyle(mergedStyle);
     setLoading(false);

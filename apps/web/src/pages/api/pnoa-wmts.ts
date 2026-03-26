@@ -28,6 +28,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     clearTimeout(timeout);
 
     if (!response.ok) {
+      console.error(`[PNOA-WMTS proxy] IGN returned ${response.status} for: ${ignUrl}`);
       return res.status(response.status).send('IGN WMTS error');
     }
 

@@ -3,10 +3,8 @@ import ControlPanel from '@/components/ControlPanel';
 import CesiumViewer from '@/components/CesiumViewer';
 import StatusHUD from '@/components/StatusHUD';
 import ParcelBadge from '@/components/ParcelBadge';
-import MeshGeneratorOverlay from '@/components/studio/MeshGeneratorOverlay';
 import type { TwinRecipe, LayerType } from '@geotwin/types';
 import { twinStore, createSnapshotFromRecipe, generateTwinId } from '@/lib/twinStore';
-import { useTileProcessing } from '@/hooks/useTileProcessing';
 
 type LoadingState = 'idle' | 'loading' | 'success' | 'fallback' | 'error';
 
@@ -47,7 +45,6 @@ export default function Home() {
   const [framingMargin, setFramingMargin] = useState(1.15);
   const [terrainExaggeration, setTerrainExaggeration] = useState(1.0);
   const [generatedTwinId, setGeneratedTwinId] = useState<string | null>(null);
-  const tileProcessing = useTileProcessing(generatedTwinId ?? recipe?.twinId);
 
   const handleRecipeLoaded = (loadedRecipe: TwinRecipe) => {
     setRecipe(loadedRecipe);
@@ -246,9 +243,6 @@ export default function Home() {
                 wasReprojected={viewerStatus?.parcelStatus?.wasReprojected}
                 sourceEPSG={viewerStatus?.parcelStatus?.sourceEPSG}
               />
-
-              {/* Mesh generator overlay — tripo3d-style */}
-              <MeshGeneratorOverlay tileProcessing={tileProcessing} />
             </>
           ) : (
             <div className="h-full flex items-center justify-center">

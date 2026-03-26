@@ -403,9 +403,15 @@ async function flyToParcelWithTerrain(
   const [lon, lat] = centroid;
   const areaHa = parcel?.area_ha ?? 100;
   
-  // Distancia proporcional al área de la parcela
-  // 134ha → ~1850m de distancia al punto central
-  const distanceM = Math.max(1500, Math.min(5000, Math.sqrt(areaHa) * 160));
+  // Distancia adaptativa por tamaño de parcela
+  function computeIdealRange(ha: number): number {
+    if (ha < 0.5) return 150;        // Jardín/casa
+    if (ha < 5) return 400;           // Parcela pequeña
+    if (ha < 50) return 1200;         // Finca media
+    if (ha < 200) return 2500;        // Finca grande
+    return 4000;                       // Comarca
+  }
+  const distanceM = computeIdealRange(areaHa);
   
   console.log(`[StudioViewer] 🎯 lookAt centroid [${lon.toFixed(4)}, ${lat.toFixed(4)}] dist=${distanceM.toFixed(0)}m`);
   
@@ -808,9 +814,9 @@ export default function StudioViewer({
         );
         viewer.clock.shouldAnimate = false;
 
-        // ── TERRAIN EXAGGERATION (crucial for visibility) ──────────
-        // Usar valor del preset o 2.5x por defecto (NO forzar mínimo)
-        const initialExaggeration = visualStyle.terrainExaggeration || 2.5;
+        // ── TERRAIN EXAGGERATION ─────────────────────────
+        // Default 1.0x para representación realista del terreno
+        const initialExaggeration = visualStyle.terrainExaggeration || 1.0;
         viewer.scene.verticalExaggeration = initialExaggeration;
         console.log('[StudioViewer] 🏔️ Terrain exaggeration:', initialExaggeration + 'x');
         console.log('[StudioViewer] 📊 visualStyle.terrainExaggeration:', visualStyle.terrainExaggeration);
@@ -888,7 +894,7 @@ export default function StudioViewer({
     });
 
     // Update terrain exaggeration — usar el valor del slider directamente
-    const exaggeration = visualStyle.terrainExaggeration || 2.5;
+    const exaggeration = visualStyle.terrainExaggeration || 1.0;
     viewer.scene.verticalExaggeration = exaggeration;
     console.log('[StudioViewer] Exaggeration updated to:', exaggeration + 'x');
 
@@ -980,6 +986,11 @@ export default function StudioViewer({
         if (rgbLayer) {
           rgbLayer.show = visible;
           console.log(`[StudioViewer] sentinel-rgb overlay: ${visible ? 'visible' : 'hidden'}`);
+        }
+        // When Sentinel-2 is active, hide cadastral fill so imagery is visible
+        const fillEntity = viewer.entities.getById('parcel-fill');
+        if (fillEntity) {
+          fillEntity.show = !visible;
         }
         return;
       }

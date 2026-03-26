@@ -63,6 +63,18 @@ type BoundingSphere = {
   radius: number;
 };
 
+/**
+ * Compute ideal camera range based on parcel area.
+ * Prevents camera from being too far for small parcels or too close for large ones.
+ */
+function computeIdealRange(areaHa: number): number {
+  if (areaHa < 0.5) return 150;        // Jardín/casa
+  if (areaHa < 5) return 400;           // Parcela pequeña
+  if (areaHa < 50) return 1200;         // Finca media
+  if (areaHa < 200) return 2500;        // Finca grande
+  return 4000;                           // Comarca
+}
+
 // Timeout configuration (ms)
 const TIMEOUTS = {
   TERRAIN: 12000,
@@ -415,9 +427,7 @@ export default function CesiumViewer({
 
         // Initial camera position (generic fallback - will be corrected by loadGeometry)
         // Start with a neutral view; loadGeometry will flyTo the actual parcel extent
-        const cameraHeight = tileMode 
-          ? Math.max(800, recipe.area_ha * 40)
-          : Math.max(1500, recipe.area_ha * 70);
+        const cameraHeight = computeIdealRange(recipe.area_ha);
         
         // Use centroid from recipe (calculated from actual geometry bbox)
         const bbox = recipe.bbox || [-4, 40, -3, 41]; // Fallback to Spain region
@@ -1802,9 +1812,10 @@ async function flyToIsometric(
     const groundHeight = sampledCenter?.height ?? 700;
     const radius = boundingSphere.radius;
 
-    // Range: close enough to see terrain detail, far enough to see full parcel
-    // Pitch-compensated: at -32° the horizontal FOV captures more ground
-    const range = Math.max(radius * 1.6 * marginFactor, 350);
+    // Estimate area from radius: A = π·r², convert m² to ha
+    const estimatedAreaHa = (Math.PI * radius * radius) / 10000;
+    // Use adaptive range based on parcel area
+    const range = computeIdealRange(estimatedAreaHa) * marginFactor;
 
     if (!sampledCenter) {
       throw new Error('Terrain sampling returned no results');
@@ -1832,7 +1843,8 @@ async function flyToIsometric(
   } catch (error) {
     console.warn('[flyToIsometric] Terrain sampling failed, using fallback:', error);
     // Fallback to old method
-    const range = Math.max(boundingSphere.radius * 1.8 * marginFactor, 150);
+    const estimatedAreaHa = (Math.PI * boundingSphere.radius * boundingSphere.radius) / 10000;
+    const range = computeIdealRange(estimatedAreaHa) * marginFactor;
     await viewer.camera.flyToBoundingSphere(boundingSphere, {
       offset: new Cesium.HeadingPitchRange(heading, pitch, range),
       duration: 1.2,

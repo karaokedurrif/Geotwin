@@ -5,11 +5,9 @@ import {
   Image,
   Palette,
   Map,
-  Package,
   Download,
   Box,
   Loader2,
-  Glasses,
 } from 'lucide-react';
 import type { TwinSnapshot, VisualStyle } from '@/lib/twinStore';
 import styles from '@/styles/studio.module.css';
@@ -81,7 +79,6 @@ export default function StudioTopBar({
 
   const handleCenitalHD = () => runCapture('cenital', 'top', 3, true, `geotwin_${snapshot.twinId}_cenital_HD.png`);
   const handleVista3D = () => runCapture('vista3d', 'current', 2, false);
-  const handleNDVIMap = () => runCapture('ndvi', 'top', 3, true, `geotwin_${snapshot.twinId}_ndvi_map.png`);
 
   const handleDownloadGLB = async () => {
     setExporting('glb');
@@ -176,18 +173,11 @@ export default function StudioTopBar({
               padding: '6px 0', minWidth: 240, zIndex: 9999,
               boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
             }}>
-              <div style={{ padding: '4px 12px', fontSize: 10, color: '#888', textTransform: 'uppercase', letterSpacing: 1 }}>Im\u00e1genes 2D</div>
-              <DropItem icon={<Map size={13}/>} label="Cenital HD (PNG)" desc="Vista top-down, todo el pol\u00edgono" onClick={handleCenitalHD} disabled={!viewerRef} />
-              <DropItem icon={<Image size={13}/>} label="Vista actual (PNG)" desc="Captura la vista actual del visor" onClick={handleVista3D} disabled={!viewerRef} />
-              <DropItem icon={<Image size={13}/>} label="NDVI Map (PNG)" desc="Mapa NDVI cenital con colores" onClick={handleNDVIMap} disabled={!viewerRef} />
+              <DropItem icon={<Map size={13}/>} label="Cenital (PNG)" desc="Vista top-down de todo el polígono" onClick={handleCenitalHD} disabled={!viewerRef} />
+              <DropItem icon={<Image size={13}/>} label="Vista actual (PNG)" desc="Screenshot de lo que se ve" onClick={handleVista3D} disabled={!viewerRef} />
               <div style={{ height: 1, background: '#333', margin: '6px 0' }} />
-              <div style={{ padding: '4px 12px', fontSize: 10, color: '#888', textTransform: 'uppercase', letterSpacing: 1 }}>Modelos 3D</div>
-              <DropItem icon={<Box size={13}/>} label="Modelo 3D (GLB)" desc="Mesh texturizado — Blender, Sketchfab" onClick={handleDownloadGLB} disabled={!meshDone} />
-              <DropItem icon={<Box size={13}/>} label="Pol\u00edgono (GeoJSON)" desc="Contorno catastral para QGIS" onClick={handleDownloadKML} />
-              <div style={{ height: 1, background: '#333', margin: '6px 0' }} />
-              <DropItem icon={<Glasses size={13}/>} label="VR Experience" desc="Abrir visor WebXR inmersivo" onClick={() => { window.open(`/vr/${twinId || snapshot.twinId}`, '_blank'); setShowExportMenu(false); }} disabled={!meshDone} />
-              <div style={{ height: 1, background: '#333', margin: '6px 0' }} />
-              <DropItem icon={<Package size={13}/>} label="Exportar JSON" desc="Snapshot completo del Digital Twin" onClick={() => { onExport(); setShowExportMenu(false); }} />
+              <DropItem icon={<Box size={13}/>} label="Modelo 3D (GLB)" desc="Mesh texturizado descargable" onClick={handleDownloadGLB} disabled={!meshDone} />
+              <DropItem icon={<Box size={13}/>} label="Polígono (KML)" desc="Contorno catastral para QGIS" onClick={handleDownloadKML} />
             </div>
           )}
         </div>
