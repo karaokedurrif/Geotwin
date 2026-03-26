@@ -42,7 +42,7 @@ export default function Home() {
   const [viewerInstance, setViewerInstance] = useState<any>(null);
   const [recenterReady, setRecenterReady] = useState(false);
   const [exportReady, setExportReady] = useState(false);
-  const [framingMargin, setFramingMargin] = useState(1.15);
+  const [framingMargin, setFramingMargin] = useState(1.0);
   const [terrainExaggeration, setTerrainExaggeration] = useState(1.0);
   const [generatedTwinId, setGeneratedTwinId] = useState<string | null>(null);
 

@@ -221,19 +221,19 @@ export default function ControlPanel({
             Isometric View
           </button>
 
-          {/* Framing Margin Slider */}
+          {/* Zoom Slider (inverted: right = closer camera) */}
           <div className={styles.sliderGroup}>
             <label className={styles.sliderLabel}>
               <span>Zoom</span>
-              <span className={styles.sliderValue}>{framingMargin.toFixed(2)}x</span>
+              <span className={styles.sliderValue}>{(3.5 - framingMargin).toFixed(1)}x</span>
             </label>
             <input
               type="range"
               min="1.0"
               max="2.5"
               step="0.05"
-              value={framingMargin}
-              onChange={(e) => onFramingMarginChange?.(parseFloat(e.target.value))}
+              value={3.5 - framingMargin}
+              onChange={(e) => onFramingMarginChange?.(3.5 - parseFloat(e.target.value))}
               className={styles.slider}
             />
           </div>
