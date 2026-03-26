@@ -190,6 +190,18 @@ services:
       retries: 3
       start_period: 10s
 
+  # ----------------------------------------------------------------------------
+  # OpenDroneMap — Ortho/DSM processing (on-demand via --profile odm)
+  # ----------------------------------------------------------------------------
+  geotwin-odm:
+    image: opendronemap/odm:latest
+    profiles: ["odm"]
+    volumes:
+      - geotwin-tiles:/app/tiles
+      - odm-data:/datasets
+    networks:
+      - geotwin
+
 # ==============================================================================
 # Networks
 # ==============================================================================
@@ -228,3 +240,8 @@ volumes:
   geotwin-db-data:
     driver: local
     name: geotwin-db-data
+
+  # OpenDroneMap working data (only used with --profile odm)
+  odm-data:
+    driver: local
+    name: odm-data

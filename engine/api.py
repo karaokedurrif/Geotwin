@@ -262,6 +262,7 @@ class FlightPlanRequest(BaseModel):
     sidelap: float = 65.0
     speed: float = 8.0
     plan_type: str = "grid"
+    drone_model: str = ""  # "dji_mini4pro" uses optimized defaults
 
 
 class DroneProcessRequest(BaseModel):
@@ -276,6 +277,18 @@ def drone_flight_plan(req: FlightPlanRequest):
     from .drones.flight_planner import plan_grid_flight, FlightPlanType
 
     plan_type = FlightPlanType.CROSSHATCH if req.plan_type == "crosshatch" else FlightPlanType.GRID
+
+    # Use Mini 4 Pro optimized defaults if specified
+    extra_kwargs = {}
+    if req.drone_model == "dji_mini4pro":
+        from .drones.dji_mini4pro import MINI4PRO_PLANNER_DEFAULTS
+        extra_kwargs = {
+            "sensor_width_mm": MINI4PRO_PLANNER_DEFAULTS["sensor_width_mm"],
+            "focal_length_mm": MINI4PRO_PLANNER_DEFAULTS["focal_length_mm"],
+            "image_width_px": MINI4PRO_PLANNER_DEFAULTS["image_width_px"],
+            "image_height_px": MINI4PRO_PLANNER_DEFAULTS["image_height_px"],
+        }
+
     plan = plan_grid_flight(
         aoi_geojson=req.aoi_geojson,
         altitude_agl=req.altitude_agl,
@@ -283,6 +296,7 @@ def drone_flight_plan(req: FlightPlanRequest):
         sidelap=req.sidelap,
         speed=req.speed,
         plan_type=plan_type,
+        **extra_kwargs,
     )
     return {
         "type": plan.type.value,
@@ -295,6 +309,35 @@ def drone_flight_plan(req: FlightPlanRequest):
         "estimated_photos": plan.estimated_photos,
         "waypoints": plan.waypoints,
     }
+
+
+@app.get("/drones/mini4pro/gsd")
+def mini4pro_gsd(altitude: float = 60.0, megapixels: int = 48):
+    """Calculate GSD for DJI Mini 4 Pro at a given altitude."""
+    from .drones.dji_mini4pro import compute_gsd
+    gsd = compute_gsd(altitude, megapixels)
+    return {
+        "gsd_cm": gsd.gsd_cm,
+        "footprint_w_m": gsd.footprint_w_m,
+        "footprint_h_m": gsd.footprint_h_m,
+        "altitude_m": gsd.altitude_m,
+        "megapixels": gsd.megapixels,
+    }
+
+
+@app.post("/drones/mini4pro/estimate")
+def mini4pro_estimate(body: dict):
+    """Estimate flight parameters for DJI Mini 4 Pro over an area."""
+    from .drones.dji_mini4pro import estimate_flight
+    return estimate_flight(
+        area_ha=body.get("area_ha", 10),
+        altitude_m=body.get("altitude_m", 60),
+        overlap=body.get("overlap", 80),
+        sidelap=body.get("sidelap", 70),
+        speed_ms=body.get("speed_ms", 5),
+        megapixels=body.get("megapixels", 48),
+        battery_type=body.get("battery_type", "standard"),
+    )
 
 
 @app.post("/drones/missions/{mission_id}/export/dji")

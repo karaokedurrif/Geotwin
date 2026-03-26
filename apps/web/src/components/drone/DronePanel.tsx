@@ -113,7 +113,9 @@ export default function DronePanel({ snapshot }: { snapshot: TwinSnapshot }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: `Dron ${drones.length + 1}`,
-          model: 'DJI Mavic 3E',
+          model: 'DJI Mini 4 Pro',
+          type: 'dji',
+          payload: { camera_model: '1/1.3" 48MP', sensor_type: 'rgb' },
         }),
       });
       if (!res.ok) throw new Error('Error registrando dron');
@@ -165,7 +167,7 @@ export default function DronePanel({ snapshot }: { snapshot: TwinSnapshot }) {
           {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ altitude: 80, overlap: 75, sidelap: 65, speed: 8, type: 'grid' }),
+            body: JSON.stringify({ altitude: 60, overlap: 80, sidelap: 70, speed: 5, type: 'crosshatch', drone_model: 'dji_mini4pro' }),
           },
         );
         if (!res.ok) throw new Error('Error generando plan de vuelo');

@@ -174,6 +174,7 @@ export async function dronesRouter(fastify: FastifyInstance) {
       speed?: number;
       type?: string;
       aoi_geojson?: any;
+      drone_model?: string;
     };
 
     // If AOI not in body, use mission's AOI or twin geometry
@@ -196,6 +197,7 @@ export async function dronesRouter(fastify: FastifyInstance) {
           sidelap: body.sidelap || 65,
           speed: body.speed || 8,
           plan_type: body.type || 'grid',
+          drone_model: body.drone_model || '',
         }),
       });
 
@@ -320,6 +322,35 @@ export async function dronesRouter(fastify: FastifyInstance) {
       return reply.send({ twinId, products: await Promise.all(products) });
     } catch {
       return reply.send({ twinId, products: [] });
+    }
+  });
+
+  // ── Mini 4 Pro GSD calculator ──────────────────────────────────
+  fastify.get('/drones/mini4pro/gsd', async (request: FastifyRequest, reply: FastifyReply) => {
+    const { altitude, megapixels } = request.query as { altitude?: string; megapixels?: string };
+    try {
+      const engineRes = await fetch(
+        `${ENGINE_URL}/drones/mini4pro/gsd?altitude=${altitude || '60'}&megapixels=${megapixels || '48'}`,
+      );
+      if (!engineRes.ok) return reply.code(502).send({ error: 'Engine error' });
+      return reply.send(await engineRes.json());
+    } catch {
+      return reply.code(502).send({ error: 'Engine unreachable' });
+    }
+  });
+
+  // ── Mini 4 Pro flight estimate ─────────────────────────────────
+  fastify.post('/drones/mini4pro/estimate', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const engineRes = await fetch(`${ENGINE_URL}/drones/mini4pro/estimate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(request.body),
+      });
+      if (!engineRes.ok) return reply.code(502).send({ error: 'Engine error' });
+      return reply.send(await engineRes.json());
+    } catch {
+      return reply.code(502).send({ error: 'Engine unreachable' });
     }
   });
 }
