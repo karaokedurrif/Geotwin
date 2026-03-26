@@ -83,7 +83,7 @@ export default function ModelViewer3D({ twinId, visible, onClose }: ModelViewer3
   const [glbReady, setGlbReady] = useState(false);
 
   const glbUrl = useMemo(
-    () => `${API_BASE}/api/tiles/${encodeURIComponent(twinId)}/terrain_lod0.glb`,
+    () => `${API_BASE}/api/tiles/${encodeURIComponent(twinId)}/lod0.glb`,
     [twinId],
   );
 

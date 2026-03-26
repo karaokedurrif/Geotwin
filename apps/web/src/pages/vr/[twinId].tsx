@@ -4,7 +4,7 @@
  * URL: /vr/{twinId}
  *
  * Features:
- *  - Loads terrain_lod0.glb from the API
+ *  - Loads lod0.glb from the API
  *  - Orbit controls (rotate, zoom, pan)
  *  - "Enter VR" button for WebXR headsets (Quest 3, Vive, etc.)
  *  - Apple AR link via <a rel="ar"> for USDZ Quick Look
@@ -77,7 +77,7 @@ export default function VRViewerPage() {
   const vrButtonRef = useRef<HTMLDivElement>(null);
 
   const glbUrl = twinId
-    ? `${API_BASE}/api/tiles/${encodeURIComponent(twinId as string)}/terrain_lod0.glb`
+    ? `${API_BASE}/api/tiles/${encodeURIComponent(twinId as string)}/lod0.glb`
     : '';
 
   // Check if GLB file exists

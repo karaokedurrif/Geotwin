@@ -86,7 +86,7 @@ export default function StudioTopBar({
     try {
       const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3001';
       const id = twinId || snapshot.twinId;
-      const res = await fetch(`${apiBase}/api/tiles/${encodeURIComponent(id)}/terrain_lod0.glb`);
+      const res = await fetch(`${apiBase}/api/tiles/${encodeURIComponent(id)}/lod0.glb`);
       if (!res.ok) throw new Error('GLB not available — generate mesh first');
       const blob = await res.blob();
       downloadBlob(blob, `geotwin_${id}_3d_model.glb`);
