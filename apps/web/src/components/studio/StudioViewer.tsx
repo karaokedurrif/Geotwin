@@ -1002,6 +1002,109 @@ export default function StudioViewer({
   }, [layerState]);
 
   // ============================================================================
+  // DRONE WAYPOINT VISUALIZATION
+  // ============================================================================
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (!viewer || viewer.isDestroyed()) return;
+
+    const Cesium = window.Cesium;
+    if (!Cesium) return;
+
+    const DRONE_ENTITY_PREFIX = 'drone-waypoint-';
+    const DRONE_ROUTE_ID = 'drone-flight-route';
+
+    const clearWaypoints = () => {
+      // Remove all drone entities
+      const toRemove: string[] = [];
+      viewer.entities.values.forEach((e: { id: string }) => {
+        if (e.id?.startsWith(DRONE_ENTITY_PREFIX) || e.id === DRONE_ROUTE_ID) {
+          toRemove.push(e.id);
+        }
+      });
+      toRemove.forEach((id) => viewer.entities.removeById(id));
+    };
+
+    const drawWaypoints = (waypoints: number[][]) => {
+      clearWaypoints();
+      if (!waypoints || waypoints.length === 0) return;
+
+      // Flight route polyline (clamped to ground + altitude)
+      const positions = waypoints.map((wp: number[]) =>
+        Cesium.Cartesian3.fromDegrees(wp[0], wp[1], wp[2] || 60),
+      );
+
+      viewer.entities.add({
+        id: DRONE_ROUTE_ID,
+        polyline: {
+          positions,
+          width: 2,
+          material: new Cesium.PolylineDashMaterialProperty({
+            color: Cesium.Color.fromCssColorString('#3B82F6').withAlpha(0.8),
+            dashLength: 12,
+          }),
+        },
+      });
+
+      // Waypoint markers
+      waypoints.forEach((wp: number[], i: number) => {
+        const isFirst = i === 0;
+        const isLast = i === waypoints.length - 1;
+        viewer.entities.add({
+          id: `${DRONE_ENTITY_PREFIX}${i}`,
+          position: Cesium.Cartesian3.fromDegrees(wp[0], wp[1], wp[2] || 60),
+          point: {
+            pixelSize: isFirst || isLast ? 8 : 4,
+            color: isFirst
+              ? Cesium.Color.LIME
+              : isLast
+              ? Cesium.Color.RED
+              : Cesium.Color.fromCssColorString('#3B82F6'),
+            outlineColor: Cesium.Color.WHITE,
+            outlineWidth: isFirst || isLast ? 2 : 1,
+            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+          },
+          label:
+            isFirst || isLast
+              ? {
+                  text: isFirst ? 'INICIO' : 'FIN',
+                  font: '10px JetBrains Mono, monospace',
+                  fillColor: Cesium.Color.WHITE,
+                  outlineColor: Cesium.Color.BLACK,
+                  outlineWidth: 2,
+                  style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+                  pixelOffset: new Cesium.Cartesian2(0, -14),
+                  disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                }
+              : undefined,
+        });
+      });
+
+      console.log(`[StudioViewer] Drew ${waypoints.length} drone waypoints`);
+    };
+
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (detail?.waypoints) {
+        drawWaypoints(detail.waypoints);
+      } else {
+        clearWaypoints();
+      }
+    };
+
+    window.addEventListener('geotwin:drone-waypoints', handler);
+
+    // Clean up waypoints when leaving drone mode
+    if (activeMode !== 'dron') {
+      clearWaypoints();
+    }
+
+    return () => {
+      window.removeEventListener('geotwin:drone-waypoints', handler);
+    };
+  }, [activeMode]);
+
+  // ============================================================================
   // HELICOPTER MODE & CAMERA VIEW PRESETS
   // ============================================================================
 

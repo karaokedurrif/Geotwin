@@ -10,7 +10,7 @@
  *   - Processing trigger (ortho + NDVI)
  *   - DJI KMZ export
  */
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import {
   Navigation,
   Upload,
@@ -25,10 +25,33 @@ import {
   Loader2,
   Check,
   AlertCircle,
+  Gauge,
+  Timer,
+  Battery,
+  Crosshair,
 } from 'lucide-react';
 import type { TwinSnapshot } from '@/lib/twinStore';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || '';
+
+// ─── GSD / Estimation types ────────────────────────────────────
+
+interface GSDResult {
+  altitude_m: number;
+  megapixels: number;
+  gsd_cm_per_px: number;
+  coverage_m2: number;
+  coverage_ha: number;
+}
+
+interface FlightEstimate {
+  total_photos: number;
+  flight_lines: number;
+  total_distance_m: number;
+  flight_time_min: number;
+  batteries_needed: number;
+  coverage_ha: number;
+}
 
 // ─── Types ──────────────────────────────────────────────────────
 
@@ -78,6 +101,16 @@ export default function DronePanel({ snapshot }: { snapshot: TwinSnapshot }) {
   const [showFleet, setShowFleet] = useState(false);
   const [showMissions, setShowMissions] = useState(true);
   const [showNewMission, setShowNewMission] = useState(false);
+  const [showMando, setShowMando] = useState(true);
+
+  // ── Mando Virtual state ───────────────────────────────────
+  const [altitude, setAltitude] = useState(60);
+  const [overlap, setOverlap] = useState(80);
+  const [sidelap, setSidelap] = useState(70);
+  const [speed, setSpeed] = useState(5);
+  const [gsdResult, setGsdResult] = useState<GSDResult | null>(null);
+  const [flightEstimate, setFlightEstimate] = useState<FlightEstimate | null>(null);
+  const autoRegistered = useRef(false);
 
   // Load data
   const fetchData = useCallback(async () => {
@@ -102,6 +135,75 @@ export default function DronePanel({ snapshot }: { snapshot: TwinSnapshot }) {
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+
+  // Auto-register DJI Mini 4 Pro if no drones
+  useEffect(() => {
+    if (autoRegistered.current || drones.length > 0) return;
+    // Only auto-register once fetchData has run (drones initialized to [])
+    const timer = setTimeout(async () => {
+      if (autoRegistered.current) return;
+      autoRegistered.current = true;
+      try {
+        const res = await fetch(`${API_BASE}/api/drones/${encodeURIComponent(twinId)}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if ((data.drones || []).length > 0) {
+          setDrones(data.drones);
+          return;
+        }
+        // Register Mini 4 Pro automatically
+        const regRes = await fetch(`${API_BASE}/api/drones/${encodeURIComponent(twinId)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: 'DJI Mini 4 Pro',
+            model: 'DJI Mini 4 Pro',
+            type: 'dji',
+            payload: { camera_model: '1/1.3" 48MP', sensor_type: 'rgb', weight_g: 249 },
+          }),
+        });
+        if (regRes.ok) await fetchData();
+      } catch {
+        // silent — will show empty fleet
+      }
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [drones.length, twinId, fetchData]);
+
+  // Fetch GSD when altitude changes
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch(
+      `${API_BASE}/api/drones/mini4pro/gsd?altitude=${altitude}&megapixels=48`,
+      { signal: controller.signal },
+    )
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => d && setGsdResult(d))
+      .catch(() => {});
+    return () => controller.abort();
+  }, [altitude]);
+
+  // Fetch flight estimate when params change
+  useEffect(() => {
+    if (!snapshot.parcel?.area_ha) return;
+    const controller = new AbortController();
+    fetch(`${API_BASE}/api/drones/mini4pro/estimate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        area_ha: snapshot.parcel.area_ha,
+        altitude_m: altitude,
+        overlap_pct: overlap,
+        sidelap_pct: sidelap,
+        speed_ms: speed,
+      }),
+      signal: controller.signal,
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => d && setFlightEstimate(d))
+      .catch(() => {});
+    return () => controller.abort();
+  }, [altitude, overlap, sidelap, speed, snapshot.parcel?.area_ha]);
 
   // Register drone
   const handleAddDrone = useCallback(async () => {
@@ -167,18 +269,27 @@ export default function DronePanel({ snapshot }: { snapshot: TwinSnapshot }) {
           {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ altitude: 60, overlap: 80, sidelap: 70, speed: 5, type: 'crosshatch', drone_model: 'dji_mini4pro' }),
+            body: JSON.stringify({ altitude, overlap, sidelap, speed, type: 'crosshatch', drone_model: 'dji_mini4pro' }),
           },
         );
         if (!res.ok) throw new Error('Error generando plan de vuelo');
+        const planData = await res.json();
+        // Dispatch waypoints to Cesium viewer
+        if (planData?.waypoints) {
+          window.dispatchEvent(
+            new CustomEvent('geotwin:drone-waypoints', {
+              detail: { waypoints: planData.waypoints },
+            }),
+          );
+        }
         await fetchData();
-      } catch (e: any) {
-        setError(e.message);
+      } catch (e: unknown) {
+        setError(e instanceof Error ? e.message : String(e));
       } finally {
         setLoading(false);
       }
     },
-    [twinId, fetchData],
+    [twinId, altitude, overlap, sidelap, speed, fetchData],
   );
 
   // Download KMZ
@@ -347,7 +458,20 @@ export default function DronePanel({ snapshot }: { snapshot: TwinSnapshot }) {
               key={m.id}
               mission={m}
               isSelected={selectedMission === m.id}
-              onSelect={() => setSelectedMission(selectedMission === m.id ? null : m.id)}
+              onSelect={() => {
+                const newSel = selectedMission === m.id ? null : m.id;
+                setSelectedMission(newSel);
+                // Show/clear waypoints on the map
+                if (newSel && m.plan?.waypoints) {
+                  window.dispatchEvent(
+                    new CustomEvent('geotwin:drone-waypoints', { detail: { waypoints: m.plan.waypoints } }),
+                  );
+                } else {
+                  window.dispatchEvent(
+                    new CustomEvent('geotwin:drone-waypoints', { detail: { waypoints: null } }),
+                  );
+                }
+              }}
               onGeneratePlan={() => handleGeneratePlan(m.id)}
               onDownloadKmz={() => handleDownloadKmz(m.id)}
               onUpload={() => handleUploadImages(m.id)}
@@ -383,6 +507,88 @@ export default function DronePanel({ snapshot }: { snapshot: TwinSnapshot }) {
               >
                 Cancelar
               </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Mando Virtual ─────────────────────────────────────── */}
+      <SectionHeader title="Mando Virtual" open={showMando} onToggle={() => setShowMando(!showMando)} />
+      {showMando && (
+        <div style={{ padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {/* Altitude */}
+          <SliderRow
+            icon={<Crosshair size={11} color="#3B82F6" />}
+            label="Altitud AGL"
+            value={altitude}
+            min={20}
+            max={120}
+            step={5}
+            unit="m"
+            onChange={setAltitude}
+          />
+          {/* Overlap */}
+          <SliderRow
+            icon={<Gauge size={11} color="#10B981" />}
+            label="Solape frontal"
+            value={overlap}
+            min={60}
+            max={95}
+            step={5}
+            unit="%"
+            onChange={setOverlap}
+          />
+          {/* Sidelap */}
+          <SliderRow
+            icon={<Gauge size={11} color="#8B5CF6" />}
+            label="Solape lateral"
+            value={sidelap}
+            min={50}
+            max={90}
+            step={5}
+            unit="%"
+            onChange={setSidelap}
+          />
+          {/* Speed */}
+          <SliderRow
+            icon={<Navigation size={11} color="#F59E0B" />}
+            label="Velocidad"
+            value={speed}
+            min={2}
+            max={12}
+            step={1}
+            unit="m/s"
+            onChange={setSpeed}
+          />
+
+          {/* ── Estimación de vuelo ── */}
+          <div style={{ background: '#16161a', borderRadius: 4, padding: '6px 8px', marginTop: 2 }}>
+            <div style={{ fontSize: 9, color: '#6B6B73', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>
+              Estimación Mini 4 Pro
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '3px 12px', fontSize: 10 }}>
+              <EstRow icon={<Crosshair size={9} />} label="GSD" value={gsdResult ? `${gsdResult.gsd_cm_per_px.toFixed(2)} cm/px` : '—'} />
+              <EstRow icon={<Camera size={9} />} label="Fotos" value={flightEstimate ? String(flightEstimate.total_photos) : '—'} />
+              <EstRow icon={<Timer size={9} />} label="Tiempo" value={flightEstimate ? `${flightEstimate.flight_time_min.toFixed(1)} min` : '—'} />
+              <EstRow icon={<Battery size={9} />} label="Baterías" value={flightEstimate ? String(flightEstimate.batteries_needed) : '—'} />
+              <EstRow icon={<MapPin size={9} />} label="Distancia" value={flightEstimate ? `${(flightEstimate.total_distance_m / 1000).toFixed(2)} km` : '—'} />
+              <EstRow icon={<Navigation size={9} />} label="Líneas" value={flightEstimate ? String(flightEstimate.flight_lines) : '—'} />
+            </div>
+          </div>
+
+          {/* GSD quality indicator */}
+          {gsdResult && (
+            <div style={{
+              fontSize: 10,
+              color: gsdResult.gsd_cm_per_px < 2 ? '#4ade80' : gsdResult.gsd_cm_per_px < 3 ? '#fbbf24' : '#f87171',
+              textAlign: 'center',
+              padding: '3px 0',
+            }}>
+              {gsdResult.gsd_cm_per_px < 2
+                ? '● Resolución excelente — detalle centimétrico'
+                : gsdResult.gsd_cm_per_px < 3
+                ? '● Resolución buena — apta para ortomosaico'
+                : '● Resolución baja — considere reducir altitud'}
             </div>
           )}
         </div>
@@ -616,6 +822,66 @@ function StatRow({ label, value }: { label: string; value: string }) {
     <div style={{ display: 'flex', alignItems: 'center', padding: '2px 0', fontSize: 11 }}>
       <span style={{ flex: 1, color: '#6B6B73' }}>{label}</span>
       <span style={{ color: '#A0A0A8', fontFamily: 'JetBrains Mono, monospace' }}>{value}</span>
+    </div>
+  );
+}
+
+function SliderRow({
+  icon,
+  label,
+  value,
+  min,
+  max,
+  step,
+  unit,
+  onChange,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  step: number;
+  unit: string;
+  onChange: (v: number) => void;
+}) {
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 2 }}>
+        {icon}
+        <span style={{ flex: 1, fontSize: 10, color: '#A0A0A8' }}>{label}</span>
+        <span style={{ fontSize: 11, color: '#E0E0E4', fontFamily: 'JetBrains Mono, monospace', fontWeight: 600 }}>
+          {value}{unit}
+        </span>
+      </div>
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        style={{
+          width: '100%',
+          height: 4,
+          appearance: 'none',
+          background: '#2a2a2e',
+          borderRadius: 2,
+          outline: 'none',
+          cursor: 'pointer',
+          accentColor: '#3B82F6',
+        }}
+      />
+    </div>
+  );
+}
+
+function EstRow({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+      <span style={{ color: '#4B5563' }}>{icon}</span>
+      <span style={{ color: '#6B6B73', fontSize: 10 }}>{label}:</span>
+      <span style={{ color: '#A0A0A8', fontFamily: 'JetBrains Mono, monospace', fontSize: 10, marginLeft: 'auto' }}>{value}</span>
     </div>
   );
 }
