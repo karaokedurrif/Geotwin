@@ -39,18 +39,19 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL || '';
 interface GSDResult {
   altitude_m: number;
   megapixels: number;
-  gsd_cm_per_px: number;
-  coverage_m2: number;
-  coverage_ha: number;
+  gsd_cm: number;
+  footprint_w_m: number;
+  footprint_h_m: number;
 }
 
 interface FlightEstimate {
-  total_photos: number;
-  flight_lines: number;
-  total_distance_m: number;
-  flight_time_min: number;
-  batteries_needed: number;
-  coverage_ha: number;
+  estimated_photos: number;
+  n_lines: number;
+  flight_min: number;
+  batteries: number;
+  gsd_cm: number;
+  line_spacing_m: number;
+  photo_spacing_m: number;
 }
 
 // ─── Types ──────────────────────────────────────────────────────
@@ -193,8 +194,8 @@ export default function DronePanel({ snapshot }: { snapshot: TwinSnapshot }) {
       body: JSON.stringify({
         area_ha: snapshot.parcel.area_ha,
         altitude_m: altitude,
-        overlap_pct: overlap,
-        sidelap_pct: sidelap,
+        overlap: overlap,
+        sidelap: sidelap,
         speed_ms: speed,
       }),
       signal: controller.signal,
@@ -567,12 +568,12 @@ export default function DronePanel({ snapshot }: { snapshot: TwinSnapshot }) {
               Estimación Mini 4 Pro
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '3px 12px', fontSize: 10 }}>
-              <EstRow icon={<Crosshair size={9} />} label="GSD" value={gsdResult ? `${gsdResult.gsd_cm_per_px.toFixed(2)} cm/px` : '—'} />
-              <EstRow icon={<Camera size={9} />} label="Fotos" value={flightEstimate ? String(flightEstimate.total_photos) : '—'} />
-              <EstRow icon={<Timer size={9} />} label="Tiempo" value={flightEstimate ? `${flightEstimate.flight_time_min.toFixed(1)} min` : '—'} />
-              <EstRow icon={<Battery size={9} />} label="Baterías" value={flightEstimate ? String(flightEstimate.batteries_needed) : '—'} />
-              <EstRow icon={<MapPin size={9} />} label="Distancia" value={flightEstimate ? `${(flightEstimate.total_distance_m / 1000).toFixed(2)} km` : '—'} />
-              <EstRow icon={<Navigation size={9} />} label="Líneas" value={flightEstimate ? String(flightEstimate.flight_lines) : '—'} />
+              <EstRow icon={<Crosshair size={9} />} label="GSD" value={gsdResult ? `${gsdResult.gsd_cm.toFixed(2)} cm/px` : '—'} />
+              <EstRow icon={<Camera size={9} />} label="Fotos" value={flightEstimate ? String(flightEstimate.estimated_photos) : '—'} />
+              <EstRow icon={<Timer size={9} />} label="Tiempo" value={flightEstimate ? `${flightEstimate.flight_min.toFixed(1)} min` : '—'} />
+              <EstRow icon={<Battery size={9} />} label="Baterías" value={flightEstimate ? String(flightEstimate.batteries) : '—'} />
+              <EstRow icon={<MapPin size={9} />} label="Espaciado" value={flightEstimate ? `${flightEstimate.line_spacing_m.toFixed(1)}m × ${flightEstimate.photo_spacing_m.toFixed(1)}m` : '—'} />
+              <EstRow icon={<Navigation size={9} />} label="Líneas" value={flightEstimate ? String(flightEstimate.n_lines) : '—'} />
             </div>
           </div>
 
@@ -580,13 +581,13 @@ export default function DronePanel({ snapshot }: { snapshot: TwinSnapshot }) {
           {gsdResult && (
             <div style={{
               fontSize: 10,
-              color: gsdResult.gsd_cm_per_px < 2 ? '#4ade80' : gsdResult.gsd_cm_per_px < 3 ? '#fbbf24' : '#f87171',
+              color: gsdResult.gsd_cm < 2 ? '#4ade80' : gsdResult.gsd_cm < 3 ? '#fbbf24' : '#f87171',
               textAlign: 'center',
               padding: '3px 0',
             }}>
-              {gsdResult.gsd_cm_per_px < 2
+              {gsdResult.gsd_cm < 2
                 ? '● Resolución excelente — detalle centimétrico'
-                : gsdResult.gsd_cm_per_px < 3
+                : gsdResult.gsd_cm < 3
                 ? '● Resolución buena — apta para ortomosaico'
                 : '● Resolución baja — considere reducir altitud'}
             </div>
