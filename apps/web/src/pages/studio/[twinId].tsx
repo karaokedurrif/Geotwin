@@ -105,6 +105,7 @@ export default function TwinStudioPage() {
     const url = `${apiBase}/api/tiles/${encodeURIComponent(twinId as string)}/tileset.json`;
     Cesium.Cesium3DTileset.fromUrl(url, { maximumScreenSpaceError: 8, maximumMemoryUsage: 256 })
       .then((tileset: any) => {
+        if (!viewerRef || viewerRef.isDestroyed?.()) return;
         viewerRef.scene.primitives.add(tileset);
         // Fly camera back to parcel instead of letting it drift
         const parcel = snapshot.parcel;

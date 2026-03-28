@@ -16,7 +16,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(400).send('Expected /api/pnoa-tile/{z}/{x}/{y}');
   }
 
-  const [z, x, y] = tile;
+  // Strip Cesium retry/subdomain suffixes like ":1" from tile coordinates
+  const z = tile[0].replace(/:[^/]*$/, '');
+  const x = tile[1].replace(/:[^/]*$/, '');
+  const y = tile[2].replace(/:[^/]*$/, '');
 
   // Validate numeric params
   if (!/^\d+$/.test(z) || !/^\d+$/.test(x) || !/^\d+$/.test(y)) {

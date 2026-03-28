@@ -29,7 +29,7 @@ async function loadParcelFromSnapshot(
   style: VisualStyle
 ): Promise<void> {
   const Cesium = window.Cesium;
-  if (!Cesium || !snapshot.parcel?.geojson) {
+  if (!Cesium || !snapshot.parcel?.geojson || !viewer || viewer.isDestroyed?.()) {
     console.warn('[loadParcel] No Cesium or GeoJSON available');
     return;
   }
@@ -68,6 +68,7 @@ async function loadParcelFromSnapshot(
   try {
     const terrainProvider = viewer.terrainProvider;
     const sampledPositions = await Cesium.sampleTerrainMostDetailed(terrainProvider, positions);
+    if (viewer.isDestroyed?.()) return;
     console.log('[loadParcel] ✓ Terrain sampled at', sampledPositions.length, 'points');
 
     // Convert hex color to Cesium.Color
@@ -201,7 +202,7 @@ async function loadTerrainTileset(
   twinId: string,
 ): Promise<any | null> {
   const Cesium = window.Cesium;
-  if (!Cesium) return null;
+  if (!Cesium || !viewer || viewer.isDestroyed?.()) return null;
 
   const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3001';
   const statusUrl = `${apiBase}/api/tiles/${encodeURIComponent(twinId)}/status`;
@@ -223,6 +224,7 @@ async function loadTerrainTileset(
       maximumMemoryUsage: 256,
     });
 
+    if (viewer.isDestroyed?.()) return null;
     viewer.scene.primitives.add(tileset);
     console.log('[StudioViewer] ✅ Terrain 3D Tileset loaded:', status.files?.length, 'files');
     return tileset;
@@ -242,7 +244,7 @@ async function loadNDVIOverlay(
   snapshot: any,
 ): Promise<any | null> {
   const Cesium = window.Cesium;
-  if (!Cesium) return null;
+  if (!Cesium || !viewer || viewer.isDestroyed?.()) return null;
 
   const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3001';
 
@@ -278,6 +280,7 @@ async function loadNDVIOverlay(
       rectangle: Cesium.Rectangle.fromDegrees(minLon, minLat, maxLon, maxLat),
     });
 
+    if (viewer.isDestroyed?.()) return null;
     const layer = viewer.imageryLayers.addImageryProvider(provider);
     layer.alpha = 0.55;
     layer.brightness = 1.0;
@@ -306,7 +309,7 @@ async function loadSentinelRGBOverlay(
   snapshot: any,
 ): Promise<any | null> {
   const Cesium = window.Cesium;
-  if (!Cesium) return null;
+  if (!Cesium || !viewer || viewer.isDestroyed?.()) return null;
 
   const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3001';
 
@@ -335,6 +338,7 @@ async function loadSentinelRGBOverlay(
       rectangle: Cesium.Rectangle.fromDegrees(minLon, minLat, maxLon, maxLat),
     });
 
+    if (viewer.isDestroyed?.()) return null;
     const layer = viewer.imageryLayers.addImageryProvider(provider);
     layer.alpha = 0.75;
     layer.brightness = 1.0;
@@ -362,6 +366,7 @@ async function loadSentinelRGBOverlay(
 async function waitForTerrainReady(viewer: any): Promise<void> {
   const Cesium = window.Cesium;
   return new Promise<void>((resolve) => {
+    if (viewer.isDestroyed?.()) { resolve(); return; }
     // Si ya está listo, resolver inmediatamente
     if (viewer.scene.globe.tilesLoaded) {
       console.log('[StudioViewer] ✅ Terrain ya listo');
@@ -397,6 +402,7 @@ async function flyToParcelWithTerrain(
   snapshot: any
 ): Promise<void> {
   const Cesium = window.Cesium;
+  if (!viewer || viewer.isDestroyed?.()) return;
   
   const parcel = snapshot?.parcel ?? snapshot;
   const centroid = parcel?.centroid ?? [0, 0];
@@ -437,6 +443,7 @@ async function flyToParcelWithTerrain(
   
   // Esperar que los tiles de alta resolución carguen en esta posición
   await new Promise<void>((resolve) => {
+    if (viewer.isDestroyed?.()) { resolve(); return; }
     let settled = false;
     
     const removeListener = viewer.scene.globe.tileLoadProgressEvent.addEventListener(
@@ -460,7 +467,7 @@ async function flyToParcelWithTerrain(
       }
     }, 8000);
     
-    viewer.scene.requestRender();
+    if (!viewer.isDestroyed?.()) viewer.scene.requestRender();
   });
 }
 
@@ -758,6 +765,7 @@ export default function StudioViewer({
           requestVertexNormals: true,
           requestWaterMask: false,
         });
+        if (!viewer || viewer.isDestroyed()) return;
         viewer.terrainProvider = worldTerrain;
         console.log('[StudioViewer] ✅ World Terrain cargado (base)');
 
@@ -833,7 +841,9 @@ export default function StudioViewer({
 
         // Load parcel and fly to camera
         await loadParcelFromSnapshot(viewer, snapshot, visualStyle);
+        if (viewer.isDestroyed()) return;
         await flyToParcelWithTerrain(viewer, snapshot);
+        if (viewer.isDestroyed()) return;
 
         // Load terrain 3D Tileset if available (non-blocking)
         loadTerrainTileset(viewer, snapshot.twinId).catch(() => {});
@@ -845,13 +855,15 @@ export default function StudioViewer({
         loadSentinelRGBOverlay(viewer, snapshot.twinId, snapshot).catch(() => {});
 
         // ── FINAL VERIFICATION ────────────────────────────────────────
-        console.log('[StudioViewer] ═══════════════════════════════════════');
-        console.log('[StudioViewer] FINAL TERRAIN STATUS:');
-        console.log('[StudioViewer] Provider type:', viewer.terrainProvider?.constructor?.name || 'Unknown');
-        console.log('[StudioViewer] Vertical exaggeration:', viewer.scene.verticalExaggeration + 'x');
-        console.log('[StudioViewer] Globe lighting:', viewer.scene.globe.enableLighting);
-        console.log('[StudioViewer] Terrain shadows:', viewer.terrainShadows);
-        console.log('[StudioViewer] ═══════════════════════════════════════');
+        if (!viewer.isDestroyed()) {
+          console.log('[StudioViewer] ═══════════════════════════════════════');
+          console.log('[StudioViewer] FINAL TERRAIN STATUS:');
+          console.log('[StudioViewer] Provider type:', viewer.terrainProvider?.constructor?.name || 'Unknown');
+          console.log('[StudioViewer] Vertical exaggeration:', viewer.scene?.verticalExaggeration + 'x');
+          console.log('[StudioViewer] Globe lighting:', viewer.scene?.globe?.enableLighting);
+          console.log('[StudioViewer] Terrain shadows:', viewer.terrainShadows);
+          console.log('[StudioViewer] ═══════════════════════════════════════');
+        }
         
         // Show controls hint for 5 seconds
         setShowControlsHint(true);
