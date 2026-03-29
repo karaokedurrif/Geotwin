@@ -727,6 +727,9 @@ export default function StudioViewer({
           
           const pnoaLayer = viewer.imageryLayers.addImageryProvider(pnoaProv);
           viewer.imageryLayers.raiseToTop(pnoaLayer);
+
+          // Silence imagery tile load errors (PNOA returns transparent on fail)
+          pnoaProv.errorEvent.addEventListener(() => {});
           
           console.log('[StudioViewer] ✓ PNOA imagery loaded (direct tile proxy)');
         } catch (pnoaError) {

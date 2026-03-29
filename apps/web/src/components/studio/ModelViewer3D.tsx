@@ -15,7 +15,7 @@
 import React, { Suspense, useEffect, useMemo, useState, useRef } from 'react';
 import { Canvas, useThree } from '@react-three/fiber';
 import { OrbitControls, useGLTF, Environment, Grid, Html } from '@react-three/drei';
-import { X, Box, Eye, Grid3x3, Download, Info } from 'lucide-react';
+import { X, Box, Eye, Grid3x3, Download, Info, RotateCcw, Compass } from 'lucide-react';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3001';
 
@@ -32,9 +32,11 @@ interface ModelViewer3DProps {
   onClose: () => void;
 }
 
-function TerrainMesh({ url, viewMode, onStats, controlsRef }: {
+function TerrainMesh({ url, viewMode, onStats, controlsRef, resetCameraRef, topViewRef }: {
   url: string; viewMode: ViewMode; onStats?: (s: MeshStats) => void;
   controlsRef: React.RefObject<unknown>;
+  resetCameraRef?: React.MutableRefObject<(() => void) | null>;
+  topViewRef?: React.MutableRefObject<(() => void) | null>;
 }) {
   const { scene } = useGLTF(url);
   const { camera, invalidate } = useThree();
@@ -97,7 +99,27 @@ function TerrainMesh({ url, viewMode, onStats, controlsRef }: {
       }
     });
     onStats?.({ vertices: verts, triangles: Math.round(tris) });
-  }, [scene, camera, invalidate, onStats, controlsRef]);
+
+    // Expose reset callbacks via refs for toolbar buttons
+    if (resetCameraRef) {
+      resetCameraRef.current = () => {
+        camera.position.set(dist * 0.7, dist * 0.5, dist * 0.7);
+        camera.updateProjectionMatrix();
+        const c = controlsRef.current as { target?: { copy(v: unknown): void }; update?(): void } | null;
+        if (c?.target) { c.target.copy(finalCenter); c.update?.(); }
+        invalidate();
+      };
+    }
+    if (topViewRef) {
+      topViewRef.current = () => {
+        camera.position.set(finalCenter.x, dist * 1.2, finalCenter.z);
+        camera.updateProjectionMatrix();
+        const c = controlsRef.current as { target?: { copy(v: unknown): void }; update?(): void } | null;
+        if (c?.target) { c.target.copy(finalCenter); c.update?.(); }
+        invalidate();
+      };
+    }
+  }, [scene, camera, invalidate, onStats, controlsRef, resetCameraRef, topViewRef]);
 
   // Toggle wireframe on all materials
   useEffect(() => {
@@ -138,6 +160,8 @@ export default function ModelViewer3D({ twinId, visible, onClose }: ModelViewer3
   const [meshStats, setMeshStats] = useState<MeshStats | null>(null);
   const [showInfo, setShowInfo] = useState(false);
   const controlsRef = useRef<unknown>(null);
+  const cameraResetRef = useRef<(() => void) | null>(null);
+  const cameraTopRef = useRef<(() => void) | null>(null);
 
   const glbUrl = useMemo(
     () => `${API_BASE}/api/tiles/${encodeURIComponent(twinId)}/lod0.glb`,
@@ -227,6 +251,20 @@ export default function ModelViewer3D({ twinId, visible, onClose }: ModelViewer3
           >
             <Download size={14} /> GLB
           </a>
+          <button
+            onClick={() => cameraResetRef.current?.()}
+            style={{ ...modeBtn }}
+            title="Reset vista isométrica"
+          >
+            <RotateCcw size={14} />
+          </button>
+          <button
+            onClick={() => cameraTopRef.current?.()}
+            style={{ ...modeBtn }}
+            title="Vista cenital (planta)"
+          >
+            <Compass size={14} />
+          </button>
           <button onClick={onClose} style={closeBtn} title="Cerrar">
             <X size={18} />
           </button>
@@ -268,7 +306,7 @@ export default function ModelViewer3D({ twinId, visible, onClose }: ModelViewer3
             <directionalLight position={[-3, 4, -2]} intensity={0.3} />
 
             <Suspense fallback={<LoadingSpinner />}>
-              <TerrainMesh url={glbUrl} viewMode={viewMode} onStats={setMeshStats} controlsRef={controlsRef} />
+              <TerrainMesh url={glbUrl} viewMode={viewMode} onStats={setMeshStats} controlsRef={controlsRef} resetCameraRef={cameraResetRef} topViewRef={cameraTopRef} />
             </Suspense>
 
             <Grid
