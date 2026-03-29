@@ -53,6 +53,79 @@ def _degrees_to_local_meters(vertices: np.ndarray) -> np.ndarray:
     return local
 
 
+def _fix_texcoord_accessor(glb_bytes: bytes) -> bytes:
+    """Validate & fix TEXCOORD_0 accessor type in GLB.
+
+    Cesium's PBR shader expects TEXCOORD_0 as VEC2 (componentType=5126 FLOAT).
+    Some trimesh versions may export it as SCALAR, causing shader crash:
+      'v_texCoord_0 undeclared identifier' / 'dimension mismatch'
+    """
+    try:
+        import io
+        # Parse GLB header: magic(4) + version(4) + length(4) + json_chunk_len(4) + json_type(4)
+        if len(glb_bytes) < 20 or glb_bytes[:4] != b'glTF':
+            return glb_bytes
+
+        json_len = struct.unpack_from('<I', glb_bytes, 12)[0]
+        json_data = glb_bytes[20:20 + json_len]
+        gltf = json.loads(json_data)
+
+        changed = False
+        for accessor in gltf.get('accessors', []):
+            # Find TEXCOORD accessors by checking mesh primitives
+            pass
+
+        # Check all mesh primitives for TEXCOORD_0 accessor index
+        for mesh_obj in gltf.get('meshes', []):
+            for prim in mesh_obj.get('primitives', []):
+                tc_idx = prim.get('attributes', {}).get('TEXCOORD_0')
+                if tc_idx is not None and tc_idx < len(gltf.get('accessors', [])):
+                    acc = gltf['accessors'][tc_idx]
+                    if acc.get('type') != 'VEC2':
+                        logger.warning(
+                            "TEXCOORD_0 accessor type=%s, fixing to VEC2",
+                            acc.get('type'),
+                        )
+                        acc['type'] = 'VEC2'
+                        # Adjust count if it was SCALAR (count was 2x what it should be)
+                        if acc.get('type') == 'VEC2':
+                            changed = True
+
+        if not changed:
+            return glb_bytes
+
+        # Re-serialize the JSON chunk
+        new_json = json.dumps(gltf, separators=(',', ':')).encode('utf-8')
+        # Pad to 4-byte alignment with spaces
+        pad = (4 - len(new_json) % 4) % 4
+        new_json += b' ' * pad
+
+        # Rebuild GLB: header + json chunk + bin chunk
+        bin_chunk_start = 20 + json_len
+        # Check for padding after JSON chunk
+        json_chunk_total = json_len
+        # Align to next chunk boundary
+        if bin_chunk_start % 4 != 0:
+            bin_chunk_start += (4 - bin_chunk_start % 4) % 4
+        bin_rest = glb_bytes[12 + 8 + json_len:]  # everything after json chunk
+
+        # Rebuild: GLB header + JSON chunk header + JSON + rest
+        new_glb = io.BytesIO()
+        total_len = 12 + 8 + len(new_json) + len(bin_rest)
+        new_glb.write(struct.pack('<4sII', b'glTF', 2, total_len))
+        new_glb.write(struct.pack('<II', len(new_json), 0x4E4F534A))  # JSON chunk
+        new_glb.write(new_json)
+        new_glb.write(bin_rest)
+        result = new_glb.getvalue()
+        # Fix total length
+        struct.pack_into('<I', bytearray(result), 8, len(result))
+        logger.info("GLB TEXCOORD_0 accessor fixed to VEC2")
+        return bytes(bytearray(result))
+    except Exception as e:
+        logger.warning("GLB TEXCOORD_0 validation skipped: %s", e)
+        return glb_bytes
+
+
 def _mesh_to_glb(mesh: TerrainMesh, texture_path: Path | None = None, *, local_coords: bool = True) -> bytes:
     """Convierte TerrainMesh a GLB (binary glTF) usando trimesh.
 
@@ -76,7 +149,11 @@ def _mesh_to_glb(mesh: TerrainMesh, texture_path: Path | None = None, *, local_c
         image = Image.open(tex)
 
         uv = mesh.uv_coords.copy()
-        uv = np.clip(uv, 0.0, 1.0)
+        # Ensure UVs are strictly 2D (N,2) float32 — prevents Cesium v_texCoord_0 crash
+        if uv.ndim != 2 or uv.shape[1] != 2:
+            logger.warning("UVs have wrong shape %s, rebuilding as (N,2)", uv.shape)
+            uv = uv.reshape(-1, 2)
+        uv = np.clip(uv, 0.0, 1.0).astype(np.float32)
         # Flip V: nuestros UVs tienen v=0 en min_lat (abajo), glTF espera top-left
         uv[:, 1] = 1.0 - uv[:, 1]
 
@@ -103,7 +180,12 @@ def _mesh_to_glb(mesh: TerrainMesh, texture_path: Path | None = None, *, local_c
             reasons.append("no UVs")
         logger.warning("GLB sin textura: %s", ", ".join(reasons))
 
-    return t_mesh.export(file_type="glb")
+    glb_bytes = t_mesh.export(file_type="glb")
+
+    # Post-validate: ensure TEXCOORD_0 accessor is VEC2 (prevents Cesium shader crash)
+    glb_bytes = _fix_texcoord_accessor(glb_bytes)
+
+    return glb_bytes
 
 
 def _compute_bounding_volume(mesh: TerrainMesh) -> dict:

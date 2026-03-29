@@ -34,8 +34,9 @@ interface ModelViewer3DProps {
 
 function TerrainMesh({ url, viewMode, onStats }: { url: string; viewMode: ViewMode; onStats?: (s: MeshStats) => void }) {
   const { scene } = useGLTF(url);
+  const { camera } = useThree();
 
-  // Center and scale
+  // Center, scale, and auto-fit camera
   useEffect(() => {
     const THREE = require('three');
     const box = new THREE.Box3().setFromObject(scene);
@@ -44,10 +45,31 @@ function TerrainMesh({ url, viewMode, onStats }: { url: string; viewMode: ViewMo
     scene.position.sub(center);
     const size = new THREE.Vector3();
     box.getSize(size);
-    const maxDim = Math.max(size.x, size.y, size.z);
-    if (maxDim > 0) {
-      scene.scale.setScalar(2 / maxDim);
+
+    // Terrain meshes are very flat (XY >> Z). Exaggerate Z to see relief.
+    const xyMax = Math.max(size.x, size.y) || 1;
+    const zRange = size.z || 0.001;
+    const flatRatio = xyMax / zRange;
+
+    const baseScale = 2 / xyMax;
+    scene.scale.set(baseScale, baseScale, baseScale);
+
+    // If terrain is very flat, exaggerate Z so relief is visible
+    if (flatRatio > 10) {
+      const zExag = Math.min(flatRatio / 5, 8); // up to 8x exaggeration
+      scene.scale.z = baseScale * zExag;
     }
+
+    // Auto-fit camera to see the full model
+    const finalBox = new THREE.Box3().setFromObject(scene);
+    const finalCenter = new THREE.Vector3();
+    finalBox.getCenter(finalCenter);
+    const finalSize = new THREE.Vector3();
+    finalBox.getSize(finalSize);
+    const maxDim = Math.max(finalSize.x, finalSize.y, finalSize.z);
+    const dist = maxDim * 1.8;
+    camera.position.set(dist * 0.7, dist * 0.5, dist * 0.7);
+    camera.lookAt(finalCenter);
 
     // Collect stats
     let verts = 0;

@@ -226,6 +226,12 @@ async function loadTerrainTileset(
 
     if (viewer.isDestroyed?.()) return null;
     viewer.scene.primitives.add(tileset);
+
+    // Handle shader errors gracefully (v_texCoord_0 crash with malformed UVs)
+    tileset.tileFailed.addEventListener((ev: any) => {
+      console.warn('[StudioViewer] 3D Tile render failed:', ev.message);
+    });
+
     console.log('[StudioViewer] ✅ Terrain 3D Tileset loaded:', status.files?.length, 'files');
     return tileset;
   } catch (err) {

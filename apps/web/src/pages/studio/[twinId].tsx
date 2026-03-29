@@ -107,7 +107,13 @@ export default function TwinStudioPage() {
       .then((tileset: any) => {
         if (!viewerRef || viewerRef.isDestroyed?.()) return;
         viewerRef.scene.primitives.add(tileset);
-        // Fly camera back to parcel instead of letting it drift
+
+        // Handle shader errors gracefully (v_texCoord_0 crash)
+        tileset.tileFailed.addEventListener((ev: any) => {
+          console.warn('[Studio] Tile failed:', ev.message);
+        });
+
+        // Fly camera back to parcel using lookAt (guarantees correct framing)
         const parcel = snapshot.parcel;
         if (parcel?.centroid) {
           const [lon, lat] = parcel.centroid;
@@ -120,15 +126,15 @@ export default function TwinStudioPage() {
           else dist = 4000;
 
           const center = Cesium.Cartesian3.fromDegrees(lon, lat, 0);
-          viewerRef.camera.flyTo({
-            destination: center,
-            orientation: {
-              heading: Cesium.Math.toRadians(225),
-              pitch: Cesium.Math.toRadians(-35),
-              roll: 0,
-            },
-            duration: 1.5,
-          });
+          viewerRef.camera.lookAt(
+            center,
+            new Cesium.HeadingPitchRange(
+              Cesium.Math.toRadians(225),
+              Cesium.Math.toRadians(-35),
+              dist * 1.3,
+            )
+          );
+          viewerRef.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
         }
       })
       .catch((err: any) => console.warn('[Studio] Failed to load tileset after processing:', err));
@@ -331,6 +337,28 @@ export default function TwinStudioPage() {
             activeMode={activeMode}
             onViewerReady={setViewerRef}
           />
+
+          {/* Floating recenter button */}
+          {viewerRef && (
+            <button
+              onClick={() => viewerRef.recenterCamera?.()}
+              title="Recentrar parcela"
+              style={{
+                position: 'absolute', bottom: 80, right: 16, zIndex: 50,
+                width: 36, height: 36, borderRadius: '50%',
+                background: 'rgba(16,185,129,0.15)', border: '1px solid rgba(16,185,129,0.4)',
+                color: '#10B981', cursor: 'pointer', display: 'flex',
+                alignItems: 'center', justifyContent: 'center',
+                backdropFilter: 'blur(4px)', transition: 'all 0.15s',
+              }}
+              onMouseOver={e => { e.currentTarget.style.background = 'rgba(16,185,129,0.3)'; }}
+              onMouseOut={e => { e.currentTarget.style.background = 'rgba(16,185,129,0.15)'; }}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="3" /><path d="M12 2v4M12 18v4M2 12h4M18 12h4" />
+              </svg>
+            </button>
+          )}
           
           {/* Mesh generator overlay — tripo3d-style visual effect */}
           {activeMode === 'terrain' && (
