@@ -27,7 +27,7 @@ def download_pnoa_ortho(
     bbox: tuple[float, float, float, float],
     output_path: Path,
     resolution_cm: int = 25,
-    max_pixels: int = 4096,
+    max_pixels: int = 8192,
 ) -> Path:
     """Descarga ortofoto PNOA para un bounding box.
 
@@ -135,7 +135,7 @@ def get_ortho_for_aoi(
     bbox: tuple[float, float, float, float],
     output_dir: Path,
     resolution_cm: int = 25,
-    max_pixels: int = 4096,
+    max_pixels: int = 8192,
 ) -> dict:
     """Descarga ortofoto PNOA y devuelve metadata.
 
@@ -183,7 +183,7 @@ def extract_texture_image(ortho_path: Path, output_path: Path | None = None) -> 
         b = src.read(3)
 
     img = Image.fromarray(np.stack([r, g, b], axis=-1), "RGB")
-    img.save(output_path, "JPEG", quality=90)
+    img.save(output_path, "JPEG", quality=95)
 
     logger.info("Textura JPEG: %s (%.0f KB)", output_path, output_path.stat().st_size / 1024)
     return output_path

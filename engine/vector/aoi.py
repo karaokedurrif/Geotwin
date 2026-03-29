@@ -351,12 +351,12 @@ def select_resolution(area_ha: float) -> dict:
         dict con dem_resolution_m, ortho_resolution_cm, max_triangles.
     """
     if area_ha < 100:
-        return {"dem_resolution_m": 5, "ortho_resolution_cm": 10, "max_triangles": 50_000}
+        return {"dem_resolution_m": 5, "ortho_resolution_cm": 5, "max_triangles": 200_000}
     elif area_ha < 500:
-        return {"dem_resolution_m": 5, "ortho_resolution_cm": 25, "max_triangles": 200_000}
+        return {"dem_resolution_m": 5, "ortho_resolution_cm": 10, "max_triangles": 500_000}
     elif area_ha < 2000:
-        return {"dem_resolution_m": 5, "ortho_resolution_cm": 25, "max_triangles": 500_000}
+        return {"dem_resolution_m": 5, "ortho_resolution_cm": 15, "max_triangles": 1_000_000}
     elif area_ha < 5000:
-        return {"dem_resolution_m": 10, "ortho_resolution_cm": 50, "max_triangles": 1_000_000}
+        return {"dem_resolution_m": 5, "ortho_resolution_cm": 25, "max_triangles": 2_000_000}
     else:
-        return {"dem_resolution_m": 25, "ortho_resolution_cm": 100, "max_triangles": 2_000_000}
+        return {"dem_resolution_m": 10, "ortho_resolution_cm": 50, "max_triangles": 3_000_000}

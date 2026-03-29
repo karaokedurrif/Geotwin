@@ -165,19 +165,19 @@ def process_twin(
 
         # Resolución adaptativa según el tamaño de la parcela
         if aoi_meta.area_ha < 1:
-            ortho_res_cm = 10   # HD para parcelas pequeñas
+            ortho_res_cm = 5    # Ultra HD para parcelas muy pequeñas
         elif aoi_meta.area_ha < 10:
-            ortho_res_cm = 15
+            ortho_res_cm = 5    # HD para parcelas pequeñas
         elif aoi_meta.area_ha < 100:
-            ortho_res_cm = 25
+            ortho_res_cm = 10
         else:
-            ortho_res_cm = 50   # Parcelas grandes: bajar res para caber en 4096px
+            ortho_res_cm = 25   # Parcelas grandes
 
         ortho_result = get_ortho_for_aoi(
             bbox=aoi_meta.bbox,
             output_dir=output_dir,
             resolution_cm=ortho_res_cm,
-            max_pixels=4096,
+            max_pixels=8192,
         )
         # Extraer JPEG para usar como textura en GLB
         from pathlib import Path as P
