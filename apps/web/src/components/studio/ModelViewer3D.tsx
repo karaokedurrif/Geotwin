@@ -32,11 +32,14 @@ interface ModelViewer3DProps {
   onClose: () => void;
 }
 
-function TerrainMesh({ url, viewMode, onStats }: { url: string; viewMode: ViewMode; onStats?: (s: MeshStats) => void }) {
+function TerrainMesh({ url, viewMode, onStats, controlsRef }: {
+  url: string; viewMode: ViewMode; onStats?: (s: MeshStats) => void;
+  controlsRef: React.RefObject<unknown>;
+}) {
   const { scene } = useGLTF(url);
-  const { camera } = useThree();
+  const { camera, invalidate } = useThree();
 
-  // Center, scale, and auto-fit camera
+  // Center, scale, and auto-fit camera + OrbitControls target
   useEffect(() => {
     const THREE = require('three');
     const box = new THREE.Box3().setFromObject(scene);
@@ -67,9 +70,21 @@ function TerrainMesh({ url, viewMode, onStats }: { url: string; viewMode: ViewMo
     const finalSize = new THREE.Vector3();
     finalBox.getSize(finalSize);
     const maxDim = Math.max(finalSize.x, finalSize.y, finalSize.z);
-    const dist = maxDim * 1.8;
+    const dist = Math.max(maxDim * 1.8, 2);
     camera.position.set(dist * 0.7, dist * 0.5, dist * 0.7);
-    camera.lookAt(finalCenter);
+    camera.updateProjectionMatrix();
+
+    // Update OrbitControls target so it orbits around the mesh center
+    // OrbitControls ref is set by the parent Canvas via controlsRef
+    const ctrl = controlsRef.current as { target?: { copy(v: unknown): void }; update?(): void } | null;
+    if (ctrl?.target) {
+      ctrl.target.copy(finalCenter);
+      ctrl.update?.();
+    } else {
+      camera.lookAt(finalCenter);
+    }
+
+    invalidate();
 
     // Collect stats
     let verts = 0;
@@ -82,7 +97,7 @@ function TerrainMesh({ url, viewMode, onStats }: { url: string; viewMode: ViewMo
       }
     });
     onStats?.({ vertices: verts, triangles: Math.round(tris) });
-  }, [scene, onStats]);
+  }, [scene, camera, invalidate, onStats, controlsRef]);
 
   // Toggle wireframe on all materials
   useEffect(() => {
@@ -122,6 +137,7 @@ export default function ModelViewer3D({ twinId, visible, onClose }: ModelViewer3
   const [glbReady, setGlbReady] = useState(false);
   const [meshStats, setMeshStats] = useState<MeshStats | null>(null);
   const [showInfo, setShowInfo] = useState(false);
+  const controlsRef = useRef<unknown>(null);
 
   const glbUrl = useMemo(
     () => `${API_BASE}/api/tiles/${encodeURIComponent(twinId)}/lod0.glb`,
@@ -252,7 +268,7 @@ export default function ModelViewer3D({ twinId, visible, onClose }: ModelViewer3
             <directionalLight position={[-3, 4, -2]} intensity={0.3} />
 
             <Suspense fallback={<LoadingSpinner />}>
-              <TerrainMesh url={glbUrl} viewMode={viewMode} onStats={setMeshStats} />
+              <TerrainMesh url={glbUrl} viewMode={viewMode} onStats={setMeshStats} controlsRef={controlsRef} />
             </Suspense>
 
             <Grid
@@ -270,6 +286,7 @@ export default function ModelViewer3D({ twinId, visible, onClose }: ModelViewer3
 
             <Environment preset="studio" />
             <OrbitControls
+              ref={controlsRef as React.Ref<never>}
               makeDefault
               enableDamping
               dampingFactor={0.08}

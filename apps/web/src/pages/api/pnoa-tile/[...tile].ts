@@ -4,10 +4,25 @@ export const config = {
   api: { responseLimit: false },
 };
 
+// 1x1 transparent PNG to serve as fallback when IGN fails
+const TRANSPARENT_1PX = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVQI12NgAAIABQAB' +
+  'Nl7BcQAAAABJRU5ErkJggg==',
+  'base64',
+);
+
+function sendTransparent(res: NextApiResponse) {
+  res.setHeader('Content-Type', 'image/png');
+  res.setHeader('Cache-Control', 'public, max-age=60');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  return res.status(200).send(TRANSPARENT_1PX);
+}
+
 /**
  * Direct PNOA tile proxy: /api/pnoa-tile/[z]/[x]/[y]
  * Constructs the exact WMTS KVP URL for IGN's PNOA service.
  * Used with Cesium UrlTemplateImageryProvider for guaranteed correct URLs.
+ * Returns transparent 1px PNG on error so the base layer shows through.
  */
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   const { tile } = req.query;
@@ -30,7 +45,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   try {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 15000);
+    const timeout = setTimeout(() => controller.abort(), 5000);
 
     const response = await fetch(ignUrl, {
       headers: {
@@ -44,13 +59,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     clearTimeout(timeout);
 
     if (!response.ok) {
-      console.error(`[PNOA-tile] IGN ${response.status} for z=${z} x=${x} y=${y}`);
-      return res.status(response.status).send('IGN tile error');
+      // Return transparent tile so base imagery (Bing) shows through
+      return sendTransparent(res);
     }
 
     const contentType = response.headers.get('content-type') || 'image/jpeg';
     if (contentType.includes('xml') || contentType.includes('html')) {
-      return res.status(502).send('IGN returned error document');
+      return sendTransparent(res);
     }
 
     const buffer = await response.arrayBuffer();
@@ -59,9 +74,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     res.setHeader('Cache-Control', 'public, max-age=604800, immutable');
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.status(200).send(Buffer.from(buffer));
-  } catch (error: unknown) {
-    const msg = error instanceof Error ? error.message : 'unknown';
-    console.error(`[PNOA-tile] Error z=${z} x=${x} y=${y}:`, msg);
-    res.status(502).send('PNOA tile proxy error');
+  } catch {
+    return sendTransparent(res);
   }
 }
