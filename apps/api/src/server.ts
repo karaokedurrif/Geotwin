@@ -9,6 +9,7 @@ import { tilesRouter } from './routes/tiles.js';
 import { iotRouter } from './routes/iot.js';
 import { iotSeedRouter } from './routes/iot-seed.js';
 import { dronesRouter } from './routes/drones.js';
+import { hydrotwinBarboRouter } from './routes/hydrotwin-barbo.js';
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3001;
 const HOST = process.env.HOST || '0.0.0.0';
@@ -48,6 +49,7 @@ async function buildServer() {
   await fastify.register(iotRouter, { prefix: '/api' });
   await fastify.register(iotSeedRouter, { prefix: '/api' });
   await fastify.register(dronesRouter, { prefix: '/api' });
+  await fastify.register(hydrotwinBarboRouter, { prefix: '/api' });
 
   return fastify;
 }

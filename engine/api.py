@@ -340,6 +340,61 @@ def mini4pro_estimate(body: dict):
     )
 
 
+# ─── HydroTwin Barbo — Simulación hidrogeológica ────────────────────────────
+
+# Cache de la simulación baseline (se ejecuta una vez, ~2s en 50×50 grid)
+_hydro_cache: dict[str, Any] = {}
+
+
+class HydroSimRequest(BaseModel):
+    pump_ls: float = Field(52.0, ge=5, le=60, description="Bombeo (l/s)")
+    canal_factor: float = Field(1.0, ge=0, le=2.0, description="Factor caudal canal")
+    k_factor: float = Field(1.0, ge=0.1, le=5.0, description="Factor conductividad K")
+
+
+@app.get("/hydro/barbo/simulate")
+def hydro_barbo_baseline():
+    """
+    Simulación baseline del acuífero Sierra Espuña.
+    Devuelve datos de Plotly para el modelo 3D completo.
+    Cached: se calcula una vez y se reutiliza.
+    """
+    if "baseline" in _hydro_cache:
+        return _hydro_cache["baseline"]
+
+    from .hydro import AquiferDomain, GroundwaterSolver, serialize_simulation
+
+    domain = AquiferDomain(nx=50, ny=50, nlay=3)
+    solver = GroundwaterSolver(domain)
+    sim = solver.run_temporal(n_steps=12, Q_pump_base=domain.Q_well)
+    result = serialize_simulation(domain, solver, sim)
+
+    _hydro_cache["baseline"] = result
+    logger.info("HydroTwin Barbo baseline simulation computed and cached")
+    return result
+
+
+@app.post("/hydro/barbo/simulate")
+def hydro_barbo_resimulate(req: HydroSimRequest):
+    """
+    Re-simulación con parámetros ajustados.
+    Ejecuta el solver FD con los nuevos valores de bombeo, canal y K.
+    """
+    from .hydro import AquiferDomain, GroundwaterSolver, serialize_simulation
+
+    Q_pump = -(req.pump_ls * 86.4)  # l/s → m³/día (negativo = extracción)
+
+    domain = AquiferDomain(nx=50, ny=50, nlay=3)
+    solver = GroundwaterSolver(domain)
+    sim = solver.run_temporal(
+        n_steps=12,
+        Q_pump_base=Q_pump,
+        canal_factor_base=req.canal_factor,
+        K_mult=req.k_factor,
+    )
+    return serialize_simulation(domain, solver, sim)
+
+
 @app.post("/drones/missions/{mission_id}/export/dji")
 def drone_export_dji(mission_id: str, body: dict):
     """Export flight plan as DJI Pilot 2 KMZ."""

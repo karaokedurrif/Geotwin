@@ -95,3 +95,31 @@ body {
   );
   z-index: 10;
 }
+
+/* ── HydroTwin 3D range slider ── */
+.ht-range {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  background: rgba(255,255,255,0.08);
+  border-radius: 2px;
+  outline: none;
+  margin: 6px 0;
+}
+.ht-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #06b6d4;
+  cursor: pointer;
+  border: 2px solid rgba(255,255,255,0.2);
+}
+.ht-range::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #06b6d4;
+  cursor: pointer;
+  border: 2px solid rgba(255,255,255,0.2);
+}
