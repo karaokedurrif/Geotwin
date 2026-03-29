@@ -31,15 +31,20 @@ def download_pnoa_ortho(
 ) -> Path:
     """Descarga ortofoto PNOA para un bounding box.
 
+    If the desired resolution exceeds the IGN WMS limit of 4096 px per request,
+    the image is downloaded in tiles and stitched together locally.
+
     Args:
         bbox: (min_lon, min_lat, max_lon, max_lat) en EPSG:4326.
         output_path: Ruta para guardar la imagen (JPEG o GeoTIFF).
         resolution_cm: Resolución deseada en cm/px (25 = PNOA estándar).
-        max_pixels: Máximo de píxeles en cualquier dimensión (evita descargas enormes).
+        max_pixels: Máximo de píxeles en cualquier dimensión.
 
     Returns:
         Ruta al archivo descargado.
     """
+    WMS_MAX = 4096  # IGN hard limit per request
+
     min_lon, min_lat, max_lon, max_lat = bbox
 
     # Calcular dimensiones del AOI en metros
@@ -55,7 +60,7 @@ def download_pnoa_ortho(
     width_px = int(width_m * px_per_m)
     height_px = int(height_m * px_per_m)
 
-    # Limitar a max_pixels para no descargar imágenes enormes
+    # Limitar al máximo global
     if width_px > max_pixels or height_px > max_pixels:
         scale = max_pixels / max(width_px, height_px)
         width_px = int(width_px * scale)
@@ -71,38 +76,68 @@ def download_pnoa_ortho(
         min_lon, min_lat, max_lon, max_lat, width_px, height_px,
     )
 
-    # WMS GetMap request
-    params = {
-        "SERVICE": "WMS",
-        "VERSION": "1.3.0",
-        "REQUEST": "GetMap",
-        "LAYERS": "OI.OrthoimageCoverage",
-        "CRS": "EPSG:4326",
-        "BBOX": f"{min_lat},{min_lon},{max_lat},{max_lon}",  # WMS 1.3.0: lat,lon
-        "WIDTH": str(width_px),
-        "HEIGHT": str(height_px),
-        "FORMAT": "image/jpeg",
-        "STYLES": "",
-    }
+    # Decide tiling: split into tiles of max WMS_MAX px each
+    n_cols = max(1, -(-width_px // WMS_MAX))   # ceil division
+    n_rows = max(1, -(-height_px // WMS_MAX))
 
-    with httpx.Client(timeout=120.0) as client:
-        resp = client.get(IGN_WMS_PNOA, params=params)
-        resp.raise_for_status()
-
-    content_type = resp.headers.get("content-type", "")
-    if "xml" in content_type or "text" in content_type:
-        logger.error("WMS error: %s", resp.text[:500])
-        raise RuntimeError(f"WMS devolvió error: {resp.text[:200]}")
-
-    # Guardar como GeoTIFF con georreferencia
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    # Decodificar JPEG
     from PIL import Image
     import io
 
-    img = Image.open(io.BytesIO(resp.content))
-    img_array = np.array(img)  # (H, W, 3) RGB
+    full_img = Image.new("RGB", (width_px, height_px))
+
+    lon_range = max_lon - min_lon
+    lat_range = max_lat - min_lat
+
+    with httpx.Client(timeout=120.0) as client:
+        for row in range(n_rows):
+            for col in range(n_cols):
+                # Pixel bounds for this tile
+                x0 = col * (width_px // n_cols)
+                x1 = (col + 1) * (width_px // n_cols) if col < n_cols - 1 else width_px
+                y0 = row * (height_px // n_rows)
+                y1 = (row + 1) * (height_px // n_rows) if row < n_rows - 1 else height_px
+                tw = x1 - x0
+                th = y1 - y0
+
+                # Geographic bounds for this tile (lon grows left→right, lat grows bottom→top)
+                # y0 is top of image = max_lat side
+                t_min_lon = min_lon + (x0 / width_px) * lon_range
+                t_max_lon = min_lon + (x1 / width_px) * lon_range
+                t_max_lat = max_lat - (y0 / height_px) * lat_range
+                t_min_lat = max_lat - (y1 / height_px) * lat_range
+
+                params = {
+                    "SERVICE": "WMS",
+                    "VERSION": "1.3.0",
+                    "REQUEST": "GetMap",
+                    "LAYERS": "OI.OrthoimageCoverage",
+                    "CRS": "EPSG:4326",
+                    "BBOX": f"{t_min_lat},{t_min_lon},{t_max_lat},{t_max_lon}",
+                    "WIDTH": str(tw),
+                    "HEIGHT": str(th),
+                    "FORMAT": "image/jpeg",
+                    "STYLES": "",
+                }
+
+                resp = client.get(IGN_WMS_PNOA, params=params)
+                resp.raise_for_status()
+
+                content_type = resp.headers.get("content-type", "")
+                if "xml" in content_type or "text" in content_type:
+                    logger.error("WMS error: %s", resp.text[:500])
+                    raise RuntimeError(f"WMS devolvió error: {resp.text[:200]}")
+
+                tile_img = Image.open(io.BytesIO(resp.content))
+                full_img.paste(tile_img, (x0, y0))
+
+                if n_cols * n_rows > 1:
+                    logger.info("  Tile %d/%d descargado (%dx%d)",
+                                row * n_cols + col + 1, n_rows * n_cols, tw, th)
+
+    img_array = np.array(full_img)  # (H, W, 3) RGB
+
+    # Guardar como GeoTIFF con georreferencia
+    output_path.parent.mkdir(parents=True, exist_ok=True)
 
     transform = from_bounds(min_lon, min_lat, max_lon, max_lat, width_px, height_px)
 
