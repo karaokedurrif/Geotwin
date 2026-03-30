@@ -33,10 +33,10 @@ def set_texture(texture_path: Path | None) -> None:
 
 
 def _degrees_to_local_meters(vertices: np.ndarray) -> np.ndarray:
-    """Convierte vértices [lon, lat, elev] a coordenadas locales ENU en metros.
+    """Convierte vértices [lon, lat, elev] a coordenadas locales en metros.
 
-    Centra el mesh en su centroide y escala lon/lat a metros usando
-    la proyección local aproximada (válida para áreas < 500 km).
+    Produce coordenadas glTF-compliant (Y-up, right-handed):
+      X = East, Y = Elevation (up), Z = North
     """
     centroid_lon = vertices[:, 0].mean()
     centroid_lat = vertices[:, 1].mean()
@@ -47,9 +47,9 @@ def _degrees_to_local_meters(vertices: np.ndarray) -> np.ndarray:
     m_per_deg_lon = 111_320.0 * np.cos(lat_rad)
 
     local = np.empty_like(vertices)
-    local[:, 0] = (vertices[:, 0] - centroid_lon) * m_per_deg_lon  # East
-    local[:, 1] = (vertices[:, 1] - centroid_lat) * m_per_deg_lat  # North
-    local[:, 2] = vertices[:, 2] - min_elev                        # Up (from ground)
+    local[:, 0] = (vertices[:, 0] - centroid_lon) * m_per_deg_lon  # X = East
+    local[:, 1] = vertices[:, 2] - min_elev                        # Y = Elevation (up)
+    local[:, 2] = (vertices[:, 1] - centroid_lat) * m_per_deg_lat  # Z = North
     return local
 
 
@@ -160,7 +160,8 @@ def _mesh_to_glb(mesh: TerrainMesh, texture_path: Path | None = None, *, local_c
         material = trimesh.visual.material.PBRMaterial(
             baseColorTexture=image,
             metallicFactor=0.0,
-            roughnessFactor=1.0,
+            roughnessFactor=0.85,
+            doubleSided=True,
         )
         t_mesh.visual = trimesh.visual.TextureVisuals(
             uv=uv,

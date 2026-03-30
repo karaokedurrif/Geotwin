@@ -51,18 +51,18 @@ function TerrainMesh({ url, viewMode, onStats, controlsRef, resetCameraRef, topV
     const size = new THREE.Vector3();
     box.getSize(size);
 
-    // Terrain meshes are very flat (XY >> Z). Exaggerate Z to see relief.
-    const xyMax = Math.max(size.x, size.y) || 1;
-    const zRange = size.z || 0.001;
-    const flatRatio = xyMax / zRange;
+    // GLB is Y-up: X=east, Y=elevation, Z=north. Exaggerate Y to see relief.
+    const hzMax = Math.max(size.x, size.z) || 1;
+    const yRange = size.y || 0.001;
+    const flatRatio = hzMax / yRange;
 
-    const baseScale = 2 / xyMax;
+    const baseScale = 2 / hzMax;
     scene.scale.set(baseScale, baseScale, baseScale);
 
-    // If terrain is very flat, exaggerate Z so relief is visible
+    // If terrain is very flat, exaggerate Y (elevation) so relief is visible
     if (flatRatio > 10) {
-      const zExag = Math.min(flatRatio / 5, 8); // up to 8x exaggeration
-      scene.scale.z = baseScale * zExag;
+      const yExag = Math.min(flatRatio / 5, 8);
+      scene.scale.y = baseScale * yExag;
     }
 
     // Auto-fit camera to see the full model
