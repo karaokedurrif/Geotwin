@@ -140,9 +140,7 @@ async function loadParcelFromSnapshot(
         ),
         minimumHeights: sampledPositions.map((pos: any) => pos.height - 200),
         material: Cesium.Color.SANDYBROWN.withAlpha(0.8),
-        outline: true,
-        outlineColor: Cesium.Color.SADDLEBROWN,
-        outlineWidth: 1.0,
+        outline: false,
       },
       show: false, // Hidden by default
     });

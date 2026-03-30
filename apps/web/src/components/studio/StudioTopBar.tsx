@@ -8,6 +8,7 @@ import {
   Download,
   Box,
   Loader2,
+  Sparkles,
 } from 'lucide-react';
 import type { TwinSnapshot, VisualStyle } from '@/lib/twinStore';
 import styles from '@/styles/studio.module.css';
@@ -105,6 +106,59 @@ export default function StudioTopBar({
     setShowExportMenu(false);
   };
 
+  const handleIllustration = async () => {
+    setExporting('illustration');
+    setShowExportMenu(false);
+    try {
+      // 1. Start generation job
+      const res = await fetch('/api/illustration', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          snapshot: {
+            twinId: twinId || snapshot.twinId,
+            parcel: snapshot.parcel,
+          },
+          style: visualStyle?.preset ?? 'natural',
+          width: 1100,
+          height: 820,
+          z_scale: 130,
+        }),
+      });
+      if (!res.ok) throw new Error('Illustration service unavailable');
+      const { job_id } = await res.json();
+
+      // 2. Poll for completion (max 120s)
+      const maxPolls = 40;
+      for (let i = 0; i < maxPolls; i++) {
+        await new Promise(r => setTimeout(r, 3000));
+        const statusRes = await fetch(`/api/illustration-status?job_id=${encodeURIComponent(job_id)}`);
+        if (!statusRes.ok) continue;
+        const status = await statusRes.json();
+        if (status.status === 'completed' && status.image_url) {
+          // 3. Fetch the generated image via proxy
+          const imgRes = await fetch(`/api/illustration-image?path=${encodeURIComponent(status.image_url)}`);
+          if (!imgRes.ok) throw new Error('Failed to fetch illustration image');
+          const blob = await imgRes.blob();
+          const url = URL.createObjectURL(blob);
+          setIllustrationUrl(url);
+          setIllustrationBlob(blob);
+          setShowIllustrationModal(true);
+          return;
+        }
+        if (status.status === 'error') {
+          throw new Error(status.error || 'Illustration generation failed');
+        }
+      }
+      throw new Error('Illustration timed out after 2 minutes');
+    } catch (e: any) {
+      console.error('[Illustration]', e);
+      alert(`Error: ${e.message}`);
+    } finally {
+      setExporting(null);
+    }
+  };
+
   const meshRunning = meshStatus === 'running' || meshStatus === 'queued';
   const meshDone = meshStatus === 'completed' || meshStatus === 'available';
 
@@ -175,6 +229,8 @@ export default function StudioTopBar({
             }}>
               <DropItem icon={<Map size={13}/>} label="Cenital (PNG)" desc="Vista top-down de todo el polígono" onClick={handleCenitalHD} disabled={!viewerRef} />
               <DropItem icon={<Image size={13}/>} label="Vista actual (PNG)" desc="Screenshot de lo que se ve" onClick={handleVista3D} disabled={!viewerRef} />
+              <div style={{ height: 1, background: '#333', margin: '6px 0' }} />
+              <DropItem icon={<Sparkles size={13}/>} label="Ilustración 3D" desc="Render isométrico con terreno y PNOA" onClick={handleIllustration} disabled={exporting === 'illustration'} />
               <div style={{ height: 1, background: '#333', margin: '6px 0' }} />
               <DropItem icon={<Box size={13}/>} label="Modelo 3D (GLB)" desc="Mesh texturizado descargable" onClick={handleDownloadGLB} disabled={!meshDone} />
               <DropItem icon={<Box size={13}/>} label="Polígono (KML)" desc="Contorno catastral para QGIS" onClick={handleDownloadKML} />

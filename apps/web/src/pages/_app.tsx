@@ -16,11 +16,11 @@ export default function App({ Component, pageProps }: AppProps) {
           rel="stylesheet"
           href="https://cesium.com/downloads/cesiumjs/releases/1.113/Build/Cesium/Widgets/widgets.css"
         />
-        <script
-          src="https://cesium.com/downloads/cesiumjs/releases/1.113/Build/Cesium/Cesium.js"
-          async
-        />
       </Head>
+      <Script
+        src="https://cesium.com/downloads/cesiumjs/releases/1.113/Build/Cesium/Cesium.js"
+        strategy="beforeInteractive"
+      />
       <Component {...pageProps} />
     </>
   );
