@@ -30,6 +30,7 @@ interface ModelViewer3DProps {
   twinId: string;
   visible: boolean;
   onClose: () => void;
+  onOpenStudio?: () => void;
 }
 
 function TerrainMesh({ url, viewMode, onStats, controlsRef, resetCameraRef, topViewRef }: {
@@ -154,7 +155,7 @@ function LoadingSpinner() {
   );
 }
 
-export default function ModelViewer3D({ twinId, visible, onClose }: ModelViewer3DProps) {
+export default function ModelViewer3D({ twinId, visible, onClose, onOpenStudio }: ModelViewer3DProps) {
   const [viewMode, setViewMode] = useState<ViewMode>('textured');
   const [glbReady, setGlbReady] = useState(false);
   const [meshStats, setMeshStats] = useState<MeshStats | null>(null);
@@ -268,6 +269,23 @@ export default function ModelViewer3D({ twinId, visible, onClose }: ModelViewer3
           <button onClick={onClose} style={closeBtn} title="Cerrar">
             <X size={18} />
           </button>
+          {onOpenStudio && (
+            <button
+              onClick={onOpenStudio}
+              title="Abrir Terrain Studio"
+              style={{
+                ...modeBtn,
+                background: 'rgba(16,185,129,0.15)',
+                border: '1px solid rgba(16,185,129,0.4)',
+                color: '#10B981',
+                padding: '4px 10px',
+                fontSize: 12,
+                fontWeight: 600,
+              }}
+            >
+              Studio
+            </button>
+          )}
         </div>
       </div>
 

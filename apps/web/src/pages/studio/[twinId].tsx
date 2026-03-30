@@ -67,6 +67,12 @@ const SimulatorMode = dynamic(
   { ssr: false }
 );
 
+// Terrain Studio — full-screen Three.js inspector
+const TerrainStudio = dynamic(
+  () => import('@/components/terrain-studio/TerrainStudio'),
+  { ssr: false }
+);
+
 const DEFAULT_VISUAL_STYLE: VisualStyle = {
   preset: 'default',
   fillColor: '#00d4ff',
@@ -95,6 +101,7 @@ export default function TwinStudioPage() {
   const timeline = useTimeline(7);
   const [selectedSensor, setSelectedSensor] = useState<string | null>(null);
   const [showModelViewer, setShowModelViewer] = useState(false);
+  const [showTerrainStudio, setShowTerrainStudio] = useState(false);
 
   // When tile processing completes, load tileset into viewer and fly back to parcel
   const handleTileProcessingComplete = useCallback(() => {
@@ -386,6 +393,7 @@ export default function TwinStudioPage() {
               twinId={twinId}
               visible={showModelViewer}
               onClose={() => setShowModelViewer(false)}
+              onOpenStudio={() => { setShowModelViewer(false); setShowTerrainStudio(true); }}
             />
           )}
         </div>
@@ -432,6 +440,16 @@ export default function TwinStudioPage() {
           onTogglePlay={timeline.togglePlay}
           speed={timeline.speed}
           onSpeedChange={timeline.setSpeed}
+        />
+      )}
+
+      {/* Terrain Studio — fullscreen Three.js environment */}
+      {showTerrainStudio && typeof twinId === 'string' && (
+        <TerrainStudio
+          twinId={twinId}
+          areaHa={snapshot.parcel?.area_ha}
+          geojson={snapshot.parcel?.geojson}
+          onClose={() => setShowTerrainStudio(false)}
         />
       )}
 
