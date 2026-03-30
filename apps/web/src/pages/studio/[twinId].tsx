@@ -76,9 +76,9 @@ const TerrainStudio = dynamic(
 const DEFAULT_VISUAL_STYLE: VisualStyle = {
   preset: 'default',
   fillColor: '#00d4ff',
-  fillOpacity: 0.09,
-  boundaryColor: '#f0c040',
-  boundaryWidth: 2.0,
+  fillOpacity: 0.35,
+  boundaryColor: '#FFD700',
+  boundaryWidth: 4.0,
   terrainExaggeration: 1.0,
   enableLighting: true,
   timeOfDay: new Date(2024, 0, 1, 8, 0, 0).toISOString(),
