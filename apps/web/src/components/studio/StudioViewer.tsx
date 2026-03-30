@@ -417,8 +417,9 @@ async function flyToParcelWithTerrain(
   
   // Distancia adaptativa por tamaño de parcela
   function computeIdealRange(ha: number): number {
-    if (ha < 0.5) return 150;        // Jardín/casa
-    if (ha < 5) return 400;           // Parcela pequeña
+    if (ha < 0.1) return 60;          // Jardín muy pequeño
+    if (ha < 0.5) return 100;         // Jardín/casa
+    if (ha < 5) return 300;           // Parcela pequeña
     if (ha < 50) return 1200;         // Finca media
     if (ha < 200) return 2500;        // Finca grande
     return 4000;                       // Comarca
@@ -714,13 +715,14 @@ export default function StudioViewer({
 
         console.log('[StudioViewer] ✓ Viewer created with OSM base imagery');
         
-        // ── UPGRADE TO PNOA via WMTS (tiles pre-renderizados, más rápido y nítido) ──
-        // WMTS sirve tiles ya cacheados por IGN (vs WMS que renderiza al vuelo).
-        // Proxy en: src/pages/api/pnoa-wmts.ts → https://www.ign.es/wmts/pnoa-ma
+        // ── PNOA Orthophoto via WMTS directo (sin proxy, CORS nativo de IGN) ──
         try {
-          const pnoaProv = new Cesium.UrlTemplateImageryProvider({
-            url: '/api/pnoa-tile/{z}/{x}/{y}',
-            minimumLevel: 5,
+          const pnoaProv = new Cesium.WebMapTileServiceImageryProvider({
+            url: 'https://www.ign.es/wmts/pnoa-ma',
+            layer: 'OI.OrthoimageCoverage',
+            style: 'default',
+            tileMatrixSetID: 'GoogleMapsCompatible',
+            format: 'image/jpeg',
             maximumLevel: 19,
             credit: 'PNOA © IGN España',
           });
@@ -728,10 +730,10 @@ export default function StudioViewer({
           const pnoaLayer = viewer.imageryLayers.addImageryProvider(pnoaProv);
           viewer.imageryLayers.raiseToTop(pnoaLayer);
 
-          // Silence imagery tile load errors (PNOA returns transparent on fail)
+          // Suppress tile errors silently (base Bing shows through)
           pnoaProv.errorEvent.addEventListener(() => {});
           
-          console.log('[StudioViewer] ✓ PNOA imagery loaded (direct tile proxy)');
+          console.log('[StudioViewer] ✓ PNOA imagery loaded (direct WMTS)');
         } catch (pnoaError) {
           console.warn('[StudioViewer] PNOA imagery failed:', pnoaError);
         }
@@ -743,7 +745,7 @@ export default function StudioViewer({
         ctrl.enableTilt = true;     // Right drag: tilt camera
         ctrl.enableLook = true;     // Ctrl+drag: look around
         ctrl.enableTranslate = true; // Middle drag: pan
-        ctrl.minimumZoomDistance = 50;     // Minimum 50m above ground
+        ctrl.minimumZoomDistance = 20;     // Minimum 20m above ground (small parcels)
         ctrl.maximumZoomDistance = 80000;  // Maximum 80km (overview)
         ctrl.zoomFactor = 3.0;             // Smoother zoom speed
         
