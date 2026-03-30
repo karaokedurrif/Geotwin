@@ -836,7 +836,28 @@ export default function CesiumViewer({
           skyAtmosphereShow: viewer.scene?.skyAtmosphere?.show
         });
 
-        // Load geometry (with session check)
+        // === STEP 3: UPGRADE TO ION IMAGERY (ASYNC, non-blocking) ===
+        if (ionToken) {
+          upgradeImagery(viewer, Cesium, ionToken, thisSession);
+        } else {
+          setViewerStatus(prev => ({ ...prev, imageryType: 'success' }));
+          logMessage('Using OSM imagery (no Ion token)', 'info');
+        }
+
+        // === STEP 4: LOAD TERRAIN (AWAIT — needed for accurate camera positioning) ===
+        if (terrainEnabled && ionToken) {
+          await upgradeTerrain(viewer, Cesium, terrainSource, thisSession);
+        } else if (terrainEnabled && terrainSource === 'mdt02') {
+          await upgradeTerrain(viewer, Cesium, terrainSource, thisSession);
+        } else {
+          setViewerStatus(prev => ({ ...prev, terrainType: 'success', terrainSource: 'ellipsoid' }));
+          logMessage('Using ellipsoid terrain (disabled or no token)', 'info');
+        }
+
+        // Check session/viewer after terrain load
+        if (currentSessionRef.current !== thisSession || viewer.isDestroyed()) return;
+
+        // === STEP 5: LOAD GEOMETRY + FLY TO PARCEL (terrain already available) ===
         loadGeometry(
           viewer,
           recipe,
@@ -854,25 +875,6 @@ export default function CesiumViewer({
           onRecenterReady,
           onExportReady
         );
-
-        // === STEP 3: UPGRADE TO ION IMAGERY (ASYNC, WITH SESSION CHECK) ===
-        if (ionToken) {
-          upgradeImagery(viewer, Cesium, ionToken, thisSession);
-        } else {
-          setViewerStatus(prev => ({ ...prev, imageryType: 'success' }));
-          logMessage('Using OSM imagery (no Ion token)', 'info');
-        }
-
-        // === STEP 4: UPGRADE TO TERRAIN (ASYNC, WITH SESSION CHECK) ===
-        if (terrainEnabled && ionToken) {
-          upgradeTerrain(viewer, Cesium, terrainSource, thisSession);
-        } else if (terrainEnabled && terrainSource === 'mdt02') {
-          // Try local MDT02 even without Ion token
-          upgradeTerrain(viewer, Cesium, terrainSource, thisSession);
-        } else {
-          setViewerStatus(prev => ({ ...prev, terrainType: 'success', terrainSource: 'ellipsoid' }));
-          logMessage('Using ellipsoid terrain (disabled or no token)', 'info');
-        }
       } catch (error) {
         const errorMsg = `Failed to initialize viewer: ${error instanceof Error ? error.message : 'Unknown'}`;
         logMessage(errorMsg, 'error');
