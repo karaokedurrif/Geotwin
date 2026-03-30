@@ -2325,6 +2325,14 @@ async function loadGeometry(
       return;
     }
 
+    // Pre-style entities BEFORE adding to viewer to prevent
+    // "Entity geometry outlines are unsupported on terrain" warning
+    dataSource.entities.values.forEach((entity: any) => {
+      if (entity?.polygon) {
+        entity.polygon.outline = false;
+      }
+    });
+
     if (viewer.parcelDataSourceRef?.current) {
       viewer.dataSources.remove(viewer.parcelDataSourceRef.current);
     }
