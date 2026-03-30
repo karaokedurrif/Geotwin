@@ -24,6 +24,7 @@ type ViewMode = 'textured' | 'wireframe';
 interface MeshStats {
   vertices: number;
   triangles: number;
+  gridY?: number;
 }
 
 interface ModelViewer3DProps {
@@ -62,7 +63,7 @@ function TerrainMesh({ url, viewMode, onStats, controlsRef, resetCameraRef, topV
 
     // If terrain is very flat, exaggerate Y (elevation) so relief is visible
     if (flatRatio > 10) {
-      const yExag = Math.min(flatRatio / 5, 8);
+      const yExag = Math.min(flatRatio / 10, 3);
       scene.scale.y = baseScale * yExag;
     }
 
@@ -99,7 +100,7 @@ function TerrainMesh({ url, viewMode, onStats, controlsRef, resetCameraRef, topV
         tris += geo.index ? geo.index.count / 3 : (geo.attributes.position ? geo.attributes.position.count / 3 : 0);
       }
     });
-    onStats?.({ vertices: verts, triangles: Math.round(tris) });
+    onStats?.({ vertices: verts, triangles: Math.round(tris), gridY: finalBox.min.y - 0.02 });
 
     // Expose reset callbacks via refs for toolbar buttons
     if (resetCameraRef) {
@@ -328,7 +329,7 @@ export default function ModelViewer3D({ twinId, visible, onClose, onOpenStudio }
             </Suspense>
 
             <Grid
-              position={[0, -1.01, 0]}
+              position={[0, meshStats?.gridY ?? -0.5, 0]}
               args={[20, 20]}
               cellSize={0.5}
               cellThickness={0.6}

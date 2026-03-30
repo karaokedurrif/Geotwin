@@ -1910,8 +1910,8 @@ function styleParcelEntities(viewer: any, dataSource: any, entities: any[]): voi
 
   entities.forEach((entity) => {
     if (entity?.polygon) {
-      // PHASE 1 FIX: Ultra-low opacity terrain-draped fill (barely visible whisper of cyan)
-      entity.polygon.material = Cesium.Color.fromCssColorString('#00d4ff').withAlpha(0.09);
+      // Terrain-draped fill — visible cyan overlay on terrain
+      entity.polygon.material = Cesium.Color.fromCssColorString('#00d4ff').withAlpha(0.22);
       entity.polygon.outline = false; // Outlines unsupported on terrain-clamped polygons
       entity.polygon.classificationType = Cesium.ClassificationType.TERRAIN; // Drape on terrain surface
       // Remove height/heightReference to let classification handle it
@@ -1932,9 +1932,9 @@ function styleParcelEntities(viewer: any, dataSource: any, entities: any[]): voi
           name: 'Parcel Boundary Gold',
           polyline: {
             positions: ring,
-            width: 2.0,
+            width: 3.5,
             material: new Cesium.ColorMaterialProperty(
-              Cesium.Color.fromCssColorString('#f0c040').withAlpha(0.85)
+              Cesium.Color.fromCssColorString('#f0c040').withAlpha(0.95)
             ),
             clampToGround: true,
           }

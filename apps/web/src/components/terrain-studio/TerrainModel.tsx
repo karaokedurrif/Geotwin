@@ -91,11 +91,11 @@ export default function TerrainModel({ url }: TerrainModelProps) {
     const scale = 2 / hzMax;
     scene.scale.set(scale, scale, scale);
 
-    // Exaggerate Y (elevation) if very flat
+    // Exaggerate Y (elevation) if very flat — subtle exaggeration to reveal relief
     const yRange = size.y || 0.001;
     const flatRatio = hzMax / yRange;
     if (flatRatio > 10) {
-      const yExag = Math.min(flatRatio / 5, 8);
+      const yExag = Math.min(flatRatio / 10, 3);
       scene.scale.y = scale * yExag;
     }
 
