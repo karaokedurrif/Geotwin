@@ -32,6 +32,8 @@ interface StudioStore {
   setModelInfo: (i: Partial<ModelInfo>) => void;
   showGrid: boolean;
   toggleGrid: () => void;
+  glbOverrideUrl: string | null;
+  setGlbOverrideUrl: (url: string | null) => void;
 }
 
 export const useStudioStore = create<StudioStore>((set) => ({
@@ -65,4 +67,6 @@ export const useStudioStore = create<StudioStore>((set) => ({
   setModelInfo: (i) => set((s) => ({ modelInfo: { ...s.modelInfo, ...i } })),
   showGrid: true,
   toggleGrid: () => set((s) => ({ showGrid: !s.showGrid })),
+  glbOverrideUrl: null,
+  setGlbOverrideUrl: (url) => set({ glbOverrideUrl: url }),
 }));

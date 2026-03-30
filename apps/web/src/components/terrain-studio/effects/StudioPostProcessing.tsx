@@ -6,14 +6,14 @@ function SSAOEffect() {
   return (
     <SSAO
       blendFunction={BlendFunction.MULTIPLY}
-      radius={0.06}
-      intensity={25}
-      samples={21}
+      radius={0.05}
+      intensity={15}
+      samples={16}
       luminanceInfluence={0.6}
-      worldDistanceThreshold={0.97}
-      worldDistanceFalloff={0.03}
-      worldProximityThreshold={0.97}
-      worldProximityFalloff={0.03}
+      worldDistanceThreshold={0.5}
+      worldDistanceFalloff={0.1}
+      worldProximityThreshold={0.3}
+      worldProximityFalloff={0.1}
     />
   );
 }
@@ -47,7 +47,7 @@ export default function StudioPostProcessing() {
   if (!ssao && !bloom && !vignette) return null;
 
   return (
-    <EffectComposer multisampling={4}>
+    <EffectComposer multisampling={0} enableNormalPass={ssao}>
       <>
         {ssao ? <SSAOEffect /> : null}
         {bloom ? <BloomEffect /> : null}

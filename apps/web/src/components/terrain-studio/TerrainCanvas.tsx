@@ -40,6 +40,8 @@ export default function TerrainCanvas({ glbUrl, geojson }: TerrainCanvasProps) {
   const lightRotation = useStudioStore((s) => s.lightRotation);
   const showGrid = useStudioStore((s) => s.showGrid);
   const viewMode = useStudioStore((s) => s.viewMode);
+  const glbOverrideUrl = useStudioStore((s) => s.glbOverrideUrl);
+  const effectiveUrl = glbOverrideUrl || glbUrl;
 
   return (
     <Canvas
@@ -49,8 +51,8 @@ export default function TerrainCanvas({ glbUrl, geojson }: TerrainCanvasProps) {
       style={{ background: 'radial-gradient(ellipse at center, #1a1a2e 0%, #0a0a14 100%)' }}
     >
       <Suspense fallback={<LoadingFallback />}>
-        <TerrainModel url={glbUrl} geojson={geojson} />
-        {viewMode === 'wire_texture' && <WireframeOverlay url={glbUrl} />}
+        <TerrainModel key={effectiveUrl} url={effectiveUrl} geojson={geojson} />
+        {viewMode === 'wire_texture' && <WireframeOverlay url={effectiveUrl} />}
         {geojson && <ParcelOutline3D geojson={geojson} />}
       </Suspense>
 

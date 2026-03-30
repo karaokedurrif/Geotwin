@@ -189,10 +189,12 @@ def process_twin(
             ortho_res_cm = 5    # Ultra HD para parcelas muy pequeñas
         elif aoi_meta.area_ha < 10:
             ortho_res_cm = 5    # HD para parcelas pequeñas
-        elif aoi_meta.area_ha < 100:
+        elif aoi_meta.area_ha < 50:
+            ortho_res_cm = 5    # HD para parcelas medianas
+        elif aoi_meta.area_ha < 200:
             ortho_res_cm = 10
         else:
-            ortho_res_cm = 25   # Parcelas grandes
+            ortho_res_cm = 25   # Parcelas enormes
 
         # Retry up to 2 times with increasing timeout
         last_error = None

@@ -1,4 +1,5 @@
-import { Ruler, MapPin } from 'lucide-react';
+import { Ruler, MapPin, FolderOpen } from 'lucide-react';
+import { useRef } from 'react';
 import { useStudioStore } from '../store';
 import ViewModeToggle from './ViewModeToggle';
 import ExportMenu from './ExportMenu';
@@ -35,6 +36,18 @@ const toolBtnActive: React.CSSProperties = {
 export default function StudioToolbar({ twinId, glbUrl, onClose }: StudioToolbarProps) {
   const activeTool = useStudioStore((s) => s.activeTool);
   const setActiveTool = useStudioStore((s) => s.setActiveTool);
+  const setGlbOverrideUrl = useStudioStore((s) => s.setGlbOverrideUrl);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleOpenGlb = () => fileInputRef.current?.click();
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file && file.name.endsWith('.glb')) {
+      const url = URL.createObjectURL(file);
+      setGlbOverrideUrl(url);
+    }
+    e.target.value = '';
+  };
 
   return (
     <div style={{
@@ -58,6 +71,25 @@ export default function StudioToolbar({ twinId, glbUrl, onClose }: StudioToolbar
 
       {/* View mode toggles */}
       <ViewModeToggle />
+
+      <div style={{ width: 1, height: 20, background: '#3a3a40', margin: '0 4px' }} />
+
+      {/* Open GLB file */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".glb"
+        style={{ display: 'none' }}
+        onChange={handleFileChange}
+      />
+      <button
+        style={toolBtn}
+        onClick={handleOpenGlb}
+        title="Open GLB file"
+      >
+        <FolderOpen size={14} />
+        <span>Open</span>
+      </button>
 
       <div style={{ width: 1, height: 20, background: '#3a3a40', margin: '0 4px' }} />
 
