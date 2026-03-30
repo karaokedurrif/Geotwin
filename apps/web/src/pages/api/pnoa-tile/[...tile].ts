@@ -4,25 +4,28 @@ export const config = {
   api: { responseLimit: false },
 };
 
-// 1x1 transparent PNG to serve as fallback when IGN fails
-const TRANSPARENT_1PX = Buffer.from(
-  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVQI12NgAAIABQAB' +
-  'Nl7BcQAAAABJRU5ErkJggg==',
+// 256x256 fully transparent PNG — Cesium expects standard tile size
+const TRANSPARENT_256 = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAQAAAAEACAYAAABccqhmAAABFUlEQVR42u3BMQEAAADCO' +
+  'PVP7WsIoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' +
+  'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' +
+  'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' +
+  'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' +
+  'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAeAMBPAAB2ClDBAAAAABJRU5ErkJggg==',
   'base64',
 );
 
 function sendTransparent(res: NextApiResponse) {
   res.setHeader('Content-Type', 'image/png');
-  res.setHeader('Cache-Control', 'public, max-age=60');
+  res.setHeader('Cache-Control', 'public, max-age=86400');
   res.setHeader('Access-Control-Allow-Origin', '*');
-  return res.status(200).send(TRANSPARENT_1PX);
+  return res.status(200).send(TRANSPARENT_256);
 }
 
 /**
- * Direct PNOA tile proxy: /api/pnoa-tile/[z]/[x]/[y]
- * Constructs the exact WMTS KVP URL for IGN's PNOA service.
- * Used with Cesium UrlTemplateImageryProvider for guaranteed correct URLs.
- * Returns transparent 1px PNG on error so the base layer shows through.
+ * PNOA WMTS tile proxy: /api/pnoa-tile/[z]/[x]/[y]
+ * Proxies tiles from IGN's WMTS (no CORS on IGN).
+ * Returns 256x256 transparent PNG on error so Cesium shows base imagery.
  */
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   const { tile } = req.query;
@@ -31,12 +34,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(400).send('Expected /api/pnoa-tile/{z}/{x}/{y}');
   }
 
-  // Strip Cesium retry/subdomain suffixes like ":1" from tile coordinates
   const z = tile[0].replace(/:[^/]*$/, '');
   const x = tile[1].replace(/:[^/]*$/, '');
   const y = tile[2].replace(/:[^/]*$/, '');
 
-  // Validate numeric params
   if (!/^\d+$/.test(z) || !/^\d+$/.test(x) || !/^\d+$/.test(y)) {
     return res.status(400).send('Invalid tile coordinates');
   }
@@ -45,21 +46,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   try {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5000);
+    const timeout = setTimeout(() => controller.abort(), 10000);
 
     const response = await fetch(ignUrl, {
       headers: {
-        'User-Agent': 'GeoTwin/1.0',
+        'User-Agent': 'Mozilla/5.0 (compatible; GeoTwin/1.0)',
         'Accept': 'image/jpeg,image/png,image/*',
-        'Referer': 'https://www.ign.es/',
       },
       signal: controller.signal,
-      cache: 'no-store',
     } as RequestInit);
     clearTimeout(timeout);
 
     if (!response.ok) {
-      // Return transparent tile so base imagery (Bing) shows through
       return sendTransparent(res);
     }
 

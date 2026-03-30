@@ -715,14 +715,11 @@ export default function StudioViewer({
 
         console.log('[StudioViewer] ✓ Viewer created with OSM base imagery');
         
-        // ── PNOA Orthophoto via WMTS directo (sin proxy, CORS nativo de IGN) ──
+        // ── PNOA Orthophoto via proxy (IGN no tiene CORS) ──
         try {
-          const pnoaProv = new Cesium.WebMapTileServiceImageryProvider({
-            url: 'https://www.ign.es/wmts/pnoa-ma',
-            layer: 'OI.OrthoimageCoverage',
-            style: 'default',
-            tileMatrixSetID: 'GoogleMapsCompatible',
-            format: 'image/jpeg',
+          const pnoaProv = new Cesium.UrlTemplateImageryProvider({
+            url: '/api/pnoa-tile/{z}/{x}/{y}',
+            minimumLevel: 5,
             maximumLevel: 19,
             credit: 'PNOA © IGN España',
           });
@@ -730,10 +727,10 @@ export default function StudioViewer({
           const pnoaLayer = viewer.imageryLayers.addImageryProvider(pnoaProv);
           viewer.imageryLayers.raiseToTop(pnoaLayer);
 
-          // Suppress tile errors silently (base Bing shows through)
+          // Suppress tile errors completely (proxy returns transparent 256x256 on fail)
           pnoaProv.errorEvent.addEventListener(() => {});
           
-          console.log('[StudioViewer] ✓ PNOA imagery loaded (direct WMTS)');
+          console.log('[StudioViewer] ✓ PNOA imagery loaded (proxy)');
         } catch (pnoaError) {
           console.warn('[StudioViewer] PNOA imagery failed:', pnoaError);
         }

@@ -935,22 +935,19 @@ export default function CesiumViewer({
       if (currentSessionRef.current !== session) return;
       if (!viewer || viewer.isDestroyed() || !viewer.imageryLayers) return;
       
-      // ── PNOA Orthophoto via WMTS directo (sin proxy, CORS nativo de IGN) ──
+      // ── PNOA Orthophoto via proxy (IGN no tiene CORS) ──
       try {
         const layers = viewer.imageryLayers;
-        const pnoaProv = new Cesium.WebMapTileServiceImageryProvider({
-          url: 'https://www.ign.es/wmts/pnoa-ma',
-          layer: 'OI.OrthoimageCoverage',
-          style: 'default',
-          tileMatrixSetID: 'GoogleMapsCompatible',
-          format: 'image/jpeg',
+        const pnoaProv = new Cesium.UrlTemplateImageryProvider({
+          url: '/api/pnoa-tile/{z}/{x}/{y}',
+          minimumLevel: 5,
           maximumLevel: 19,
           credit: 'PNOA © IGN España',
         });
         
         layers.addImageryProvider(pnoaProv);
         pnoaProv.errorEvent.addEventListener(() => {});
-        logMessage('✓ PNOA imagery added (direct WMTS)', 'success');
+        logMessage('✓ PNOA imagery added (proxy)', 'success');
       } catch (pnoaError) {
         logMessage('PNOA imagery failed (optional)', 'warn');
       }
