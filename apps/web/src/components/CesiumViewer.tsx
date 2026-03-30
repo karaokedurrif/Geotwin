@@ -68,8 +68,9 @@ type BoundingSphere = {
  * Prevents camera from being too far for small parcels or too close for large ones.
  */
 function computeIdealRange(areaHa: number): number {
-  if (areaHa < 0.5) return 150;        // Jardín/casa
-  if (areaHa < 5) return 400;           // Parcela pequeña
+  if (areaHa < 0.1) return 60;          // Jardín muy pequeño
+  if (areaHa < 0.5) return 100;         // Jardín/casa
+  if (areaHa < 5) return 300;           // Parcela pequeña
   if (areaHa < 50) return 1200;         // Finca media
   if (areaHa < 200) return 2500;        // Finca grande
   return 4000;                           // Comarca
@@ -465,8 +466,10 @@ export default function CesiumViewer({
         // Terrain detail — more triangles visible (lower = more detail)
         viewer.scene.globe.maximumScreenSpaceError = 0.5; // default is 2.0, lower = sharper tiles
         
-        // Depth test against terrain (prevents entities clipping through ground)
-        viewer.scene.globe.depthTestAgainstTerrain = true;
+        // Depth test: disabled when using verticalExaggeration > 1.0
+        // With exaggeration, clampToGround entities render at non-exaggerated height
+        // and get depth-tested against exaggerated terrain, making them invisible.
+        viewer.scene.globe.depthTestAgainstTerrain = false;
         
         // Enable sun lighting on terrain surface
         viewer.scene.globe.enableLighting = true;
@@ -1000,7 +1003,7 @@ export default function CesiumViewer({
           
           // Enable enhanced terrain visualization
           viewer.scene.globe.enableLighting = true;
-          viewer.scene.globe.depthTestAgainstTerrain = true;
+          viewer.scene.globe.depthTestAgainstTerrain = false;
           viewer.terrainShadows = Cesium.ShadowMode.ENABLED;
 
           setViewerStatus(prev => ({ 
@@ -1093,7 +1096,7 @@ export default function CesiumViewer({
           viewer.terrainProvider = terrainProvider;
           attachTerrainErrorHandler(terrainProvider, 'world');
           viewer.scene.globe.enableLighting = true;
-          viewer.scene.globe.depthTestAgainstTerrain = true;
+          viewer.scene.globe.depthTestAgainstTerrain = false;
           viewer.terrainShadows = Cesium.ShadowMode.ENABLED;
 
           setViewerStatus(prev => ({ 
@@ -1285,7 +1288,7 @@ export default function CesiumViewer({
             viewer.terrainProvider = terrainProvider;
             attachTerrainErrorHandler(terrainProvider, 'mdt02');
             viewer.scene.globe.enableLighting = true;
-            viewer.scene.globe.depthTestAgainstTerrain = true;
+            viewer.scene.globe.depthTestAgainstTerrain = false;
             viewer.terrainShadows = Cesium.ShadowMode.ENABLED;
             
             setViewerStatus(prev => ({
@@ -1328,7 +1331,7 @@ export default function CesiumViewer({
                 viewer.terrainProvider = terrainProvider;
                 attachTerrainErrorHandler(terrainProvider, 'world');
                 viewer.scene.globe.enableLighting = true;
-                viewer.scene.globe.depthTestAgainstTerrain = true;
+                viewer.scene.globe.depthTestAgainstTerrain = false;
                 viewer.terrainShadows = Cesium.ShadowMode.ENABLED;
                 
                 setViewerStatus(prev => ({ 
@@ -1385,7 +1388,7 @@ export default function CesiumViewer({
             viewer.terrainProvider = terrainProvider;
             attachTerrainErrorHandler(terrainProvider, 'world');
             viewer.scene.globe.enableLighting = true;
-            viewer.scene.globe.depthTestAgainstTerrain = true;
+            viewer.scene.globe.depthTestAgainstTerrain = false;
             viewer.terrainShadows = Cesium.ShadowMode.ENABLED;
             
             setViewerStatus(prev => ({ 
@@ -1798,58 +1801,48 @@ async function flyToIsometric(
   const centerCarto = Cesium.Cartographic.fromCartesian(boundingSphere.center);
 
   try {
-    // EllipsoidTerrainProvider does not support sampleTerrainMostDetailed
-    // (it has no computeMaximumLevelAtPosition), so skip sampling and use fallback
-    if (!viewer.terrainProvider || viewer.terrainProvider instanceof Cesium.EllipsoidTerrainProvider) {
-      throw new Error('No real terrain provider available for sampling');
+    // Try to sample terrain for accurate ground height
+    const hasRealTerrain = viewer.terrainProvider &&
+      !(viewer.terrainProvider instanceof Cesium.EllipsoidTerrainProvider);
+
+    let groundHeight = 0;
+    let centroidLon = Cesium.Math.toDegrees(centerCarto.longitude);
+    let centroidLat = Cesium.Math.toDegrees(centerCarto.latitude);
+
+    if (hasRealTerrain) {
+      const [sampledCenter] = await Cesium.sampleTerrainMostDetailed(
+        viewer.terrainProvider,
+        [centerCarto]
+      );
+      if (sampledCenter?.height != null) {
+        groundHeight = sampledCenter.height;
+        centroidLon = Cesium.Math.toDegrees(sampledCenter.longitude);
+        centroidLat = Cesium.Math.toDegrees(sampledCenter.latitude);
+      }
     }
 
-    // Sample terrain height asynchronously
-    const [sampledCenter] = await Cesium.sampleTerrainMostDetailed(
-      viewer.terrainProvider,
-      [centerCarto]
-    );
-
-    const groundHeight = sampledCenter?.height ?? 700;
     const radius = boundingSphere.radius;
-
-    // Estimate area from radius: A = π·r², convert m² to ha
     const estimatedAreaHa = (Math.PI * radius * radius) / 10000;
-    // Use adaptive range based on parcel area
     const range = computeIdealRange(estimatedAreaHa) * marginFactor;
-
-    if (!sampledCenter) {
-      throw new Error('Terrain sampling returned no results');
-    }
-
-    const centroidLon = Cesium.Math.toDegrees(sampledCenter.longitude);
-    const centroidLat = Cesium.Math.toDegrees(sampledCenter.latitude);
 
     console.log(`📐 FlyTo Isometric: centroid=[${centroidLon.toFixed(5)}, ${centroidLat.toFixed(5)}], groundHeight=${groundHeight.toFixed(1)}m, radius=${radius.toFixed(1)}m, range=${range.toFixed(1)}m`);
 
-    await viewer.camera.flyTo({
-      destination: Cesium.Cartesian3.fromDegrees(
-        centroidLon,
-        centroidLat,
-        groundHeight + range
-      ),
-      orientation: {
-        heading: heading,
-        pitch: pitch,
-        roll: 0,
-      },
-      duration: 2.8,
-      easingFunction: Cesium.EasingFunction.SINUSOIDAL_IN_OUT,
-    });
+    // Use lookAt for reliable positioning (works with or without real terrain)
+    const target = Cesium.Cartesian3.fromDegrees(centroidLon, centroidLat, groundHeight);
+    viewer.camera.lookAt(
+      target,
+      new Cesium.HeadingPitchRange(heading, pitch, range)
+    );
+    viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
   } catch (error) {
-    console.warn('[flyToIsometric] Terrain sampling failed, using fallback:', error);
-    // Fallback to old method
+    console.warn('[flyToIsometric] Camera positioning failed, using flyToBoundingSphere:', error);
     const estimatedAreaHa = (Math.PI * boundingSphere.radius * boundingSphere.radius) / 10000;
     const range = computeIdealRange(estimatedAreaHa) * marginFactor;
-    await viewer.camera.flyToBoundingSphere(boundingSphere, {
-      offset: new Cesium.HeadingPitchRange(heading, pitch, range),
-      duration: 1.2,
-    });
+    viewer.camera.lookAt(
+      boundingSphere.center,
+      new Cesium.HeadingPitchRange(heading, pitch, range)
+    );
+    viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
   }
 }
 

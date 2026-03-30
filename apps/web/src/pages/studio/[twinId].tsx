@@ -119,8 +119,9 @@ export default function TwinStudioPage() {
           const [lon, lat] = parcel.centroid;
           const areaHa = parcel.area_ha ?? 100;
           let dist = 400;
-          if (areaHa < 0.5) dist = 150;
-          else if (areaHa < 5) dist = 400;
+          if (areaHa < 0.1) dist = 60;
+          else if (areaHa < 0.5) dist = 100;
+          else if (areaHa < 5) dist = 300;
           else if (areaHa < 50) dist = 1200;
           else if (areaHa < 200) dist = 2500;
           else dist = 4000;
