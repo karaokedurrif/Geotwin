@@ -278,6 +278,7 @@ def clip_mesh_to_aoi(mesh: TerrainMesh, aoi_geojson: dict) -> TerrainMesh:
     new_vertices = mesh.vertices[used_verts]
     new_faces = remap[new_faces]
     new_normals = mesh.normals[inside] if mesh.normals is not None else None
+    new_uv = mesh.uv_coords[used_verts] if mesh.uv_coords is not None else None
 
     logger.info(
         "Malla recortada: %d→%d vértices, %d→%d triángulos",
@@ -285,4 +286,4 @@ def clip_mesh_to_aoi(mesh: TerrainMesh, aoi_geojson: dict) -> TerrainMesh:
         mesh.face_count, len(new_faces),
     )
 
-    return TerrainMesh(vertices=new_vertices, faces=new_faces, normals=new_normals)
+    return TerrainMesh(vertices=new_vertices, faces=new_faces, normals=new_normals, uv_coords=new_uv)

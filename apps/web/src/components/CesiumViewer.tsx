@@ -98,7 +98,7 @@ export default function CesiumViewer({
   terrainSource = 'world',
   realNDVIEnabled = false,
   framingMargin = 1.15,
-  terrainExaggeration = 1.5,
+  terrainExaggeration = 1.0,
   onViewerReady,
   onLogMessage,
   onStatusUpdate,

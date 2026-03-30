@@ -1,5 +1,5 @@
-import { useEffect, useRef, useMemo } from 'react';
-import { useThree, useFrame } from '@react-three/fiber';
+import { useEffect, useRef, useMemo, useCallback } from 'react';
+import { useThree, useFrame, ThreeEvent } from '@react-three/fiber';
 import { useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
 import { useStudioStore } from './store';
@@ -46,6 +46,36 @@ export default function TerrainModel({ url }: TerrainModelProps) {
   const metalness = useStudioStore((s) => s.metalness);
   const envMapIntensity = useStudioStore((s) => s.envMapIntensity);
   const setModelInfo = useStudioStore((s) => s.setModelInfo);
+  const activeTool = useStudioStore((s) => s.activeTool);
+  const addMeasurement = useStudioStore((s) => s.addMeasurement);
+  const addAnnotation = useStudioStore((s) => s.addAnnotation);
+  const pendingMeasurePoint = useStudioStore((s) => s.pendingMeasurePoint);
+  const setPendingMeasurePoint = useStudioStore((s) => s.setPendingMeasurePoint);
+
+  // Handle clicks on the terrain mesh for tools
+  const handleClick = useCallback((e: ThreeEvent<MouseEvent>) => {
+    if (activeTool === 'orbit') return;
+    e.stopPropagation();
+    const pt: [number, number, number] = [e.point.x, e.point.y, e.point.z];
+
+    if (activeTool === 'measure') {
+      if (!pendingMeasurePoint) {
+        setPendingMeasurePoint(pt);
+      } else {
+        const a = pendingMeasurePoint;
+        const dist = Math.sqrt(
+          (pt[0] - a[0]) ** 2 + (pt[1] - a[1]) ** 2 + (pt[2] - a[2]) ** 2
+        );
+        addMeasurement({ id: `m_${Date.now()}`, a, b: pt, meters: dist });
+        setPendingMeasurePoint(null);
+      }
+    } else if (activeTool === 'annotate') {
+      const text = prompt('Nota:');
+      if (text) {
+        addAnnotation({ id: `a_${Date.now()}`, position: pt, text });
+      }
+    }
+  }, [activeTool, pendingMeasurePoint, setPendingMeasurePoint, addMeasurement, addAnnotation]);
 
   // Center, scale, fit camera on first load
   useEffect(() => {
@@ -121,9 +151,11 @@ export default function TerrainModel({ url }: TerrainModelProps) {
           break;
 
         case 'wireframe':
-          mesh.material = new THREE.MeshBasicMaterial({
+          mesh.material = new THREE.MeshStandardMaterial({
             color: 0x10B981,
             wireframe: true,
+            roughness: 0.8,
+            metalness: 0,
           });
           break;
 
@@ -244,7 +276,7 @@ export default function TerrainModel({ url }: TerrainModelProps) {
     invalidate();
   }, [viewMode, roughness, metalness, envMapIntensity, scene, invalidate, matcapTex]);
 
-  // FPS counter
+  // FPS counter — exposed via store for status bar
   useFrame(() => {
     const now = performance.now();
     fpsRef.current.frames++;
@@ -252,8 +284,9 @@ export default function TerrainModel({ url }: TerrainModelProps) {
       fpsRef.current.fps = fpsRef.current.frames;
       fpsRef.current.frames = 0;
       fpsRef.current.lastTime = now;
+      setModelInfo({ fps: fpsRef.current.fps });
     }
   });
 
-  return <primitive ref={meshRef} object={scene} />;
+  return <primitive ref={meshRef} object={scene} onClick={handleClick} />;
 }

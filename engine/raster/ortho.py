@@ -119,16 +119,37 @@ def download_pnoa_ortho(
                     "STYLES": "",
                 }
 
-                resp = client.get(IGN_WMS_PNOA, params=params)
-                resp.raise_for_status()
+                # Retry each tile up to 3 times with backoff
+                tile_ok = False
+                for attempt in range(3):
+                    try:
+                        resp = client.get(IGN_WMS_PNOA, params=params, timeout=180.0)
+                        resp.raise_for_status()
 
-                content_type = resp.headers.get("content-type", "")
-                if "xml" in content_type or "text" in content_type:
-                    logger.error("WMS error: %s", resp.text[:500])
-                    raise RuntimeError(f"WMS devolvió error: {resp.text[:200]}")
+                        content_type = resp.headers.get("content-type", "")
+                        if "xml" in content_type or "text" in content_type:
+                            logger.error("WMS error: %s", resp.text[:500])
+                            raise RuntimeError(f"WMS devolvió error: {resp.text[:200]}")
 
-                tile_img = Image.open(io.BytesIO(resp.content))
-                full_img.paste(tile_img, (x0, y0))
+                        tile_img = Image.open(io.BytesIO(resp.content))
+                        full_img.paste(tile_img, (x0, y0))
+                        tile_ok = True
+                        break
+                    except Exception as tile_err:
+                        logger.warning(
+                            "  Tile %d/%d intento %d/3 falló: %s",
+                            row * n_cols + col + 1, n_rows * n_cols,
+                            attempt + 1, tile_err,
+                        )
+                        if attempt < 2:
+                            import time as _time
+                            _time.sleep(2 * (attempt + 1))
+
+                if not tile_ok:
+                    raise RuntimeError(
+                        f"WMS tile ({row},{col}) falló tras 3 intentos "
+                        f"bbox=({t_min_lat:.4f},{t_min_lon:.4f},{t_max_lat:.4f},{t_max_lon:.4f})"
+                    )
 
                 if n_cols * n_rows > 1:
                     logger.info("  Tile %d/%d descargado (%dx%d)",

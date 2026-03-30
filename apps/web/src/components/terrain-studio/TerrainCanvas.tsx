@@ -5,6 +5,8 @@ import TerrainModel from './TerrainModel';
 import StudioPostProcessing from './effects/StudioPostProcessing';
 import WireframeOverlay from './WireframeOverlay';
 import ParcelOutline3D from './ParcelOutline3D';
+import MeasureTool from './tools/MeasureTool';
+import AnnotationTool from './tools/AnnotationTool';
 import { useStudioStore } from './store';
 
 function LoadingFallback() {
@@ -92,6 +94,9 @@ export default function TerrainCanvas({ glbUrl, geojson }: TerrainCanvasProps) {
         maxDistance={50}
         maxPolarAngle={Math.PI * 0.85}
       />
+
+      <MeasureTool />
+      <AnnotationTool />
 
       <StudioPostProcessing />
     </Canvas>

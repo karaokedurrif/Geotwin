@@ -26,6 +26,8 @@ interface StudioStore {
   addAnnotation: (a: Annotation) => void;
   measurements: Measurement[];
   addMeasurement: (m: Measurement) => void;
+  pendingMeasurePoint: [number, number, number] | null;
+  setPendingMeasurePoint: (p: [number, number, number] | null) => void;
   modelInfo: ModelInfo;
   setModelInfo: (i: Partial<ModelInfo>) => void;
   showGrid: boolean;
@@ -57,7 +59,9 @@ export const useStudioStore = create<StudioStore>((set) => ({
   addAnnotation: (a) => set((s) => ({ annotations: [...s.annotations, a] })),
   measurements: [],
   addMeasurement: (m) => set((s) => ({ measurements: [...s.measurements, m] })),
-  modelInfo: { vertices: 0, faces: 0, textureSize: '-', fileSize: '-', areaHa: 0 },
+  pendingMeasurePoint: null,
+  setPendingMeasurePoint: (p) => set({ pendingMeasurePoint: p }),
+  modelInfo: { vertices: 0, faces: 0, textureSize: '-', fileSize: '-', areaHa: 0, fps: 0 },
   setModelInfo: (i) => set((s) => ({ modelInfo: { ...s.modelInfo, ...i } })),
   showGrid: true,
   toggleGrid: () => set((s) => ({ showGrid: !s.showGrid })),

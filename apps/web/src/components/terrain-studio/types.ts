@@ -21,4 +21,5 @@ export interface ModelInfo {
   textureSize: string;
   fileSize: string;
   areaHa: number;
+  fps: number;
 }

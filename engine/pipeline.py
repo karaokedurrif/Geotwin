@@ -15,6 +15,8 @@ import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+import numpy as np
+
 from .config import settings
 from .terrain.export import export_3d_tiles, export_single_glb, set_texture
 from .terrain.ingest import crop_dem_by_aoi, download_dem_ign, get_dem_for_aoi, load_dem
@@ -156,6 +158,25 @@ def process_twin(
     _progress("Recortando malla al AOI", 60)
     mesh = clip_mesh_to_aoi(mesh, aoi_feature)
 
+    # Subdividir si la malla tiene muy pocos vértices (parcelas pequeñas → borrosas)
+    if mesh.vertex_count < 200:
+        logger.info(
+            "Malla con solo %d vértices — subdividiendo para mayor detalle",
+            mesh.vertex_count,
+        )
+        import trimesh as _trimesh
+
+        t = _trimesh.Trimesh(vertices=mesh.vertices, faces=mesh.faces)
+        t = t.subdivide()
+        from .terrain.mesh import TerrainMesh, _compute_face_normals
+
+        mesh = TerrainMesh(
+            vertices=np.asarray(t.vertices),
+            faces=np.asarray(t.faces),
+            normals=_compute_face_normals(np.asarray(t.vertices), np.asarray(t.faces)),
+        )
+        logger.info("Subdividida: %d vértices, %d triángulos", mesh.vertex_count, mesh.face_count)
+
     # ─── 4b. Ortofoto PNOA (textura del terreno) ───────────────────────
     ortho_result = None
     texture_path = None
@@ -173,12 +194,31 @@ def process_twin(
         else:
             ortho_res_cm = 25   # Parcelas grandes
 
-        ortho_result = get_ortho_for_aoi(
-            bbox=aoi_meta.bbox,
-            output_dir=output_dir,
-            resolution_cm=ortho_res_cm,
-            max_pixels=8192,
-        )
+        # Retry up to 2 times with increasing timeout
+        last_error = None
+        for attempt in range(3):
+            try:
+                ortho_result = get_ortho_for_aoi(
+                    bbox=aoi_meta.bbox,
+                    output_dir=output_dir,
+                    resolution_cm=ortho_res_cm,
+                    max_pixels=8192,
+                )
+                last_error = None
+                break
+            except Exception as retry_err:
+                last_error = retry_err
+                logger.warning(
+                    "Ortofoto PNOA intento %d/3 falló: %s",
+                    attempt + 1, retry_err,
+                )
+                if attempt < 2:
+                    import time as _time
+                    _time.sleep(2 * (attempt + 1))
+
+        if last_error is not None:
+            raise last_error
+
         # Extraer JPEG para usar como textura en GLB
         from pathlib import Path as P
         ortho_tif = P(ortho_result["path"])
@@ -197,9 +237,15 @@ def process_twin(
             "Ortofoto PNOA FALLÓ para %.1f ha (bbox=%s): %s",
             aoi_meta.area_ha, aoi_meta.bbox, e,
         )
+        # Always compute UVs even without real ortho — prevents Cesium shader crash
+        # The export layer (_mesh_to_glb) will generate a fallback flat material
+        mesh = compute_uv_from_bbox(mesh, aoi_meta.bbox)
         ortho_result = None
         texture_path = None
         set_texture(None)
+        logger.warning(
+            "UVs asignados sin textura — export.py generará material fallback"
+        )
 
     # ─── 5. Generar LODs ────────────────────────────────────────────────
     _progress("Generando niveles de detalle", 70)

@@ -179,7 +179,38 @@ def _mesh_to_glb(mesh: TerrainMesh, texture_path: Path | None = None, *, local_c
             reasons.append(f"file not found: {tex}")
         if mesh.uv_coords is None:
             reasons.append("no UVs")
-        logger.warning("GLB sin textura: %s", ", ".join(reasons))
+        logger.warning("GLB sin textura real: %s — generando material fallback", ", ".join(reasons))
+
+        # CRITICAL: Always generate TEXCOORD_0 + PBR material.
+        # Without them, Cesium's B3DM shader crashes with:
+        #   'v_texCoord_0' : undeclared identifier
+        from PIL import Image
+
+        fallback_img = Image.new("RGB", (64, 64), (180, 190, 170))
+        fallback_mat = trimesh.visual.material.PBRMaterial(
+            baseColorTexture=fallback_img,
+            metallicFactor=0.0,
+            roughnessFactor=0.9,
+            doubleSided=True,
+        )
+        # Generate UVs from vertex positions if not already present
+        if mesh.uv_coords is not None:
+            fallback_uv = np.clip(mesh.uv_coords.copy(), 0.0, 1.0).astype(np.float32)
+        else:
+            # Compute UVs from XY bounds (works for both local meters and degrees)
+            xs = verts[:, 0]
+            zs = verts[:, 2] if local_coords else verts[:, 1]
+            x_range = xs.max() - xs.min()
+            z_range = zs.max() - zs.min()
+            u = (xs - xs.min()) / max(x_range, 1e-6)
+            v = (zs - zs.min()) / max(z_range, 1e-6)
+            fallback_uv = np.column_stack([u, v]).astype(np.float32)
+
+        t_mesh.visual = trimesh.visual.TextureVisuals(
+            uv=fallback_uv,
+            material=fallback_mat,
+        )
+        logger.info("Fallback material applied: %d verts with dummy TEXCOORD_0", len(verts))
 
     glb_bytes = t_mesh.export(file_type="glb")
 

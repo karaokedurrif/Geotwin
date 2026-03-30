@@ -1,25 +1,11 @@
-import { useCallback } from 'react';
 import { Html } from '@react-three/drei';
 import * as THREE from 'three';
 import { useStudioStore } from '../store';
 
 export default function AnnotationTool() {
-  const activeTool = useStudioStore((s) => s.activeTool);
   const annotations = useStudioStore((s) => s.annotations);
-  const addAnnotation = useStudioStore((s) => s.addAnnotation);
 
-  const handleClick = useCallback((event: { point: THREE.Vector3 }) => {
-    if (activeTool !== 'annotate') return;
-    const text = prompt('Nota:');
-    if (!text) return;
-    addAnnotation({
-      id: `a_${Date.now()}`,
-      position: [event.point.x, event.point.y, event.point.z],
-      text,
-    });
-  }, [activeTool, addAnnotation]);
-
-  if (activeTool !== 'annotate' && annotations.length === 0) return null;
+  if (annotations.length === 0) return null;
 
   return (
     <group>
@@ -29,7 +15,7 @@ export default function AnnotationTool() {
           <group key={ann.id}>
             <mesh position={pos}>
               <sphereGeometry args={[0.015, 12, 12]} />
-              <meshBasicMaterial color="#10B981" />
+              <meshStandardMaterial color="#10B981" roughness={0.5} metalness={0} />
             </mesh>
             <Html position={[pos.x, pos.y + 0.04, pos.z]} center style={{ pointerEvents: 'none' }}>
               <div style={{

@@ -36,6 +36,44 @@ class AOIMetadata:
 # ─── Detección de CRS por rango de coordenadas ──────────────────────────────
 
 
+def _haversine_m(c1: tuple[float, float], c2: tuple[float, float]) -> float:
+    """Distancia en metros entre dos coordenadas WGS84 (lon, lat)."""
+    from math import asin, cos, radians, sin, sqrt
+
+    lon1, lat1 = radians(c1[0]), radians(c1[1])
+    lon2, lat2 = radians(c2[0]), radians(c2[1])
+    dlat = lat2 - lat1
+    dlon = lon2 - lon1
+    a = sin(dlat / 2) ** 2 + cos(lat1) * cos(lat2) * sin(dlon / 2) ** 2
+    return 6_371_000 * 2 * asin(sqrt(a))
+
+
+def densify_coords(
+    coords: list[tuple[float, float]],
+    max_distance_m: float = 2.0,
+) -> list[tuple[float, float]]:
+    """Interpola vértices cuando la distancia entre consecutivos > max_distance_m.
+
+    Esto mejora la resolución del mallado para parcelas con pocos vértices.
+    """
+    if len(coords) < 2:
+        return coords
+    result = [coords[0]]
+    for i in range(1, len(coords)):
+        dist = _haversine_m(coords[i - 1], coords[i])
+        if dist > max_distance_m:
+            n = int(np.ceil(dist / max_distance_m))
+            for j in range(1, n):
+                t = j / n
+                interp = (
+                    (1 - t) * coords[i - 1][0] + t * coords[i][0],
+                    (1 - t) * coords[i - 1][1] + t * coords[i][1],
+                )
+                result.append(interp)
+        result.append(coords[i])
+    return result
+
+
 def _detect_utm_zone(coords: list[tuple[float, float]]) -> str | None:
     """Detecta zona UTM española (28-31) por rango de coordenadas.
 
@@ -212,6 +250,14 @@ def parse_kml(kml_path: Path) -> dict:
                 _reproject_coords(ring, source_crs)
                 for ring in pd["coordinates"]
             ]
+
+    # 4b. Densificar anillos (interpolar si distancia entre vértices > 2m)
+    # Mejora la resolución del mallado en parcelas con pocos vértices
+    for pd in polygon_dicts:
+        pd["coordinates"] = [
+            densify_coords(ring, max_distance_m=2.0)
+            for ring in pd["coordinates"]
+        ]
 
     # 5. Construir geometría: unir todos los polígonos
     polygons = []

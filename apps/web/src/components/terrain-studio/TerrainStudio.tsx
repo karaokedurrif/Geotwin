@@ -94,6 +94,7 @@ export default function TerrainStudio({ twinId, areaHa, onClose, geojson }: Terr
         <span>Tex:{modelInfo.textureSize}</span>
         <span>{modelInfo.fileSize}</span>
         {modelInfo.areaHa > 0 && <span>{modelInfo.areaHa.toFixed(1)} ha</span>}
+        {modelInfo.fps > 0 && <span>{modelInfo.fps} fps</span>}
       </div>
     </div>
   );

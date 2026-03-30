@@ -128,7 +128,7 @@ export const DEFAULT_VISUAL_STYLE: VisualStyle = {
   fillOpacity: 0.09,
   boundaryColor: '#f0c040',
   boundaryWidth: 2.0,
-  terrainExaggeration: 2.0,
+  terrainExaggeration: 1.0,
   enableLighting: true,
   timeOfDay: '2026-06-15T09:30:00Z',
   atmosphereDensity: 0.0002,

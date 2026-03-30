@@ -980,12 +980,20 @@ export default function StudioViewer({
         const ndviLayer = (viewer as any)._ndviOverlayLayer;
         if (ndviLayer) {
           ndviLayer.show = visible;
+          if (visible) {
+            viewer.imageryLayers.raiseToTop(ndviLayer);
+            ndviLayer.alpha = 0.75;
+          }
           console.log(`[StudioViewer] ndvi overlay: ${visible ? 'visible' : 'hidden'}`);
         } else if (visible) {
           // Try to load NDVI on-demand when toggled on but not yet loaded
           console.log('[StudioViewer] NDVI layer not loaded yet, attempting on-demand load...');
           loadNDVIOverlay(viewer, snapshot.twinId, snapshot).then(layer => {
-            if (layer) { layer.show = true; }
+            if (layer) {
+              layer.show = true;
+              viewer.imageryLayers.raiseToTop(layer);
+              layer.alpha = 0.75;
+            }
           }).catch(() => {});
         }
         return;
@@ -997,13 +1005,13 @@ export default function StudioViewer({
         if (rgbLayer) {
           rgbLayer.show = visible;
           if (visible) {
-            // Raise to top so it's above PNOA/Bing
+            // Raise to top so it's fully above PNOA/Bing
             viewer.imageryLayers.raiseToTop(rgbLayer);
-            rgbLayer.alpha = 0.85;
+            rgbLayer.alpha = 1.0;
           }
           console.log(`[StudioViewer] sentinel-rgb overlay: ${visible ? 'visible' : 'hidden'}`);
         }
-        // When Sentinel-2 is active, hide cadastral fill so imagery is visible
+        // When Sentinel-2 is active, hide cadastral fill AND reduce PNOA opacity
         const fillEntity = viewer.entities.getById('parcel-fill');
         if (fillEntity) {
           fillEntity.show = !visible;
