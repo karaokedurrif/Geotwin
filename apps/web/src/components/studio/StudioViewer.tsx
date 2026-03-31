@@ -186,26 +186,25 @@ async function loadParcelFromSnapshot(
   const radius = boundingSphere.radius;
 
   // ── HIGH-RES ORTHO OVERLAY FROM ENGINE CACHE (HYBRID SSD) ──
-  // Load the pre-downloaded ortho PNG from the engine pipeline instead of WMS.
-  // The ortho is cached on SSD and served via /api/tiles/{twinId}/
+  // Load the pre-downloaded ortho PNG instead of WMS. Check status first to avoid 404.
   if (radius < 100 && viewer.imageryLayers) {
     const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3001';
     const twinId = snapshot.twinId;
     
     try {
-      const metaRes = await fetch(`${apiBase}/api/tiles/${encodeURIComponent(twinId)}/pipeline_result.json`);
-      if (metaRes.ok) {
-        const meta = await metaRes.json();
-        if (meta.ortho && meta.ortho.bbox && meta.ortho.texture) {
-          const orthoUrl = `${apiBase}/api/tiles/${encodeURIComponent(twinId)}/${meta.ortho.texture}`;
-          const orthoBbox = meta.ortho.bbox;
-          
-          const orthoHead = await fetch(orthoUrl, { method: 'HEAD' });
-          if (orthoHead.ok) {
+      const statusRes = await fetch(`${apiBase}/api/tiles/${encodeURIComponent(twinId)}/status`);
+      const statusData = statusRes.ok ? await statusRes.json() : { available: false };
+      
+      if (statusData.available) {
+        const metaRes = await fetch(`${apiBase}/api/tiles/${encodeURIComponent(twinId)}/pipeline_result.json`);
+        if (metaRes.ok) {
+          const meta = await metaRes.json();
+          if (meta.ortho?.bbox && meta.ortho?.texture) {
+            const orthoUrl = `${apiBase}/api/tiles/${encodeURIComponent(twinId)}/${meta.ortho.texture}`;
+            const ob = meta.ortho.bbox;
+            
             const orthoProvider = await Cesium.SingleTileImageryProvider.fromUrl(orthoUrl, {
-              rectangle: Cesium.Rectangle.fromDegrees(
-                orthoBbox[0], orthoBbox[1], orthoBbox[2], orthoBbox[3]
-              ),
+              rectangle: Cesium.Rectangle.fromDegrees(ob[0], ob[1], ob[2], ob[3]),
             });
             
             const orthoLayer = viewer.imageryLayers.addImageryProvider(orthoProvider);
@@ -217,17 +216,13 @@ async function loadParcelFromSnapshot(
             orthoLayer.alpha = 1.0;
             
             console.log(`[StudioViewer] ✓ Ortho overlay loaded (${meta.ortho.width}×${meta.ortho.height}px)`);
-          } else {
-            console.warn('[StudioViewer] Ortho file missing — using base WMTS');
           }
-        } else {
-          console.log('[StudioViewer] No ortho in pipeline result — using base WMTS');
         }
       } else {
-        console.log('[StudioViewer] Pipeline not yet run — using base WMTS imagery');
+        console.log('[StudioViewer] Tiles not yet generated — base WMTS active');
       }
     } catch (orthoError) {
-      console.warn('[StudioViewer] Ortho overlay failed (optional):', orthoError);
+      // Silent — base WMTS remains active
     }
     
     // ── DYNAMIC FRUSTUM & SHADOW MAP ADJUSTMENT ──

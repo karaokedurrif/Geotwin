@@ -2522,29 +2522,27 @@ async function loadGeometry(
     logMessage(`✓ Added ${sensors.length} IoT sensors and ${cattle.length} cattle markers`, 'success');
 
     // ── HIGH-RES ORTHO OVERLAY FROM ENGINE CACHE (HYBRID SSD) ──
-    // Instead of real-time WMS tile requests (which block the viewer),
-    // load the pre-downloaded ortho PNG from the engine pipeline.
-    // The ortho is cached on the 2TB SSD and served via /api/tiles/{twinId}/
+    // Load the pre-downloaded ortho PNG from the engine pipeline (zero WMS requests).
+    // Check status first to avoid 404 errors in console.
     if (radius < 100 && viewer.imageryLayers) {
       const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3001';
       const twinId = recipe.twinId;
       
       try {
-        // Fetch pipeline_result.json to get ortho bbox + filename
-        const metaRes = await fetch(`${apiBase}/api/tiles/${encodeURIComponent(twinId)}/pipeline_result.json`);
-        if (metaRes.ok) {
-          const meta = await metaRes.json();
-          if (meta.ortho && meta.ortho.bbox && meta.ortho.texture) {
-            const orthoUrl = `${apiBase}/api/tiles/${encodeURIComponent(twinId)}/${meta.ortho.texture}`;
-            const orthoBbox = meta.ortho.bbox; // [minLon, minLat, maxLon, maxLat]
-            
-            // Verify the ortho file actually exists
-            const orthoHead = await fetch(orthoUrl, { method: 'HEAD' });
-            if (orthoHead.ok) {
+        // Check if tiles exist (this endpoint never 404s)
+        const statusRes = await fetch(`${apiBase}/api/tiles/${encodeURIComponent(twinId)}/status`);
+        const statusData = statusRes.ok ? await statusRes.json() : { available: false };
+        
+        if (statusData.available) {
+          const metaRes = await fetch(`${apiBase}/api/tiles/${encodeURIComponent(twinId)}/pipeline_result.json`);
+          if (metaRes.ok) {
+            const meta = await metaRes.json();
+            if (meta.ortho?.bbox && meta.ortho?.texture) {
+              const orthoUrl = `${apiBase}/api/tiles/${encodeURIComponent(twinId)}/${meta.ortho.texture}`;
+              const ob = meta.ortho.bbox;
+              
               const orthoProvider = await Cesium.SingleTileImageryProvider.fromUrl(orthoUrl, {
-                rectangle: Cesium.Rectangle.fromDegrees(
-                  orthoBbox[0], orthoBbox[1], orthoBbox[2], orthoBbox[3]
-                ),
+                rectangle: Cesium.Rectangle.fromDegrees(ob[0], ob[1], ob[2], ob[3]),
               });
               
               const orthoLayer = viewer.imageryLayers.addImageryProvider(orthoProvider);
@@ -2558,17 +2556,13 @@ async function loadGeometry(
                 `✓ Ortho overlay loaded from cache (${meta.ortho.width}×${meta.ortho.height}px)`,
                 'success'
               );
-            } else {
-              logMessage('Ortho cached but file missing — using base WMTS', 'warn');
             }
-          } else {
-            logMessage('No ortho in pipeline result — using base WMTS', 'info');
           }
         } else {
-          logMessage('Pipeline not yet run — using base WMTS imagery', 'info');
+          logMessage('Tiles not yet generated — base WMTS active', 'info');
         }
       } catch (orthoError) {
-        logMessage('Ortho overlay load failed (optional) — using base WMTS', 'warn');
+        // Silent — base WMTS remains active
       }
     }
 
