@@ -1454,11 +1454,12 @@ export default function StudioViewer({
   }
 
   const handleRegenerate = async () => {
-    if (!twinId || regenerating) return;
+    const tid = snapshot?.twinId;
+    if (!tid || regenerating) return;
     setRegenerating(true);
     try {
       const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || '';
-      const res = await fetch(`${apiBase}/api/twin/regenerate/${twinId}`, { method: 'POST' });
+      const res = await fetch(`${apiBase}/api/twin/regenerate/${tid}`, { method: 'POST' });
       if (!res.ok) throw new Error(`Regenerate failed: ${res.status}`);
       const data = await res.json();
       const jobId = data.job_id;
