@@ -53,6 +53,45 @@ def _degrees_to_local_meters(vertices: np.ndarray) -> np.ndarray:
     return local
 
 
+def _degrees_to_ecef(vertices: np.ndarray) -> tuple[np.ndarray, list[float]]:
+    """Convierte vértices [lon, lat, elev] a ECEF Cartesian (metros).
+
+    Returns:
+        (rtc_vertices, rtc_center): Vertices relativos al centro ECEF,
+            y el centro ECEF [X, Y, Z] para RTC_CENTER en B3DM.
+    """
+    # WGS84 ellipsoid
+    a = 6_378_137.0  # semi-major axis (m)
+    e2 = 0.00669437999014  # first eccentricity squared
+
+    lon_rad = np.radians(vertices[:, 0])
+    lat_rad = np.radians(vertices[:, 1])
+    alt = vertices[:, 2]
+
+    sin_lat = np.sin(lat_rad)
+    cos_lat = np.cos(lat_rad)
+    sin_lon = np.sin(lon_rad)
+    cos_lon = np.cos(lon_rad)
+
+    N = a / np.sqrt(1.0 - e2 * sin_lat ** 2)  # radius of curvature
+
+    ecef_x = (N + alt) * cos_lat * cos_lon
+    ecef_y = (N + alt) * cos_lat * sin_lon
+    ecef_z = (N * (1.0 - e2) + alt) * sin_lat
+
+    # RTC center = mean position (keeps vertex values small → better precision)
+    cx = float(ecef_x.mean())
+    cy = float(ecef_y.mean())
+    cz = float(ecef_z.mean())
+
+    rtc = np.column_stack([
+        ecef_x - cx,
+        ecef_y - cy,
+        ecef_z - cz,
+    ])
+    return rtc, [cx, cy, cz]
+
+
 def _fix_texcoord_accessor(glb_bytes: bytes) -> bytes:
     """Validate & fix TEXCOORD_0 accessor type in GLB.
 
@@ -246,6 +285,9 @@ def _compute_bounding_volume(mesh: TerrainMesh) -> dict:
 def _mesh_to_b3dm(mesh: TerrainMesh) -> bytes:
     """Genera un archivo B3DM (Batched 3D Model) con la malla.
 
+    Vertices se convierten a ECEF Cartesian con RTC_CENTER para que
+    Cesium los posicione correctamente en el globo.
+
     Formato B3DM:
     - Header (28 bytes): magic, version, byteLength, featureTableJSONByteLength,
       featureTableBinaryByteLength, batchTableJSONByteLength, batchTableBinaryByteLength
@@ -255,10 +297,24 @@ def _mesh_to_b3dm(mesh: TerrainMesh) -> bytes:
     - Batch Table Binary
     - GLB body
     """
-    glb_data = _mesh_to_glb(mesh, local_coords=False)
+    # Convert geographic → ECEF, get RTC center
+    ecef_verts, rtc_center = _degrees_to_ecef(mesh.vertices)
 
-    # Feature table: BATCH_LENGTH = 0 (no features)
-    feature_table_json = json.dumps({"BATCH_LENGTH": 0}).encode("utf-8")
+    # Create a temporary mesh copy with ECEF vertices for GLB export
+    ecef_mesh = TerrainMesh(
+        vertices=ecef_verts,
+        faces=mesh.faces,
+        uv_coords=mesh.uv_coords,
+    )
+
+    # Export GLB with ECEF coords (already in meters, no local_coords conversion)
+    glb_data = _mesh_to_glb(ecef_mesh, local_coords=False)
+
+    # Feature table with RTC_CENTER
+    feature_table_json = json.dumps({
+        "BATCH_LENGTH": 0,
+        "RTC_CENTER": rtc_center,
+    }).encode("utf-8")
     # Pad to 8-byte alignment
     ft_padding = (8 - len(feature_table_json) % 8) % 8
     feature_table_json += b" " * ft_padding
