@@ -90,6 +90,7 @@ export default function ControlPanel({
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [refcatInput, setRefcatInput] = useState('');
   const [isRefcatLoading, setIsRefcatLoading] = useState(false);
+  const [refcatStatus, setRefcatStatus] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Debug: log export state changes
@@ -158,6 +159,7 @@ export default function ControlPanel({
     }
     setIsRefcatLoading(true);
     setUploadError(null);
+    setRefcatStatus('Enviando al Catastro...');
     try {
       const API_BASE = process.env.NEXT_PUBLIC_API_URL || '';
       const resp = await fetch(`${API_BASE}/api/twin/from-refcat`, {
@@ -176,38 +178,51 @@ export default function ControlPanel({
         await new Promise(r => setTimeout(r, 3000));
         const jobResp = await fetch(`${API_BASE}/api/twin/from-refcat/${job_id}`);
         if (!jobResp.ok) break;
-        const job = await jobResp.json() as { status: string; result?: any; error?: string };
+        const job = await jobResp.json() as { status: string; result?: any; error?: string; current_step?: string; progress?: number };
+        if (job.current_step) {
+          setRefcatStatus(`${job.current_step}${job.progress ? ` (${Math.round(job.progress)}%)` : ''}`);
+        }
         if (job.status === 'completed' && job.result) {
-          // The engine has generated everything server-side.
-          // Construct a minimal TwinRecipe with the twin_id.
-          // The viewer will fetch full geometry from the tiles API.
+          const r = job.result;
+          const centroid: [number, number] = r.centroid || [0, 0];
+          const areaHa: number = r.area_ha || 0;
+          // Compute bbox from centroid + area (approximate radius)
+          const radiusDeg = Math.sqrt(areaHa * 10000) / 111000;
+          const bbox: [number, number, number, number] = r.bbox || [
+            centroid[0] - radiusDeg,
+            centroid[1] - radiusDeg,
+            centroid[0] + radiusDeg,
+            centroid[1] + radiusDeg,
+          ];
           const recipe = {
             twinId: twin_id,
             preset: 'dehesa',
             createdAt: new Date().toISOString(),
-            centroid: [0, 0],
-            bbox: [0, 0, 0, 0],
-            area_ha: 0,
-            camera: { longitude: 0, latitude: 0, height: 1500, heading: 315, pitch: -35, roll: 0 },
+            centroid,
+            bbox,
+            area_ha: areaHa,
+            camera: {
+              longitude: centroid[0],
+              latitude: centroid[1],
+              height: Math.max(500, Math.sqrt(areaHa * 10000) * 3),
+              heading: 315,
+              pitch: -35,
+              roll: 0,
+            },
             presetConfig: { name: 'dehesa', displayName: 'Dehesa', description: '', terrain: { verticalExaggeration: 1, lightingIntensity: 1 }, atmosphere: { brightness: 1, saturation: 1, hueShift: 0 }, groundTint: { r: 0, g: 0, b: 0, a: 1 } },
             layers: [],
-            geometryPath: `tiles/${twin_id}/geometry.geojson`,
+            geometryPath: `/api/tiles/${twin_id}/geometry.geojson`,
           } as unknown as TwinRecipe;
-          // Try to load real centroid/bbox from engine pipeline result
-          try {
-            const geoResp = await fetch(`${API_BASE}/api/tiles/${twin_id}/pipeline_result.json`);
-            if (geoResp.ok) {
-              const result = await geoResp.json();
-              if (result.centroid) (recipe as any).centroid = result.centroid;
-              if (result.bbox) (recipe as any).bbox = result.bbox;
-              if (result.area_ha) (recipe as any).area_ha = result.area_ha;
-            }
-          } catch { /* ignore */ }
           onRecipeLoaded(recipe);
           return;
         }
         if (job.status === 'failed') {
-          throw new Error(job.error || 'Pipeline failed');
+          const errMsg = job.error || 'Pipeline failed';
+          // Make Catastro "not found" errors user-friendly
+          if (errMsg.includes('No se ha encontrado la parcela') || errMsg.includes('huso')) {
+            throw new Error(`Parcela "${trimmed}" no encontrada en el Catastro. Verifica la referencia catastral.`);
+          }
+          throw new Error(errMsg);
         }
         attempts++;
       }
@@ -216,6 +231,7 @@ export default function ControlPanel({
       setUploadError(error.message || 'Error al procesar referencia catastral');
     } finally {
       setIsRefcatLoading(false);
+      setRefcatStatus('');
     }
   };
 
@@ -262,6 +278,16 @@ export default function ControlPanel({
             {isRefcatLoading ? '...' : 'Crear'}
           </button>
         </div>
+        {refcatStatus && (
+          <p style={{
+            color: '#4ecdc4',
+            fontSize: '11px',
+            margin: '6px 0 0',
+            fontStyle: 'italic',
+          }}>
+            {refcatStatus}
+          </p>
+        )}
 
         {/* Separator */}
         <p style={{
