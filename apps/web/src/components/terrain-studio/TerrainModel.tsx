@@ -122,8 +122,10 @@ export default function TerrainModel({ url }: TerrainModelProps) {
         // small parcels because the texture detail is lost at lower mip levels.
         const mat = mesh.material as THREE.MeshStandardMaterial;
         if (mat?.map) {
-          mat.map.minFilter = THREE.LinearFilter;
+          mat.map.minFilter = THREE.LinearMipmapLinearFilter;
           mat.map.magFilter = THREE.LinearFilter;
+          mat.map.generateMipmaps = true;
+          mat.map.anisotropy = 16;  // Max anisotropic filtering for sharpness at oblique angles
           mat.map.needsUpdate = true;
         }
       }

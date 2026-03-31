@@ -302,7 +302,13 @@ def process_twin(
 
     # ─── 5. Generar LODs ────────────────────────────────────────────────
     _progress("Generando niveles de detalle", 70)
-    lods = generate_lods(mesh)
+    from .terrain.lod import compute_lod_levels
+    adaptive_ratios = compute_lod_levels(aoi_meta.area_ha)
+    lods = generate_lods(mesh, ratios=adaptive_ratios)
+    logger.info(
+        "LOD adaptativos para %.1f ha: %s",
+        aoi_meta.area_ha, [f"{r:.0%}" for r in adaptive_ratios],
+    )
 
     # ─── 6. Exportar 3D Tiles ───────────────────────────────────────────
     _progress("Exportando 3D Tiles", 85)

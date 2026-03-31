@@ -23,6 +23,22 @@ logger = logging.getLogger(__name__)
 DEFAULT_LOD_RATIOS = [1.0, 0.25, 0.06, 0.015]
 
 
+def compute_lod_levels(area_ha: float) -> list[float]:
+    """Adaptive LOD ratios based on parcel area.
+
+    Small parcels keep more triangles per LOD (every triangle matters).
+    Large parcels can afford aggressive decimation.
+    """
+    if area_ha < 1:
+        return [1.0, 0.5]                  # 100%, 50%
+    elif area_ha < 10:
+        return [1.0, 0.5, 0.15]            # 100%, 50%, 15%
+    elif area_ha < 100:
+        return [1.0, 0.5, 0.15, 0.05]      # 100%, 50%, 15%, 5%
+    else:
+        return DEFAULT_LOD_RATIOS           # 100%, 25%, 6%, 1.5%
+
+
 @dataclass
 class LODLevel:
     """Un nivel de detalle de la malla."""

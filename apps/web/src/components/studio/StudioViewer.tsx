@@ -298,8 +298,17 @@ async function loadTerrainTileset(
     console.log('[StudioViewer] Loading terrain tileset:', tilesetUrl);
 
     const tileset = await Cesium.Cesium3DTileset.fromUrl(tilesetUrl, {
-      maximumScreenSpaceError: 1,
-      maximumMemoryUsage: 256,
+      maximumScreenSpaceError: 2,
+      maximumMemoryUsage: 512,
+      dynamicScreenSpaceError: true,
+      dynamicScreenSpaceErrorDensity: 0.00278,
+      dynamicScreenSpaceErrorFactor: 4.0,
+      dynamicScreenSpaceErrorHeightFalloff: 0.25,
+      skipLevelOfDetail: true,
+      baseScreenSpaceError: 1024,
+      skipScreenSpaceErrorFactor: 16,
+      skipLevels: 1,
+      preferLeaves: true,
     });
 
     if (viewer.isDestroyed?.()) return null;
