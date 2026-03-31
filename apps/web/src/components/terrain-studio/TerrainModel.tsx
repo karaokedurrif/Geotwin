@@ -111,11 +111,21 @@ export default function TerrainModel({ url }: TerrainModelProps) {
     camera.lookAt(finalCenter);
     camera.updateProjectionMatrix();
 
-    // Store original materials
+    // Store original materials and optimize texture filtering for close-up sharpness
     scene.traverse((child) => {
       if ((child as THREE.Mesh).isMesh) {
         const mesh = child as THREE.Mesh;
         originalMaterials.current.set(mesh.uuid, mesh.material as THREE.Material);
+
+        // Apply LinearFilter to all textures for 5cm/px sharpness at close zoom.
+        // Mipmap-based filtering (LinearMipmapLinearFilter) causes blurriness on
+        // small parcels because the texture detail is lost at lower mip levels.
+        const mat = mesh.material as THREE.MeshStandardMaterial;
+        if (mat?.map) {
+          mat.map.minFilter = THREE.LinearFilter;
+          mat.map.magFilter = THREE.LinearFilter;
+          mat.map.needsUpdate = true;
+        }
       }
     });
 

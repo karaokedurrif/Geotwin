@@ -1,6 +1,15 @@
 import { create } from 'zustand';
 import type { ViewMode, LightPreset, ActiveTool, Annotation, Measurement, ModelInfo } from './types';
 
+/** Origin metadata produced by the engine's _degrees_to_local_meters. */
+export interface LocalOrigin {
+  centroid_lon: number;
+  centroid_lat: number;
+  min_elev: number;
+  m_per_deg_lon: number;
+  m_per_deg_lat: number;
+}
+
 interface StudioStore {
   viewMode: ViewMode;
   setViewMode: (m: ViewMode) => void;
@@ -34,6 +43,9 @@ interface StudioStore {
   toggleGrid: () => void;
   glbOverrideUrl: string | null;
   setGlbOverrideUrl: (url: string | null) => void;
+  /** Local-coordinate origin from the engine (shared between GLB and parcel outline). */
+  localOrigin: LocalOrigin | null;
+  setLocalOrigin: (o: LocalOrigin | null) => void;
 }
 
 export const useStudioStore = create<StudioStore>((set) => ({
@@ -69,4 +81,6 @@ export const useStudioStore = create<StudioStore>((set) => ({
   toggleGrid: () => set((s) => ({ showGrid: !s.showGrid })),
   glbOverrideUrl: null,
   setGlbOverrideUrl: (url) => set({ glbOverrideUrl: url }),
+  localOrigin: null,
+  setLocalOrigin: (o) => set({ localOrigin: o }),
 }));

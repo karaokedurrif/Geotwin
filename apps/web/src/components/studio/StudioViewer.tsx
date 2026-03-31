@@ -926,7 +926,33 @@ export default function StudioViewer({
         viewer.scene.fog.density = 0.0002;
         viewer.scene.fog.minimumBrightness = 0.0;
 
-        console.log('[StudioViewer] ✓ Terrain lighting configured');
+        // ── AUTO-DISABLE atmosphere & fog at close range ──────────────
+        // When the camera drops below 500 m above ground, the sky tint
+        // causes a blue cast over the 3D terrain model. Disable it, and
+        // also make the globe baseColor transparent so the orthophoto
+        // shows through without the default blue sphere color.
+        let _atmoWasDisabled = false;
+        viewer.scene.preRender.addEventListener(() => {
+          if (viewer.isDestroyed?.()) return;
+          const carto = viewer.camera.positionCartographic;
+          if (!carto) return;
+          const h = carto.height;
+          if (h < 500 && !_atmoWasDisabled) {
+            viewer.scene.skyAtmosphere.show = false;
+            viewer.scene.skyBox.show = false;
+            viewer.scene.fog.enabled = false;
+            viewer.scene.backgroundColor = Cesium.Color.BLACK;
+            _atmoWasDisabled = true;
+          } else if (h >= 500 && _atmoWasDisabled) {
+            viewer.scene.skyAtmosphere.show = true;
+            viewer.scene.skyBox.show = true;
+            viewer.scene.fog.enabled = true;
+            viewer.scene.backgroundColor = Cesium.Color.BLACK;
+            _atmoWasDisabled = false;
+          }
+        });
+
+        console.log('[StudioViewer] ✓ Terrain lighting configured (atmosphere auto-toggle at 500m)');
 
         // Native DPI: render at full device pixel ratio for HiDPI screens
         viewer.resolutionScale = window.devicePixelRatio || 1.0;

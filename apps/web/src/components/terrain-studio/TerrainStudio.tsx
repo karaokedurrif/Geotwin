@@ -34,8 +34,24 @@ export default function TerrainStudio({ twinId, areaHa, onClose, geojson }: Terr
   const setViewMode = useStudioStore((s) => s.setViewMode);
   const setActiveTool = useStudioStore((s) => s.setActiveTool);
   const setLightPreset = useStudioStore((s) => s.setLightPreset);
+  const setLocalOrigin = useStudioStore((s) => s.setLocalOrigin);
 
   const glbUrl = `${API_BASE}/api/tiles/${encodeURIComponent(twinId)}/${encodeURIComponent(twinId)}.glb`;
+
+  // Fetch local_origin from pipeline_result.json so ParcelOutline3D uses
+  // the exact same centroid as the GLB mesh (eliminates origin mismatch).
+  useEffect(() => {
+    const url = `${API_BASE}/api/tiles/${encodeURIComponent(twinId)}/pipeline_result.json`;
+    fetch(url)
+      .then(r => r.ok ? r.json() : null)
+      .then(meta => {
+        if (meta?.local_origin) {
+          setLocalOrigin(meta.local_origin);
+          console.log('[TerrainStudio] local_origin loaded:', meta.local_origin);
+        }
+      })
+      .catch(() => {});
+  }, [twinId, setLocalOrigin]);
 
   // Set area from prop
   useEffect(() => {

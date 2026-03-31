@@ -18,7 +18,7 @@ from pathlib import Path
 import numpy as np
 
 from .config import settings
-from .terrain.export import export_3d_tiles, export_single_glb, set_texture
+from .terrain.export import export_3d_tiles, export_single_glb, get_local_origin, set_texture
 from .terrain.ingest import crop_dem_by_aoi, download_dem_ign, get_dem_for_aoi, load_dem
 from .terrain.lod import generate_lods
 from .terrain.mesh import clip_mesh_to_aoi, compute_uv_from_bbox, dem_to_mesh
@@ -397,6 +397,7 @@ def process_twin(
                 ".png" if aoi_meta.area_ha < 1.0 else ".jpg"
             ).name),
         } if result.ortho else None,
+        "local_origin": get_local_origin(),
     }, indent=2))
 
     _progress("Completado", 100)

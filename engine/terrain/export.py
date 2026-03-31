@@ -32,15 +32,22 @@ def set_texture(texture_path: Path | None) -> None:
     _shared_texture_path = texture_path
 
 
-def _degrees_to_local_meters(vertices: np.ndarray) -> np.ndarray:
+def _degrees_to_local_meters(
+    vertices: np.ndarray,
+) -> tuple[np.ndarray, dict]:
     """Convierte vértices [lon, lat, elev] a coordenadas locales en metros.
 
     Produce coordenadas glTF-compliant (Y-up, right-handed):
       X = East, Y = Elevation (up), Z = North
+
+    Returns:
+        (local_vertices, origin_meta): local coords + dict with the centroid
+        used as origin (centroid_lon, centroid_lat, min_elev, m_per_deg_lon,
+        m_per_deg_lat) so the frontend can reproduce the exact same transform.
     """
-    centroid_lon = vertices[:, 0].mean()
-    centroid_lat = vertices[:, 1].mean()
-    min_elev = vertices[:, 2].min()
+    centroid_lon = float(vertices[:, 0].mean())
+    centroid_lat = float(vertices[:, 1].mean())
+    min_elev = float(vertices[:, 2].min())
 
     lat_rad = np.radians(centroid_lat)
     m_per_deg_lat = 111_320.0
@@ -50,7 +57,15 @@ def _degrees_to_local_meters(vertices: np.ndarray) -> np.ndarray:
     local[:, 0] = (vertices[:, 0] - centroid_lon) * m_per_deg_lon  # X = East
     local[:, 1] = vertices[:, 2] - min_elev                        # Y = Elevation (up)
     local[:, 2] = (vertices[:, 1] - centroid_lat) * m_per_deg_lat  # Z = North
-    return local
+
+    origin_meta = {
+        "centroid_lon": centroid_lon,
+        "centroid_lat": centroid_lat,
+        "min_elev": min_elev,
+        "m_per_deg_lon": m_per_deg_lon,
+        "m_per_deg_lat": m_per_deg_lat,
+    }
+    return local, origin_meta
 
 
 def _degrees_to_ecef(vertices: np.ndarray) -> tuple[np.ndarray, list[float]]:
@@ -175,6 +190,16 @@ def _fix_texcoord_accessor(glb_bytes: bytes) -> bytes:
         return glb_bytes
 
 
+# Module-level storage for the last local-coordinate origin produced by _mesh_to_glb.
+# This is read by export_single_glb / export_3d_tiles to include it in pipeline_result.json.
+_last_local_origin: dict | None = None
+
+
+def get_local_origin() -> dict | None:
+    """Return the local-coordinate origin metadata from the last GLB export."""
+    return _last_local_origin
+
+
 def _mesh_to_glb(mesh: TerrainMesh, texture_path: Path | None = None, *, local_coords: bool = True) -> bytes:
     """Convierte TerrainMesh a GLB (binary glTF) usando trimesh.
 
@@ -183,7 +208,12 @@ def _mesh_to_glb(mesh: TerrainMesh, texture_path: Path | None = None, *, local_c
             Usar True para GLBs standalone (Three.js, Blender).
             Usar False para GLBs embebidos en B3DM (Cesium 3D Tiles).
     """
-    verts = _degrees_to_local_meters(mesh.vertices) if local_coords else mesh.vertices
+    global _last_local_origin
+    if local_coords:
+        verts, origin_meta = _degrees_to_local_meters(mesh.vertices)
+        _last_local_origin = origin_meta
+    else:
+        verts = mesh.vertices
     t_mesh = trimesh.Trimesh(
         vertices=verts,
         faces=mesh.faces,

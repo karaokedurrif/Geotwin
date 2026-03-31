@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import * as THREE from 'three';
 import { useThree } from '@react-three/fiber';
 import { Line } from '@react-three/drei';
+import { useStudioStore } from './store';
 
 interface ParcelOutline3DProps {
   geojson: Record<string, unknown>;
@@ -9,10 +10,13 @@ interface ParcelOutline3DProps {
 
 /**
  * Renders the cadastral parcel outline as a glowing 3D line on the terrain.
- * Converts GeoJSON lon/lat to the same local coordinate system as the GLB.
+ * Uses the engine's local_origin (from pipeline_result.json) to convert
+ * GeoJSON lon/lat to the same local coordinate system as the GLB,
+ * guaranteeing perfect alignment (shared RTC_CENTER).
  */
 export default function ParcelOutline3D({ geojson }: ParcelOutline3DProps) {
   const { scene } = useThree();
+  const localOrigin = useStudioStore((s) => s.localOrigin);
 
   const points = useMemo(() => {
     const geometry = (geojson as Record<string, unknown>).geometry as
@@ -38,15 +42,25 @@ export default function ParcelOutline3D({ geojson }: ParcelOutline3DProps) {
 
     if (!terrainMesh) return null;
 
-    const lons = ring.map((p) => p[0]);
-    const lats = ring.map((p) => p[1]);
-    const centLon = lons.reduce((a, b) => a + b, 0) / lons.length;
-    const centLat = lats.reduce((a, b) => a + b, 0) / lats.length;
-    const latRad = (centLat * Math.PI) / 180;
-    const mPerDegLon = 111320 * Math.cos(latRad);
-    const mPerDegLat = 111320;
+    // Use the engine's local_origin if available (exact match with GLB centroid).
+    // Fallback: compute centroid from the ring itself (legacy path).
+    let centLon: number, centLat: number, mPerDegLon: number, mPerDegLat: number;
+    if (localOrigin) {
+      centLon = localOrigin.centroid_lon;
+      centLat = localOrigin.centroid_lat;
+      mPerDegLon = localOrigin.m_per_deg_lon;
+      mPerDegLat = localOrigin.m_per_deg_lat;
+    } else {
+      const lons = ring.map((p) => p[0]);
+      const lats = ring.map((p) => p[1]);
+      centLon = lons.reduce((a, b) => a + b, 0) / lons.length;
+      centLat = lats.reduce((a, b) => a + b, 0) / lats.length;
+      const latRad = (centLat * Math.PI) / 180;
+      mPerDegLon = 111320 * Math.cos(latRad);
+      mPerDegLat = 111320;
+    }
 
-    // Convert to local meters (X=east, Y=0, Z=north)
+    // Convert to local meters (X=east, Y=0, Z=north) — same system as GLB
     const pts: [number, number, number][] = ring.map((p) => {
       const x = (p[0] - centLon) * mPerDegLon;
       const z = (p[1] - centLat) * mPerDegLat;
@@ -74,7 +88,7 @@ export default function ParcelOutline3D({ geojson }: ParcelOutline3DProps) {
     }
 
     return pts;
-  }, [geojson, scene]);
+  }, [geojson, scene, localOrigin]);
 
   if (!points || points.length < 2) return null;
 

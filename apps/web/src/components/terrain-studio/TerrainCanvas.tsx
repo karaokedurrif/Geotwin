@@ -45,10 +45,10 @@ export default function TerrainCanvas({ glbUrl, geojson }: TerrainCanvasProps) {
 
   return (
     <Canvas
-      gl={{ antialias: true, toneMapping: 3, toneMappingExposure: 1.0 }}
+      gl={{ antialias: true, toneMapping: 3, toneMappingExposure: 1.0, alpha: true }}
       camera={{ fov: 45, near: 0.01, far: 5000 }}
       dpr={[1, 2]}
-      style={{ background: 'radial-gradient(ellipse at center, #1a1a2e 0%, #0a0a14 100%)' }}
+      style={{ background: '#0a0a14' }}
     >
       <Suspense fallback={<LoadingFallback />}>
         <TerrainModel key={effectiveUrl} url={effectiveUrl} geojson={geojson} />
