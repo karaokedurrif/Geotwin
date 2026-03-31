@@ -216,11 +216,53 @@ export default function ControlPanel({
 
       {/* Main Controls Card */}
       <div className={styles.card}>
-        <h2 className={styles.cardTitle}>Data Source</h2>
+        <h2 className={styles.cardTitle}>Referencia Catastral</h2>
         
-        {/* Upload Button */}
+        {/* Referencia Catastral Input — PRIMARY method */}
+        <div style={{ display: 'flex', gap: '4px' }}>
+          <input
+            type="text"
+            value={refcatInput}
+            onChange={(e) => setRefcatInput(e.target.value)}
+            placeholder="40167A00100001"
+            maxLength={20}
+            disabled={isRefcatLoading}
+            style={{
+              flex: 1,
+              padding: '8px 10px',
+              background: 'rgba(255,255,255,0.06)',
+              border: '1px solid rgba(255,255,255,0.15)',
+              borderRadius: '6px',
+              color: '#e0e0e0',
+              fontSize: '13px',
+              fontFamily: 'monospace',
+              letterSpacing: '0.5px',
+            }}
+            onKeyDown={(e) => e.key === 'Enter' && handleRefcatSubmit()}
+          />
+          <button
+            className={styles.primaryButton}
+            onClick={handleRefcatSubmit}
+            disabled={isRefcatLoading || !refcatInput.trim()}
+            style={{ padding: '8px 14px', minWidth: 'auto', marginTop: 0 }}
+          >
+            {isRefcatLoading ? '...' : 'Crear'}
+          </button>
+        </div>
+
+        {/* Separator */}
+        <p style={{
+          textAlign: 'center',
+          color: 'rgba(255,255,255,0.4)',
+          fontSize: '11px',
+          margin: '10px 0 6px',
+        }}>
+          O sube tu KML
+        </p>
+
+        {/* Upload KML — secondary method */}
         <button 
-          className={styles.primaryButton}
+          className={styles.secondaryButton}
           onClick={handleGenerateTwin}
           disabled={isUploading}
         >
@@ -234,37 +276,6 @@ export default function ControlPanel({
           onChange={handleFileSelect}
           style={{ display: 'none' }}
         />
-
-        {/* Referencia Catastral Input */}
-        <div style={{ display: 'flex', gap: '4px', marginTop: '8px' }}>
-          <input
-            type="text"
-            value={refcatInput}
-            onChange={(e) => setRefcatInput(e.target.value)}
-            placeholder="Ref. Catastral"
-            maxLength={20}
-            disabled={isRefcatLoading}
-            style={{
-              flex: 1,
-              padding: '6px 8px',
-              background: 'rgba(255,255,255,0.06)',
-              border: '1px solid rgba(255,255,255,0.15)',
-              borderRadius: '6px',
-              color: '#e0e0e0',
-              fontSize: '12px',
-              fontFamily: 'monospace',
-            }}
-            onKeyDown={(e) => e.key === 'Enter' && handleRefcatSubmit()}
-          />
-          <button
-            className={styles.secondaryButton}
-            onClick={handleRefcatSubmit}
-            disabled={isRefcatLoading || !refcatInput.trim()}
-            style={{ padding: '6px 10px', minWidth: 'auto', marginTop: 0 }}
-          >
-            {isRefcatLoading ? '...' : 'Crear'}
-          </button>
-        </div>
 
         {/* Sample Data Button */}
         <button
