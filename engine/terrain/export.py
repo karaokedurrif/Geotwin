@@ -284,11 +284,16 @@ def _mesh_to_glb(mesh: TerrainMesh, texture_path: Path | None = None, *, local_c
     if local_coords:
         verts, origin_meta = _degrees_to_local_meters(mesh.vertices)
         _last_local_origin = origin_meta
+        # _degrees_to_local_meters swaps Y↔Z (lat→Z, elev→Y) which flips
+        # coordinate system handedness.  Reverse face winding to keep normals
+        # pointing up (positive Y) in the Y-up glTF convention.
+        faces = mesh.faces[:, ::-1]
     else:
         verts = mesh.vertices
+        faces = mesh.faces
     t_mesh = trimesh.Trimesh(
         vertices=verts,
-        faces=mesh.faces,
+        faces=faces,
     )
     # Force vertex normals into cache so glTF export includes NORMAL attribute
     # (required by Cesium's PBR shader when textures are present)
