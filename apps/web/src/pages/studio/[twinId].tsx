@@ -110,7 +110,7 @@ export default function TwinStudioPage() {
     if (!Cesium || !snapshot) return;
     const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3001';
     const url = `${apiBase}/api/tiles/${encodeURIComponent(twinId as string)}/tileset.json`;
-    Cesium.Cesium3DTileset.fromUrl(url, { maximumScreenSpaceError: 8, maximumMemoryUsage: 256 })
+    Cesium.Cesium3DTileset.fromUrl(url, { maximumScreenSpaceError: 1, maximumMemoryUsage: 256 })
       .then((tileset: any) => {
         if (!viewerRef || viewerRef.isDestroyed?.()) return;
         viewerRef.scene.primitives.add(tileset);

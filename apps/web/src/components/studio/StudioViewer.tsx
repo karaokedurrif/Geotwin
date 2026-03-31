@@ -293,7 +293,7 @@ async function loadTerrainTileset(
     console.log('[StudioViewer] Loading terrain tileset:', tilesetUrl);
 
     const tileset = await Cesium.Cesium3DTileset.fromUrl(tilesetUrl, {
-      maximumScreenSpaceError: 8,
+      maximumScreenSpaceError: 1,
       maximumMemoryUsage: 256,
     });
 
