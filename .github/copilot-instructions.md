@@ -25,6 +25,14 @@ packages/types/    — Contratos TypeScript compartidos
 docker-compose.yml — web, api, engine, db, illustration
 ```
 
+## Deploy (producción)
+- **geotwin.es** se sirve desde el edge server **192.168.30.101** vía Docker Compose + Cloudflare Tunnel
+- **NO** va a Vercel — Vercel solo se usa para previews, NO para producción
+- Deploy: `ssh docker-edge-apps` → `cd ~/geotwin && git pull && docker compose build && docker compose up -d`
+- Containers: `geotwin-web-1` (Next.js :3000), `geotwin-api-1` (Fastify :3001), `geotwin-engine-1` (FastAPI :8000), `geotwin-db-1` (TimescaleDB :5432), `geotwin-illustration-1` (:7860)
+- Verificar: `docker compose ps` — los 5 deben estar `Up (healthy)`
+- Cloudflare Tunnel ruta: `geotwin.es` → `http://web:3000`, `api.geotwin.es` → `http://api:3001`
+
 ## Reglas absolutas
 1. NO reescribir archivos completos — editar quirúrgicamente
 2. NO cambiar `"type": "module"` ni `"module": "Node16"` en apps/api/
@@ -34,6 +42,7 @@ docker-compose.yml — web, api, engine, db, illustration
 6. Python es el lenguaje del engine (no C++)
 7. Build + test después de cada cambio
 8. Git commit + push + deploy por cada fix independiente
+9. Deploy = docker compose en edge server, NO vercel --prod
 
 ## Convenciones geoespaciales
 - CRS por defecto: EPSG:4326
