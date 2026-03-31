@@ -801,7 +801,32 @@ export default function StudioViewer({
         });
 
         console.log('[StudioViewer] ✓ Viewer created with OSM base imagery');
-        
+
+        // ── CRITICAL: Catch render errors (shader crashes) to prevent rendering halt ──
+        // The v_texCoord_0 shader crash occurs when a B3DM tile has a texture
+        // without a valid sampler. Instead of halting all rendering, log the
+        // error and remove the offending tileset so the viewer stays usable.
+        viewer.scene.renderError.addEventListener((scene: any, error: any) => {
+          const msg = String(error?.message ?? error ?? '');
+          console.error('[StudioViewer] 🔴 Render error intercepted:', msg);
+          if (msg.includes('v_texCoord_0') || msg.includes('Fragment shader failed')) {
+            console.warn('[StudioViewer] ⚠️ Shader crash detected — removing 3D Tileset to restore rendering');
+            // Remove all 3D Tilesets from primitives (they caused the crash)
+            const prims = scene.primitives;
+            const toRemove: any[] = [];
+            for (let i = 0; i < prims.length; i++) {
+              const p = prims.get(i);
+              if (p?.constructor?.name === 'Cesium3DTileset' || p?._url) {
+                toRemove.push(p);
+              }
+            }
+            toRemove.forEach((p) => {
+              try { prims.remove(p); } catch (_) { /* ignore */ }
+            });
+            console.log('[StudioViewer] Removed', toRemove.length, 'tilesets. Viewer should recover.');
+          }
+        });
+
         // ── PNOA Orthophoto via proxy (IGN no tiene CORS) ──
         try {
           const pnoaProv = new Cesium.UrlTemplateImageryProvider({

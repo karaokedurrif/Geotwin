@@ -17,6 +17,20 @@ export default function App({ Component, pageProps }: AppProps) {
           href="https://cesium.com/downloads/cesiumjs/releases/1.113/Build/Cesium/Widgets/widgets.css"
         />
       </Head>
+      {/* Polyfill: guarantee performance.clearMarks/clearMeasures exist.
+          Cesium 1.113 minified code (variable "mgt") calls clearMarks —
+          some environments (SSR, workers) don't expose it, crashing the bundle. */}
+      <Script id="perf-polyfill" strategy="beforeInteractive">{`
+        (function(){
+          if(typeof performance!=='undefined'){
+            if(typeof performance.clearMarks!=='function') performance.clearMarks=function(){};
+            if(typeof performance.clearMeasures!=='function') performance.clearMeasures=function(){};
+            if(typeof performance.mark!=='function') performance.mark=function(){};
+            if(typeof performance.measure!=='function') performance.measure=function(){};
+            if(typeof performance.getEntriesByName!=='function') performance.getEntriesByName=function(){return[]};
+          }
+        })();
+      `}</Script>
       <Script
         src="https://cesium.com/downloads/cesiumjs/releases/1.113/Build/Cesium/Cesium.js"
         strategy="beforeInteractive"
