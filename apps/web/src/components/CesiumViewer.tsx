@@ -541,6 +541,7 @@ export default function CesiumViewer({
         }
 
         cesiumViewerRef.current = viewer;
+        (window as any).viewer = viewer;
         logMessage('Viewer initialized (OSM + Ellipsoid)', 'success');
         
         // Debug: Log viewer state
@@ -843,6 +844,9 @@ export default function CesiumViewer({
 
         // Apply preset config
         applyPresetConfig(viewer, recipe, tileMode, terrainEnabled);
+
+        // Native DPI: render at full device pixel ratio for HiDPI screens
+        viewer.resolutionScale = window.devicePixelRatio || 1.0;
         
         // Debug: Log viewer state after preset config
         console.log('[DEBUG] After applyPresetConfig:', {
@@ -957,7 +961,7 @@ export default function CesiumViewer({
         const pnoaProv = new Cesium.UrlTemplateImageryProvider({
           url: '/api/pnoa-tile/{z}/{x}/{y}',
           minimumLevel: 5,
-          maximumLevel: 19,
+          maximumLevel: 20,
           credit: 'PNOA © IGN España',
         });
         

@@ -793,7 +793,7 @@ export default function StudioViewer({
           const pnoaProv = new Cesium.UrlTemplateImageryProvider({
             url: '/api/pnoa-tile/{z}/{x}/{y}',
             minimumLevel: 5,
-            maximumLevel: 19,
+            maximumLevel: 20,
             credit: 'PNOA © IGN España',
           });
           
@@ -923,7 +923,11 @@ export default function StudioViewer({
 
         console.log('[StudioViewer] ✓ Terrain lighting configured');
 
+        // Native DPI: render at full device pixel ratio for HiDPI screens
+        viewer.resolutionScale = window.devicePixelRatio || 1.0;
+
         viewerRef.current = viewer;
+        (window as any).viewer = viewer;
         onViewerReady(viewer);
         console.log('[StudioViewer] ✓ Viewer initialized');
 

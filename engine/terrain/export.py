@@ -93,15 +93,15 @@ def _degrees_to_ecef(vertices: np.ndarray) -> tuple[np.ndarray, list[float]]:
 
 
 def _fix_texcoord_accessor(glb_bytes: bytes) -> bytes:
-    """Validate & fix TEXCOORD_0 accessor type in GLB.
+    """Validate & fix TEXCOORD_0 and add default sampler in GLB.
 
-    Cesium's PBR shader expects TEXCOORD_0 as VEC2 (componentType=5126 FLOAT).
-    Some trimesh versions may export it as SCALAR, causing shader crash:
+    Cesium's PBR shader expects TEXCOORD_0 as VEC2 (componentType=5126 FLOAT)
+    and a valid sampler on each texture. Without a sampler, certain Cesium
+    builds (1.130+) fail to generate the v_texCoord_0 varying, causing:
       'v_texCoord_0 undeclared identifier' / 'dimension mismatch'
     """
     try:
         import io
-        # Parse GLB header: magic(4) + version(4) + length(4) + json_chunk_len(4) + json_type(4)
         if len(glb_bytes) < 20 or glb_bytes[:4] != b'glTF':
             return glb_bytes
 
@@ -110,11 +110,8 @@ def _fix_texcoord_accessor(glb_bytes: bytes) -> bytes:
         gltf = json.loads(json_data)
 
         changed = False
-        for accessor in gltf.get('accessors', []):
-            # Find TEXCOORD accessors by checking mesh primitives
-            pass
 
-        # Check all mesh primitives for TEXCOORD_0 accessor index
+        # Fix 1: Ensure TEXCOORD_0 accessor is VEC2
         for mesh_obj in gltf.get('meshes', []):
             for prim in mesh_obj.get('primitives', []):
                 tc_idx = prim.get('attributes', {}).get('TEXCOORD_0')
@@ -125,43 +122,56 @@ def _fix_texcoord_accessor(glb_bytes: bytes) -> bytes:
                             "TEXCOORD_0 accessor type=%s, fixing to VEC2",
                             acc.get('type'),
                         )
+                        # If it was SCALAR, count is 2× what it should be
+                        if acc.get('type') == 'SCALAR':
+                            acc['count'] = acc['count'] // 2
                         acc['type'] = 'VEC2'
-                        # Adjust count if it was SCALAR (count was 2x what it should be)
-                        if acc.get('type') == 'VEC2':
-                            changed = True
+                        changed = True
+
+        # Fix 2: Ensure every texture references a valid sampler
+        # Missing samplers cause Cesium's shader generator to skip v_texCoord_0
+        samplers = gltf.setdefault('samplers', [])
+        if not samplers:
+            # Add default LINEAR sampler (glTF spec default for missing sampler)
+            samplers.append({
+                'magFilter': 9729,   # LINEAR
+                'minFilter': 9987,   # LINEAR_MIPMAP_LINEAR
+                'wrapS': 33071,      # CLAMP_TO_EDGE
+                'wrapT': 33071,      # CLAMP_TO_EDGE
+            })
+            changed = True
+            logger.info("GLB: added default LINEAR sampler")
+
+        for tex in gltf.get('textures', []):
+            if 'sampler' not in tex:
+                tex['sampler'] = 0
+                changed = True
 
         if not changed:
             return glb_bytes
 
-        # Re-serialize the JSON chunk
+        # Re-serialize the JSON chunk (pad to 4-byte alignment with spaces)
         new_json = json.dumps(gltf, separators=(',', ':')).encode('utf-8')
-        # Pad to 4-byte alignment with spaces
         pad = (4 - len(new_json) % 4) % 4
         new_json += b' ' * pad
 
-        # Rebuild GLB: header + json chunk + bin chunk
-        bin_chunk_start = 20 + json_len
-        # Check for padding after JSON chunk
-        json_chunk_total = json_len
-        # Align to next chunk boundary
-        if bin_chunk_start % 4 != 0:
-            bin_chunk_start += (4 - bin_chunk_start % 4) % 4
-        bin_rest = glb_bytes[12 + 8 + json_len:]  # everything after json chunk
+        # Extract binary chunk (everything after the original JSON chunk)
+        bin_rest = glb_bytes[20 + json_len:]
 
-        # Rebuild: GLB header + JSON chunk header + JSON + rest
-        new_glb = io.BytesIO()
+        # Rebuild GLB: header(12) + JSON chunk header(8) + JSON + BIN rest
+        buf = io.BytesIO()
         total_len = 12 + 8 + len(new_json) + len(bin_rest)
-        new_glb.write(struct.pack('<4sII', b'glTF', 2, total_len))
-        new_glb.write(struct.pack('<II', len(new_json), 0x4E4F534A))  # JSON chunk
-        new_glb.write(new_json)
-        new_glb.write(bin_rest)
-        result = new_glb.getvalue()
-        # Fix total length
-        struct.pack_into('<I', bytearray(result), 8, len(result))
-        logger.info("GLB TEXCOORD_0 accessor fixed to VEC2")
-        return bytes(bytearray(result))
+        buf.write(struct.pack('<4sII', b'glTF', 2, total_len))
+        buf.write(struct.pack('<II', len(new_json), 0x4E4F534A))  # JSON chunk
+        buf.write(new_json)
+        buf.write(bin_rest)
+        result = bytearray(buf.getvalue())
+        # Patch total length in header (bytes 8-11)
+        struct.pack_into('<I', result, 8, len(result))
+        logger.info("GLB post-processed: TEXCOORD_0 + sampler validated")
+        return bytes(result)
     except Exception as e:
-        logger.warning("GLB TEXCOORD_0 validation skipped: %s", e)
+        logger.warning("GLB post-processing skipped: %s", e)
         return glb_bytes
 
 
