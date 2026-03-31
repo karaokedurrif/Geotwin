@@ -25,6 +25,7 @@ from .terrain.mesh import clip_mesh_to_aoi, compute_uv_from_bbox, dem_to_mesh
 from .vector.aoi import (
     AOIMetadata,
     compute_aoi_metadata,
+    densify_coords,
     merge_parcels,
     parse_geojson,
     parse_kml,
@@ -122,6 +123,34 @@ def process_twin(
         resolution["dem_resolution_m"],
     )
 
+    # ─── 2b. Re-densificar geometría para parcelas pequeñas ─────────────
+    # parse_kml densifica a 2.0m; para <0.5ha necesitamos 0.3m
+    if aoi_meta.area_ha < 0.5:
+        _progress("Re-densificando geometría (parcela <0.5 ha)", 17)
+        geom = aoi_feature["geometry"]
+        if geom["type"] == "Polygon":
+            geom["coordinates"] = [
+                densify_coords([tuple(c) for c in ring], max_distance_m=0.3)
+                for ring in geom["coordinates"]
+            ]
+        elif geom["type"] == "MultiPolygon":
+            geom["coordinates"] = [
+                [
+                    densify_coords([tuple(c) for c in ring], max_distance_m=0.3)
+                    for ring in polygon
+                ]
+                for polygon in geom["coordinates"]
+            ]
+        new_vc = sum(
+            len(ring)
+            for ring in (geom["coordinates"] if geom["type"] == "Polygon" else
+                         [r for p in geom["coordinates"] for r in p])
+        )
+        logger.info(
+            "Re-densificado: %d → %d vértices (max_distance_m=0.3)",
+            aoi_meta.vertex_count, new_vc,
+        )
+
     # Guardar AOI como GeoJSON
     aoi_path = output_dir / "aoi.geojson"
     aoi_path.write_text(json.dumps(aoi_feature, indent=2))
@@ -158,8 +187,8 @@ def process_twin(
     _progress("Recortando malla al AOI", 60)
     mesh = clip_mesh_to_aoi(mesh, aoi_feature)
 
-    # Subdividir si la malla tiene muy pocos vértices (parcelas pequeñas → borrosas)
-    if mesh.vertex_count < 200:
+    # Subdividir si la malla tiene pocos vértices (parcelas pequeñas → borrosas)
+    if mesh.vertex_count < 2000:
         logger.info(
             "Malla con solo %d vértices — subdividiendo para mayor detalle",
             mesh.vertex_count,
@@ -167,7 +196,11 @@ def process_twin(
         import trimesh as _trimesh
 
         t = _trimesh.Trimesh(vertices=mesh.vertices, faces=mesh.faces)
-        t = t.subdivide()
+        # Subdividir iterativamente hasta alcanzar ≥2000 vértices (máx 3 pasadas)
+        for _pass in range(3):
+            if len(t.vertices) >= 2000:
+                break
+            t = t.subdivide()
         from .terrain.mesh import TerrainMesh, _compute_face_normals
 
         mesh = TerrainMesh(
@@ -185,16 +218,24 @@ def process_twin(
         from .raster.ortho import extract_texture_image, get_ortho_for_aoi
 
         # Resolución adaptativa según el tamaño de la parcela
-        if aoi_meta.area_ha < 1:
+        if aoi_meta.area_ha < 0.5:
             ortho_res_cm = 5    # Ultra HD para parcelas muy pequeñas
+            ortho_max_pixels = 16384  # Mayor resolución para parcelas diminutas
+        elif aoi_meta.area_ha < 1:
+            ortho_res_cm = 5    # Ultra HD
+            ortho_max_pixels = 8192
         elif aoi_meta.area_ha < 10:
             ortho_res_cm = 5    # HD para parcelas pequeñas
+            ortho_max_pixels = 8192
         elif aoi_meta.area_ha < 50:
             ortho_res_cm = 5    # HD para parcelas medianas
+            ortho_max_pixels = 8192
         elif aoi_meta.area_ha < 200:
             ortho_res_cm = 10
+            ortho_max_pixels = 8192
         else:
             ortho_res_cm = 25   # Parcelas enormes
+            ortho_max_pixels = 8192
 
         # Retry up to 2 times with increasing timeout
         last_error = None
@@ -204,7 +245,7 @@ def process_twin(
                     bbox=aoi_meta.bbox,
                     output_dir=output_dir,
                     resolution_cm=ortho_res_cm,
-                    max_pixels=8192,
+                    max_pixels=ortho_max_pixels,
                 )
                 last_error = None
                 break
@@ -221,10 +262,11 @@ def process_twin(
         if last_error is not None:
             raise last_error
 
-        # Extraer JPEG para usar como textura en GLB
+        # Extraer textura — PNG lossless para parcelas <1ha, JPEG para grandes
         from pathlib import Path as P
         ortho_tif = P(ortho_result["path"])
-        texture_path = extract_texture_image(ortho_tif)
+        tex_fmt = "PNG" if aoi_meta.area_ha < 1.0 else "JPEG"
+        texture_path = extract_texture_image(ortho_tif, fmt=tex_fmt)
 
         # Asignar UVs al mesh basados en el bbox de la textura
         mesh = compute_uv_from_bbox(mesh, tuple(ortho_result["bbox"]))
@@ -247,6 +289,15 @@ def process_twin(
         set_texture(None)
         logger.warning(
             "UVs asignados sin textura — export.py generará material fallback"
+        )
+
+    # ─── 4c. Z-offset anti Z-fighting (parcelas < 1 ha) ───────────────
+    if aoi_meta.area_ha < 1.0:
+        z_offset = 0.05  # metros
+        mesh.vertices[:, 2] += z_offset
+        logger.info(
+            "Z-offset +%.2fm aplicado (parcela %.2f ha < 1 ha) para evitar Z-fighting",
+            z_offset, aoi_meta.area_ha,
         )
 
     # ─── 5. Generar LODs ────────────────────────────────────────────────

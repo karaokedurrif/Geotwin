@@ -64,16 +64,32 @@ type BoundingSphere = {
 };
 
 /**
- * Compute ideal camera range based on parcel area.
- * Prevents camera from being too far for small parcels or too close for large ones.
+ * Compute ideal camera range based on parcel radius.
+ * Dynamic calculation ensures optimal framing for all parcel sizes.
+ * Formula optimized for ultra-small parcels (< 20m):
+ * - Base multiplier: 1.5x radius (closer than previous 2.2x)
+ * - With marginFactor adjustment, provides tight framing for maximum resolution
  */
-function computeIdealRange(areaHa: number): number {
-  if (areaHa < 0.1) return 60;          // Jardín muy pequeño
-  if (areaHa < 0.5) return 100;         // Jardín/casa
-  if (areaHa < 5) return 300;           // Parcela pequeña
-  if (areaHa < 50) return 1200;         // Finca media
-  if (areaHa < 200) return 2500;        // Finca grande
-  return 4000;                           // Comarca
+function computeIdealRange(radius: number): number {
+  // For ultra-small parcels, use aggressive close-up
+  if (radius < 20) {
+    return radius * 1.5;
+  }
+  // For small-medium parcels, slightly more distance
+  if (radius < 100) {
+    return radius * 1.8;
+  }
+  // For large parcels, standard framing
+  return radius * 2.2;
+}
+
+/**
+ * Alternative: compute range from area (for backward compatibility)
+ */
+function computeIdealRangeFromArea(areaHa: number): number {
+  // Convert area to approximate radius: radius = sqrt(area / π)
+  const radiusMeters = Math.sqrt((areaHa * 10000) / Math.PI);
+  return computeIdealRange(radiusMeters);
 }
 
 // Timeout configuration (ms)
@@ -428,7 +444,7 @@ export default function CesiumViewer({
 
         // Initial camera position (generic fallback - will be corrected by loadGeometry)
         // Start with a neutral view; loadGeometry will flyTo the actual parcel extent
-        const cameraHeight = computeIdealRange(recipe.area_ha);
+        const cameraHeight = computeIdealRangeFromArea(recipe.area_ha);
         
         // Use centroid from recipe (calculated from actual geometry bbox)
         const bbox = recipe.bbox || [-4, 40, -3, 41]; // Fallback to Spain region
@@ -945,9 +961,17 @@ export default function CesiumViewer({
           credit: 'PNOA © IGN España',
         });
         
-        layers.addImageryProvider(pnoaProv);
+        const pnoaLayer = layers.addImageryProvider(pnoaProv);
+        
+        // CRITICAL: Ensure PNOA layer has neutral settings for maximum sharpness
+        pnoaLayer.brightness = 1.0;  // No brightness adjustment
+        pnoaLayer.contrast = 1.0;    // No contrast boost (avoids blur)
+        pnoaLayer.gamma = 1.0;       // No gamma correction
+        pnoaLayer.saturation = 1.0;  // Natural colors
+        pnoaLayer.alpha = 1.0;       // Full opacity (polygons are transparent decals on top)
+        
         pnoaProv.errorEvent.addEventListener(() => {});
-        logMessage('✓ PNOA imagery added (proxy)', 'success');
+        logMessage('✓ PNOA imagery added (proxy, neutral settings)', 'success');
       } catch (pnoaError) {
         logMessage('PNOA imagery failed (optional)', 'warn');
       }
@@ -1792,9 +1816,25 @@ async function flyToIsometric(
   if (!viewer.scene || !viewer.scene.globe) return;
   if (!boundingSphere || !boundingSphere.center || !Number.isFinite(boundingSphere.radius)) return;
 
-  // PHASE 1 FIX: Better camera angle to show terrain relief
+  const radius = boundingSphere.radius;
+  
+  // OPTIMIZED FOR ULTRA-SMALL PARCELS: Adjust pitch and margin based on radius
   const heading = Cesium.Math.toRadians(315); // 315° = looking from SE toward NW (classic isometric)
-  const pitch = Cesium.Math.toRadians(-32);   // -32° = more oblique to emphasize terrain relief
+  let pitch = Cesium.Math.toRadians(-45);     // -45° = optimal for orthophoto projection detail
+  let adjustedMarginFactor = marginFactor;
+  
+  // For ultra-small parcels, maximize resolution with closer view
+  if (radius < 20) {
+    pitch = Cesium.Math.toRadians(-45);       // Steeper angle for better orthophoto visibility
+    adjustedMarginFactor = 1.2;               // Tighter framing (less margin)
+    console.log(`[FlyTo] Ultra-small parcel optimization: pitch=-45°, margin=1.2x`);
+  } else if (radius < 50) {
+    pitch = Cesium.Math.toRadians(-40);       // Moderate angle
+    adjustedMarginFactor = 1.3;
+  } else {
+    pitch = Cesium.Math.toRadians(-32);       // Standard oblique for terrain relief
+    adjustedMarginFactor = marginFactor;
+  }
   
   // Sample terrain at parcel center for true ground height
   const centerCarto = Cesium.Cartographic.fromCartesian(boundingSphere.center);
@@ -1820,11 +1860,9 @@ async function flyToIsometric(
       }
     }
 
-    const radius = boundingSphere.radius;
-    const estimatedAreaHa = (Math.PI * radius * radius) / 10000;
-    const range = computeIdealRange(estimatedAreaHa) * marginFactor;
+    const range = computeIdealRange(radius) * adjustedMarginFactor;
 
-    console.log(`📐 FlyTo Isometric: centroid=[${centroidLon.toFixed(5)}, ${centroidLat.toFixed(5)}], groundHeight=${groundHeight.toFixed(1)}m, radius=${radius.toFixed(1)}m, range=${range.toFixed(1)}m`);
+    console.log(`📐 FlyTo Optimized: centroid=[${centroidLon.toFixed(6)}, ${centroidLat.toFixed(6)}], groundHeight=${groundHeight.toFixed(1)}m, radius=${radius.toFixed(1)}m, range=${range.toFixed(1)}m, pitch=${Cesium.Math.toDegrees(pitch).toFixed(1)}°`);
 
     // Use lookAt for reliable positioning (works with or without real terrain)
     const target = Cesium.Cartesian3.fromDegrees(centroidLon, centroidLat, groundHeight);
@@ -1835,8 +1873,7 @@ async function flyToIsometric(
     viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
   } catch (error) {
     console.warn('[flyToIsometric] Camera positioning failed, using flyToBoundingSphere:', error);
-    const estimatedAreaHa = (Math.PI * boundingSphere.radius * boundingSphere.radius) / 10000;
-    const range = computeIdealRange(estimatedAreaHa) * marginFactor;
+    const range = computeIdealRange(radius) * adjustedMarginFactor;
     viewer.camera.lookAt(
       boundingSphere.center,
       new Cesium.HeadingPitchRange(heading, pitch, range)
@@ -1910,10 +1947,10 @@ function styleParcelEntities(viewer: any, dataSource: any, entities: any[]): voi
 
   entities.forEach((entity) => {
     if (entity?.polygon) {
-      // Terrain-draped fill — bright cyan overlay visible on any terrain
-      entity.polygon.material = Cesium.Color.fromCssColorString('#00d4ff').withAlpha(0.40);
+      // Terrain decal mode — ultra-transparent overlay (0.2 alpha) lets PNOA orthophoto show through
+      entity.polygon.material = Cesium.Color.fromCssColorString('#00d4ff').withAlpha(0.2);
       entity.polygon.outline = false; // Outlines unsupported on terrain-clamped polygons
-      entity.polygon.classificationType = Cesium.ClassificationType.BOTH; // Classify both terrain and 3D tiles
+      entity.polygon.classificationType = Cesium.ClassificationType.TERRAIN; // Terrain-only decal for max PNOA clarity
       // Remove height/heightReference to let classification handle it
       entity.polygon.height = undefined;
       entity.polygon.extrudedHeight = undefined;
@@ -2483,6 +2520,104 @@ async function loadGeometry(
     }
 
     logMessage(`✓ Added ${sensors.length} IoT sensors and ${cattle.length} cattle markers`, 'success');
+
+    // ── HIGH-DPI PNOA OPTIMIZATION FOR SMALL PARCELS ──
+    // For ultra-small parcels (< 20m), force maximum resolution with PNG + 1024px tiles
+    // For small parcels (< 30m), upgrade to level 18-20
+    if (radius < 30 && viewer.imageryLayers) {
+      const isUltraSmall = radius < 20;
+      logMessage(
+        isUltraSmall 
+          ? 'Ultra-small parcel - forcing High-DPI PNOA (PNG + 1024px tiles)...' 
+          : 'Small parcel detected - upgrading PNOA resolution...', 
+        'info'
+      );
+      
+      try {
+        // Find and remove existing PNOA layer
+        const layers = viewer.imageryLayers;
+        for (let i = layers.length - 1; i >= 0; i--) {
+          const layer = layers.get(i);
+          if (layer.imageryProvider?.url?.includes?.('pnoa-tile')) {
+            layers.remove(layer, false);
+            break;
+          }
+        }
+        
+        // HIGH-DPI CONFIGURATION: Use WMS proxy for real high-resolution tiles
+        // WMTS returns fixed 256×256 — setting tileWidth:1024 just upscales and blurs.
+        // WMS supports arbitrary pixel sizes, so 1024×1024 is actual server-rendered resolution.
+        const pnoaHiRes = new Cesium.WebMapServiceImageryProvider({
+          url: '/api/pnoa-wms',
+          layers: 'OI.OrthoimageCoverage',
+          parameters: {
+            FORMAT: 'image/png',
+            TRANSPARENT: false,
+          },
+          tileWidth: isUltraSmall ? 1024 : 512,
+          tileHeight: isUltraSmall ? 1024 : 512,
+          minimumLevel: 15,
+          maximumLevel: 20,
+          credit: 'PNOA © IGN España',
+        });
+        
+        const hiResLayer = layers.addImageryProvider(pnoaHiRes);
+        
+        // CRITICAL: Neutral settings for maximum sharpness
+        hiResLayer.brightness = 1.0;
+        hiResLayer.contrast = 1.0;
+        hiResLayer.gamma = 1.0;
+        hiResLayer.saturation = 1.0;
+        hiResLayer.alpha = 1.0;
+        
+        pnoaHiRes.errorEvent.addEventListener(() => {});
+        
+        logMessage(
+          isUltraSmall
+            ? '✓ PNOA High-DPI: PNG format + 1024×1024 tiles + level 18-20'
+            : '✓ PNOA upgraded to super-resolution (level 18-20)', 
+          'success'
+        );
+      } catch (pnoaError) {
+        logMessage('PNOA upgrade failed (optional)', 'warn');
+      }
+    }
+
+    // ── DYNAMIC FRUSTUM & SHADOW MAP ADJUSTMENT ──
+    // Adjust near/far planes based on parcel size to prevent z-fighting and blur
+    // Critical for ultra-small parcels where default frustum causes depth precision issues
+    try {
+      const scene = viewer.scene;
+      const camera = viewer.camera;
+      
+      // Calculate optimal frustum based on parcel radius
+      // For ultra-small parcels, use tighter near/far planes
+      if (radius < 20) {
+        // Ultra-small: very tight frustum (near: radius*0.1, far: radius*50)
+        camera.frustum.near = Math.max(0.5, radius * 0.1);
+        camera.frustum.far = Math.max(500, radius * 50);
+        logMessage(`Frustum adjusted for ultra-small parcel: near=${camera.frustum.near.toFixed(1)}m, far=${camera.frustum.far.toFixed(0)}m`, 'info');
+      } else if (radius < 100) {
+        // Small-medium: moderate frustum
+        camera.frustum.near = Math.max(1, radius * 0.05);
+        camera.frustum.far = Math.max(1000, radius * 100);
+      } else {
+        // Large: standard frustum
+        camera.frustum.near = 1;
+        camera.frustum.far = 5000000;
+      }
+      
+      // Shadow map optimization if enabled
+      if (scene.shadowMap?.enabled) {
+        // Adjust shadow map size based on parcel size
+        const shadowMapSize = radius < 20 ? 4096 : (radius < 100 ? 2048 : 1024);
+        scene.shadowMap.size = shadowMapSize;
+        scene.shadowMap.softShadows = true;
+        logMessage(`Shadow map optimized: ${shadowMapSize}×${shadowMapSize}`, 'info');
+      }
+    } catch (frustumError) {
+      console.warn('[Frustum] Adjustment failed (non-critical):', frustumError);
+    }
 
     // Wait for scene to finish loading tiles before flying to parcel
     // This prevents black screens and ensures proper initial framing

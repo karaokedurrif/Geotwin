@@ -115,7 +115,7 @@ def download_pnoa_ortho(
                     "BBOX": f"{t_min_lat},{t_min_lon},{t_max_lat},{t_max_lon}",
                     "WIDTH": str(tw),
                     "HEIGHT": str(th),
-                    "FORMAT": "image/jpeg",
+                    "FORMAT": "image/png",
                     "STYLES": "",
                 }
 
@@ -172,8 +172,8 @@ def download_pnoa_ortho(
         dtype="uint8",
         crs="EPSG:4326",
         transform=transform,
-        compress="jpeg",
-        jpeg_quality=90,
+        compress="deflate",
+        predictor=2,
     ) as dst:
         for band_i in range(3):
             dst.write(img_array[:, :, band_i], band_i + 1)
@@ -195,15 +195,44 @@ def get_ortho_for_aoi(
 ) -> dict:
     """Descarga ortofoto PNOA y devuelve metadata.
 
+    Aplica un buffer al bbox (20% o mínimo 50m por lado) para evitar
+    bordes negros y artefactos de interpolación en la textura.
+
     Returns:
-        dict con 'path', 'bbox', 'width', 'height', 'resolution_cm'.
+        dict con 'path', 'bbox' (buffered), 'width', 'height', 'resolution_cm'.
     """
+    # ── Expand bbox: 20% or 50m minimum per side ──
+    min_lon, min_lat, max_lon, max_lat = bbox
+    lat_mid = (min_lat + max_lat) / 2
+    m_per_deg_lon = 111_320 * np.cos(np.radians(lat_mid))
+    m_per_deg_lat = 110_574
+
+    width_m = (max_lon - min_lon) * m_per_deg_lon
+    height_m = (max_lat - min_lat) * m_per_deg_lat
+
+    buf_m_x = max(width_m * 0.20, 50.0)
+    buf_m_y = max(height_m * 0.20, 50.0)
+
+    buf_deg_lon = buf_m_x / m_per_deg_lon
+    buf_deg_lat = buf_m_y / m_per_deg_lat
+
+    buffered_bbox = (
+        min_lon - buf_deg_lon,
+        min_lat - buf_deg_lat,
+        max_lon + buf_deg_lon,
+        max_lat + buf_deg_lat,
+    )
+    logger.info(
+        "Bbox buffer: +%.0fm x +%.0fm (original %.0fx%.0fm)",
+        buf_m_x, buf_m_y, width_m, height_m,
+    )
+
     ortho_path = output_dir / "ortho_pnoa.tif"
 
     if ortho_path.exists():
         logger.info("Ortofoto ya descargada: %s", ortho_path)
     else:
-        download_pnoa_ortho(bbox, ortho_path, resolution_cm, max_pixels)
+        download_pnoa_ortho(buffered_bbox, ortho_path, resolution_cm, max_pixels)
 
     # Leer dimensiones del resultado
     with rasterio.open(ortho_path) as src:
@@ -212,26 +241,39 @@ def get_ortho_for_aoi(
 
     return {
         "path": str(ortho_path),
-        "bbox": list(bbox),
+        "bbox": list(buffered_bbox),
         "width": width,
         "height": height,
         "resolution_cm": resolution_cm,
     }
 
 
-def extract_texture_image(ortho_path: Path, output_path: Path | None = None) -> Path:
-    """Extrae la ortofoto como imagen JPEG para usar como textura.
+def extract_texture_image(
+    ortho_path: Path,
+    output_path: Path | None = None,
+    *,
+    fmt: str = "PNG",
+) -> Path:
+    """Extrae la ortofoto como imagen para usar como textura GLB.
 
-    Lee el GeoTIFF, y exporta como JPEG estándar (sin georreferencia).
-    El JPEG es más ligero y compatible con glTF/B3DM como textura.
+    Lee el GeoTIFF y exporta como PNG (lossless, default) o JPEG.
+    PNG evita artefactos de compresión en parcelas pequeñas.
+
+    Args:
+        ortho_path: Ruta al GeoTIFF de entrada.
+        output_path: Ruta de salida (auto-genera si None).
+        fmt: 'PNG' (lossless, recomendado <1 ha) o 'JPEG'.
 
     Returns:
-        Ruta al JPEG generado.
+        Ruta a la imagen generada.
     """
     from PIL import Image
 
+    fmt = fmt.upper()
+    ext = ".png" if fmt == "PNG" else ".jpg"
+
     if output_path is None:
-        output_path = ortho_path.with_suffix(".jpg")
+        output_path = ortho_path.with_suffix(ext)
 
     with rasterio.open(ortho_path) as src:
         r = src.read(1)
@@ -239,7 +281,10 @@ def extract_texture_image(ortho_path: Path, output_path: Path | None = None) -> 
         b = src.read(3)
 
     img = Image.fromarray(np.stack([r, g, b], axis=-1), "RGB")
-    img.save(output_path, "JPEG", quality=95)
+    if fmt == "PNG":
+        img.save(output_path, "PNG", optimize=True)
+    else:
+        img.save(output_path, "JPEG", quality=95)
 
-    logger.info("Textura JPEG: %s (%.0f KB)", output_path, output_path.stat().st_size / 1024)
+    logger.info("Textura %s: %s (%.0f KB)", fmt, output_path, output_path.stat().st_size / 1024)
     return output_path

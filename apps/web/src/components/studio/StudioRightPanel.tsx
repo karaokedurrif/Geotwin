@@ -148,12 +148,12 @@ function TerrainModeContent({
   onLayerToggle: (id: string) => void;
 }) {
   const PRESETS = [
-    { id: 'natural', label: 'Natural', color: '#00d4ff', changes: { fillColor: '#00d4ff', fillOpacity: 0.09, boundaryColor: '#f0c040', terrainExaggeration: 2.0, enableLighting: true, timeOfDay: '2026-06-15T09:30:00Z' } },
+    { id: 'natural', label: 'Natural', color: '#00d4ff', changes: { fillColor: '#00d4ff', fillOpacity: 0.2, boundaryColor: '#f0c040', terrainExaggeration: 2.0, enableLighting: true, timeOfDay: '2026-06-15T09:30:00Z' } },
     { id: 'topo', label: 'Topográfico', color: '#f59e0b', changes: { fillColor: '#f59e0b', fillOpacity: 0.14, boundaryColor: '#dc2626', terrainExaggeration: 3.0, enableLighting: true, timeOfDay: '2026-06-15T14:00:00Z' } },
     { id: 'ndvi', label: 'NDVI', color: '#22c55e', changes: { fillColor: '#22c55e', fillOpacity: 0.16, boundaryColor: '#ffffff', terrainExaggeration: 2.0, enableLighting: true, timeOfDay: '2026-06-15T12:00:00Z' } },
-    { id: 'night', label: 'Nocturno', color: '#818cf8', changes: { fillColor: '#818cf8', fillOpacity: 0.22, boundaryColor: '#38bdf8', terrainExaggeration: 2.5, enableLighting: true, timeOfDay: '2026-06-15T22:30:00Z' } },
+    { id: 'night', label: 'Nocturno', color: '#818cf8', changes: { fillColor: '#818cf8', fillOpacity: 0.2, boundaryColor: '#38bdf8', terrainExaggeration: 2.5, enableLighting: true, timeOfDay: '2026-06-15T22:30:00Z' } },
     { id: 'minimal', label: 'Minimal', color: '#e8e8ec', changes: { fillColor: '#ffffff', fillOpacity: 0.05, boundaryColor: '#1a5e35', terrainExaggeration: 2.0, enableLighting: false, timeOfDay: '2026-06-15T12:00:00Z' } },
-    { id: 'pendientes', label: 'Pendientes', color: '#ef4444', changes: { fillColor: '#ef4444', fillOpacity: 0.22, boundaryColor: '#f97316', terrainExaggeration: 4.0, enableLighting: true, timeOfDay: '2026-06-15T10:00:00Z' } },
+    { id: 'pendientes', label: 'Pendientes', color: '#ef4444', changes: { fillColor: '#ef4444', fillOpacity: 0.2, boundaryColor: '#f97316', terrainExaggeration: 4.0, enableLighting: true, timeOfDay: '2026-06-15T10:00:00Z' } },
   ];
 
   const SUN_TIMES = [

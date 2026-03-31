@@ -76,7 +76,7 @@ const TerrainStudio = dynamic(
 const DEFAULT_VISUAL_STYLE: VisualStyle = {
   preset: 'default',
   fillColor: '#00d4ff',
-  fillOpacity: 0.35,
+  fillOpacity: 0.2,      // DECAL MODE: Low opacity lets PNOA orthophoto show through
   boundaryColor: '#FFD700',
   boundaryWidth: 4.0,
   terrainExaggeration: 1.0,

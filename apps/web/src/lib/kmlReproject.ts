@@ -100,7 +100,8 @@ export function normalizeCoords(
       lat = projLat;
       wasReprojected = true;
       
-      console.log(`[KML Normalize] Reprojected from ${sourceEPSG}: [${x.toFixed(0)}, ${y.toFixed(0)}] → [${lon.toFixed(6)}, ${lat.toFixed(6)}]`);
+      // Log with 10 decimal places to verify precision
+      console.log(`[KML Normalize] Reprojected from ${sourceEPSG}: [${x.toFixed(0)}, ${y.toFixed(0)}] → [${lon.toFixed(10)}, ${lat.toFixed(10)}]`);
     } catch (err) {
       console.error('[KML Normalize] Reprojection failed:', err);
       // Use original values as fallback
@@ -124,7 +125,8 @@ export function normalizeCoords(
       lat = projLat;
       wasReprojected = true;
       
-      console.log(`[KML Normalize] Forced reprojection from ${forcedEPSG}: [${x}, ${y}] → [${lon.toFixed(6)}, ${lat.toFixed(6)}]`);
+      // Log with 10 decimal places to verify precision
+      console.log(`[KML Normalize] Forced reprojection from ${forcedEPSG}: [${x}, ${y}] → [${lon.toFixed(10)}, ${lat.toFixed(10)}]`);
     } catch (err) {
       console.error('[KML Normalize] Forced reprojection failed:', err);
     }

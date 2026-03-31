@@ -25,6 +25,7 @@ function sendTransparent(res: NextApiResponse) {
 /**
  * PNOA WMTS tile proxy: /api/pnoa-tile/[z]/[x]/[y]
  * Proxies tiles from IGN's WMTS (no CORS on IGN).
+ * High-DPI optimization: Uses PNG format at zoom >= 18 for maximum quality.
  * Returns 256x256 transparent PNG on error so Cesium shows base imagery.
  */
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -42,7 +43,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(400).send('Invalid tile coordinates');
   }
 
-  const ignUrl = `https://www.ign.es/wmts/pnoa-ma?service=WMTS&request=GetTile&version=1.0.0&layer=OI.OrthoimageCoverage&style=default&tilematrixset=GoogleMapsCompatible&TileMatrix=${z}&TileRow=${y}&TileCol=${x}&format=image/jpeg`;
+  const zoomLevel = parseInt(z, 10);
+  
+  // HIGH-DPI OPTIMIZATION: Use PNG format at high zoom levels for better quality
+  // PNG preserves fine details better than JPEG (no compression artifacts)
+  const format = zoomLevel >= 18 ? 'image/png' : 'image/jpeg';
+  
+  const ignUrl = `https://www.ign.es/wmts/pnoa-ma?service=WMTS&request=GetTile&version=1.0.0&layer=OI.OrthoimageCoverage&style=default&tilematrixset=GoogleMapsCompatible&TileMatrix=${z}&TileRow=${y}&TileCol=${x}&format=${encodeURIComponent(format)}`;
 
   try {
     const controller = new AbortController();

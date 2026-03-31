@@ -178,6 +178,96 @@ async function loadParcelFromSnapshot(
     console.warn('[loadParcel] ⚠️ Loaded parcel without terrain heights (fallback)');
   }
 
+  // ── Calculate parcel radius for High-DPI PNOA optimization ──
+  const cartesianPositions = coordinates.map(([lon, lat]) =>
+    Cesium.Cartesian3.fromDegrees(lon, lat)
+  );
+  const boundingSphere = Cesium.BoundingSphere.fromPoints(cartesianPositions);
+  const radius = boundingSphere.radius;
+
+  // ── HIGH-DPI PNOA OPTIMIZATION FOR SMALL PARCELS ──
+  if (radius < 30 && viewer.imageryLayers) {
+    const isUltraSmall = radius < 20;
+    console.log(
+      `[StudioViewer] ${isUltraSmall ? 'Ultra-small' : 'Small'} parcel (radius=${radius.toFixed(1)}m) - ${isUltraSmall ? 'forcing High-DPI PNOA (PNG + 1024px tiles)' : 'upgrading PNOA resolution'}...`
+    );
+    
+    try {
+      // Find and remove existing PNOA layer
+      const layers = viewer.imageryLayers;
+      for (let i = layers.length - 1; i >= 0; i--) {
+        const layer = layers.get(i);
+        if (layer.imageryProvider?.url?.includes?.('pnoa-tile') ||
+            layer.imageryProvider?.url?.includes?.('pnoa-wms')) {
+          layers.remove(layer, false);
+          break;
+        }
+      }
+      
+      // HIGH-DPI CONFIGURATION: Use WMS proxy for real high-resolution tiles
+      // WMTS returns fixed 256×256 — setting tileWidth:1024 just upscales and blurs.
+      // WMS supports arbitrary pixel sizes, so 1024×1024 is actual server-rendered resolution.
+      const pnoaHiRes = new Cesium.WebMapServiceImageryProvider({
+        url: '/api/pnoa-wms',
+        layers: 'OI.OrthoimageCoverage',
+        parameters: {
+          FORMAT: 'image/png',
+          TRANSPARENT: false,
+        },
+        tileWidth: isUltraSmall ? 1024 : 512,
+        tileHeight: isUltraSmall ? 1024 : 512,
+        minimumLevel: 15,
+        maximumLevel: 20,
+        credit: 'PNOA © IGN España',
+      });
+      
+      const hiResLayer = layers.addImageryProvider(pnoaHiRes);
+      layers.raiseToTop(hiResLayer);
+      
+      // CRITICAL: Neutral settings for maximum sharpness
+      hiResLayer.brightness = 1.0;
+      hiResLayer.contrast = 1.0;
+      hiResLayer.gamma = 1.0;
+      hiResLayer.saturation = 1.0;
+      hiResLayer.alpha = 1.0;
+      
+      pnoaHiRes.errorEvent.addEventListener(() => {});
+      
+      console.log(
+        `[StudioViewer] ✓ PNOA WMS ${isUltraSmall ? 'High-DPI: PNG + 1024×1024 tiles + level 15-20' : 'upgraded to 512×512 tiles (level 15-20)'}`
+      );
+    } catch (pnoaError) {
+      console.warn('[StudioViewer] PNOA upgrade failed (optional):', pnoaError);
+    }
+    
+    // ── DYNAMIC FRUSTUM & SHADOW MAP ADJUSTMENT ──
+    // Adjust camera frustum for better depth precision on small parcels
+    try {
+      const camera = viewer.camera;
+      const scene = viewer.scene;
+      
+      if (radius < 20) {
+        // Ultra-small: tight frustum to maximize depth precision
+        camera.frustum.near = Math.max(0.5, radius * 0.1);
+        camera.frustum.far = Math.max(500, radius * 50);
+        console.log(`[StudioViewer] Frustum adjusted: near=${camera.frustum.near.toFixed(1)}m, far=${camera.frustum.far.toFixed(0)}m (prevents z-fighting)`);
+      } else if (radius < 100) {
+        camera.frustum.near = Math.max(1, radius * 0.05);
+        camera.frustum.far = Math.max(1000, radius * 100);
+      }
+      
+      // Shadow map optimization if enabled
+      if (scene.shadowMap?.enabled) {
+        const shadowMapSize = radius < 20 ? 4096 : (radius < 100 ? 2048 : 1024);
+        scene.shadowMap.size = shadowMapSize;
+        scene.shadowMap.softShadows = true;
+        console.log(`[StudioViewer] Shadow map: ${shadowMapSize}×${shadowMapSize}`);
+      }
+    } catch (frustumError) {
+      console.warn('[StudioViewer] Frustum adjustment failed (non-critical):', frustumError);
+    }
+  }
+
   // Helper function
   function hexToColor(hex: string, alpha: number = 1.0) {
     const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
@@ -724,11 +814,18 @@ export default function StudioViewer({
           
           const pnoaLayer = viewer.imageryLayers.addImageryProvider(pnoaProv);
           viewer.imageryLayers.raiseToTop(pnoaLayer);
+          
+          // CRITICAL: Neutral settings for maximum sharpness (polygons are transparent decals)
+          pnoaLayer.brightness = 1.0;
+          pnoaLayer.contrast = 1.0;
+          pnoaLayer.gamma = 1.0;
+          pnoaLayer.saturation = 1.0;
+          pnoaLayer.alpha = 1.0;
 
           // Suppress tile errors completely (proxy returns transparent 256x256 on fail)
           pnoaProv.errorEvent.addEventListener(() => {});
           
-          console.log('[StudioViewer] ✓ PNOA imagery loaded (proxy)');
+          console.log('[StudioViewer] ✓ PNOA imagery loaded (proxy, neutral settings)');
         } catch (pnoaError) {
           console.warn('[StudioViewer] PNOA imagery failed:', pnoaError);
         }
