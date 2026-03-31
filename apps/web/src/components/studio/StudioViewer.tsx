@@ -94,7 +94,9 @@ async function loadParcelFromSnapshot(
     if (existingBoundary) viewer.entities.remove(existingBoundary);
     if (existingPlinth) viewer.entities.remove(existingPlinth);
 
-    // 1. Create parcel fill (polygon clamped to terrain)
+    // 1. Create parcel fill — RELATIVE_TO_GROUND with +0.5m offset
+    //    Avoids classification-primitive displacement caused by terrain LOD
+    //    mismatches and verticalExaggeration.
     viewer.entities.add({
       id: 'parcel-fill',
       polygon: {
@@ -102,11 +104,12 @@ async function loadParcelFromSnapshot(
           coordinates.flatMap(([lon, lat]) => [lon, lat])
         ),
         material: fillColor,
-        classificationType: Cesium.ClassificationType.TERRAIN,
+        height: 0.5,
+        heightReference: Cesium.HeightReference.RELATIVE_TO_GROUND,
         outline: false,
       },
     });
-    console.log('[loadParcel] ✓ Created parcel-fill');
+    console.log('[loadParcel] ✓ Created parcel-fill (RELATIVE_TO_GROUND +0.5m)');
 
     // 2. Create parcel boundary line (polyline clamped to terrain)
     viewer.entities.add({
@@ -159,7 +162,9 @@ async function loadParcelFromSnapshot(
           coordinates.flatMap(([lon, lat]) => [lon, lat])
         ),
         material: fillColor,
-        heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+        height: 0.5,
+        heightReference: Cesium.HeightReference.RELATIVE_TO_GROUND,
+        outline: false,
       },
     });
 

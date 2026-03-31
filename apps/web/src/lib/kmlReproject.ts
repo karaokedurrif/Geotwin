@@ -96,12 +96,19 @@ export function normalizeCoords(
     try {
       const transform = proj4(sourceEPSG, 'EPSG:4326');
       const [projLon, projLat] = transform.forward([x, y]);
+
+      // Verify precision: JS doubles give ~15 significant digits.
+      // Reject if proj4 returned NaN/Infinity.
+      if (!Number.isFinite(projLon) || !Number.isFinite(projLat)) {
+        throw new Error(`proj4 returned non-finite: [${projLon}, ${projLat}]`);
+      }
+
       lon = projLon;
       lat = projLat;
       wasReprojected = true;
       
-      // Log with 10 decimal places to verify precision
-      console.log(`[KML Normalize] Reprojected from ${sourceEPSG}: [${x.toFixed(0)}, ${y.toFixed(0)}] → [${lon.toFixed(10)}, ${lat.toFixed(10)}]`);
+      // Log with 12 decimal places to verify precision (≥10 required for mm accuracy)
+      console.log(`[KML Normalize] Reprojected from ${sourceEPSG}: [${x.toFixed(0)}, ${y.toFixed(0)}] → [${lon.toFixed(12)}, ${lat.toFixed(12)}]`);
     } catch (err) {
       console.error('[KML Normalize] Reprojection failed:', err);
       // Use original values as fallback
@@ -121,12 +128,17 @@ export function normalizeCoords(
     try {
       const transform = proj4(forcedEPSG, 'EPSG:4326');
       const [projLon, projLat] = transform.forward([x, y]);
+
+      if (!Number.isFinite(projLon) || !Number.isFinite(projLat)) {
+        throw new Error(`proj4 returned non-finite: [${projLon}, ${projLat}]`);
+      }
+
       lon = projLon;
       lat = projLat;
       wasReprojected = true;
       
-      // Log with 10 decimal places to verify precision
-      console.log(`[KML Normalize] Forced reprojection from ${forcedEPSG}: [${x}, ${y}] → [${lon.toFixed(10)}, ${lat.toFixed(10)}]`);
+      // Log with 12 decimal places to verify precision (≥10 required for mm accuracy)
+      console.log(`[KML Normalize] Forced reprojection from ${forcedEPSG}: [${x}, ${y}] → [${lon.toFixed(12)}, ${lat.toFixed(12)}]`);
     } catch (err) {
       console.error('[KML Normalize] Forced reprojection failed:', err);
     }

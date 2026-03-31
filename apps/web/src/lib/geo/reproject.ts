@@ -211,8 +211,15 @@ export function reprojectToWGS84(
         // Transform [easting, northing] → [lon, lat]
         const [lon, lat] = transform.forward([x, y]);
         
-        // Preserve elevation if present
-        reprojected.push([lon, lat, z || 0]);
+        // Reject non-finite results (NaN, Infinity)
+        if (!Number.isFinite(lon) || !Number.isFinite(lat)) {
+          errors.push(`Coordinate ${i} produced non-finite result: [${lon}, ${lat}]`);
+          reprojected.push(coordinates[i]);
+          continue;
+        }
+
+        // Preserve elevation if present (undefined → undefined, NOT 0)
+        reprojected.push(z !== undefined ? [lon, lat, z] : [lon, lat]);
       } catch (err) {
         errors.push(`Coordinate ${i} failed: [${x}, ${y}] - ${err}`);
         // Use original as fallback

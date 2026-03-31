@@ -354,7 +354,25 @@ def compute_aoi_metadata(feature: dict, source_crs: str | None = None) -> AOIMet
         AOIMetadata con área, perímetro, centroide, bbox, etc.
     """
     geom = shape(feature["geometry"])
+
+    # Validar que la geometría está en EPSG:4326 (lon/lat)
+    bounds_check = geom.bounds
+    if not (-180 <= bounds_check[0] <= 180 and -90 <= bounds_check[1] <= 90):
+        import logging
+        logging.getLogger(__name__).warning(
+            "Geometría posiblemente NO en EPSG:4326: bounds=%s", bounds_check,
+        )
+
     centroid = geom.centroid
+
+    # Verificar que el centroide está dentro del bbox
+    bounds = geom.bounds  # (minx, miny, maxx, maxy)
+    if not (bounds[0] <= centroid.x <= bounds[2] and bounds[1] <= centroid.y <= bounds[3]):
+        import logging
+        logging.getLogger(__name__).warning(
+            "Centroide (%.10f, %.10f) fuera del bbox %s — geometría irregular",
+            centroid.x, centroid.y, bounds,
+        )
 
     # Proyectar a UTM para mediciones precisas en metros
     # Calcular huso UTM desde la longitud del centroide
