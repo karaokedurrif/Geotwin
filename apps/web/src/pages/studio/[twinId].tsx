@@ -144,6 +144,26 @@ export default function TwinStudioPage() {
           );
           viewerRef.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
         }
+
+        // Load ortho overlay from engine cache (high-res single tile)
+        fetch(`${apiBase}/api/tiles/${encodeURIComponent(twinId as string)}/pipeline_result.json`)
+          .then(r => r.ok ? r.json() : null)
+          .then(meta => {
+            if (!meta?.ortho?.bbox || !meta?.ortho?.texture) return;
+            if (!viewerRef || viewerRef.isDestroyed?.()) return;
+            const orthoUrl = `${apiBase}/api/tiles/${encodeURIComponent(twinId as string)}/${meta.ortho.texture}`;
+            const ob = meta.ortho.bbox;
+            return Cesium.SingleTileImageryProvider.fromUrl(orthoUrl, {
+              rectangle: Cesium.Rectangle.fromDegrees(ob[0], ob[1], ob[2], ob[3]),
+            }).then((provider: any) => {
+              if (!viewerRef || viewerRef.isDestroyed?.()) return;
+              const layer = viewerRef.imageryLayers.addImageryProvider(provider);
+              viewerRef.imageryLayers.raiseToTop(layer);
+              layer.alpha = 1.0;
+              console.log(`[Studio] ✓ Ortho overlay loaded (${meta.ortho.width}×${meta.ortho.height}px)`);
+            });
+          })
+          .catch(() => console.warn('[Studio] Ortho overlay not available'));
       })
       .catch((err: any) => console.warn('[Studio] Failed to load tileset after processing:', err));
   }, [viewerRef, twinId, snapshot]);

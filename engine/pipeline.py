@@ -389,6 +389,14 @@ def process_twin(
         "tileset_path": result.tileset_path,
         "glb_path": result.glb_path,
         "textured": result.ortho is not None,
+        "ortho": {
+            "bbox": result.ortho["bbox"],
+            "width": result.ortho["width"],
+            "height": result.ortho["height"],
+            "texture": str(Path(result.ortho["path"]).with_suffix(
+                ".png" if aoi_meta.area_ha < 1.0 else ".jpg"
+            ).name),
+        } if result.ortho else None,
     }, indent=2))
 
     _progress("Completado", 100)

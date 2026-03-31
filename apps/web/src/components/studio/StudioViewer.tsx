@@ -185,59 +185,49 @@ async function loadParcelFromSnapshot(
   const boundingSphere = Cesium.BoundingSphere.fromPoints(cartesianPositions);
   const radius = boundingSphere.radius;
 
-  // ── HIGH-DPI PNOA OPTIMIZATION FOR SMALL PARCELS ──
-  if (radius < 30 && viewer.imageryLayers) {
-    const isUltraSmall = radius < 20;
-    console.log(
-      `[StudioViewer] ${isUltraSmall ? 'Ultra-small' : 'Small'} parcel (radius=${radius.toFixed(1)}m) - ${isUltraSmall ? 'forcing High-DPI PNOA (PNG + 1024px tiles)' : 'upgrading PNOA resolution'}...`
-    );
+  // ── HIGH-RES ORTHO OVERLAY FROM ENGINE CACHE (HYBRID SSD) ──
+  // Load the pre-downloaded ortho PNG from the engine pipeline instead of WMS.
+  // The ortho is cached on SSD and served via /api/tiles/{twinId}/
+  if (radius < 100 && viewer.imageryLayers) {
+    const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3001';
+    const twinId = snapshot.twinId;
     
     try {
-      // Find and remove existing PNOA layer
-      const layers = viewer.imageryLayers;
-      for (let i = layers.length - 1; i >= 0; i--) {
-        const layer = layers.get(i);
-        if (layer.imageryProvider?.url?.includes?.('pnoa-tile') ||
-            layer.imageryProvider?.url?.includes?.('pnoa-wms')) {
-          layers.remove(layer, false);
-          break;
+      const metaRes = await fetch(`${apiBase}/api/tiles/${encodeURIComponent(twinId)}/pipeline_result.json`);
+      if (metaRes.ok) {
+        const meta = await metaRes.json();
+        if (meta.ortho && meta.ortho.bbox && meta.ortho.texture) {
+          const orthoUrl = `${apiBase}/api/tiles/${encodeURIComponent(twinId)}/${meta.ortho.texture}`;
+          const orthoBbox = meta.ortho.bbox;
+          
+          const orthoHead = await fetch(orthoUrl, { method: 'HEAD' });
+          if (orthoHead.ok) {
+            const orthoProvider = await Cesium.SingleTileImageryProvider.fromUrl(orthoUrl, {
+              rectangle: Cesium.Rectangle.fromDegrees(
+                orthoBbox[0], orthoBbox[1], orthoBbox[2], orthoBbox[3]
+              ),
+            });
+            
+            const orthoLayer = viewer.imageryLayers.addImageryProvider(orthoProvider);
+            viewer.imageryLayers.raiseToTop(orthoLayer);
+            orthoLayer.brightness = 1.0;
+            orthoLayer.contrast = 1.0;
+            orthoLayer.gamma = 1.0;
+            orthoLayer.saturation = 1.0;
+            orthoLayer.alpha = 1.0;
+            
+            console.log(`[StudioViewer] ✓ Ortho overlay loaded (${meta.ortho.width}×${meta.ortho.height}px)`);
+          } else {
+            console.warn('[StudioViewer] Ortho file missing — using base WMTS');
+          }
+        } else {
+          console.log('[StudioViewer] No ortho in pipeline result — using base WMTS');
         }
+      } else {
+        console.log('[StudioViewer] Pipeline not yet run — using base WMTS imagery');
       }
-      
-      // HIGH-DPI CONFIGURATION: Use WMS proxy for real high-resolution tiles
-      // Only at zoom 18+ (close-up) — keeps fast WMTS base for wider views.
-      // WMS renders server-side at 512×512 = 4× more pixels than WMTS 256×256.
-      const pnoaHiRes = new Cesium.WebMapServiceImageryProvider({
-        url: '/api/pnoa-wms',
-        layers: 'OI.OrthoimageCoverage',
-        parameters: {
-          FORMAT: 'image/png',
-          TRANSPARENT: false,
-        },
-        tileWidth: 512,
-        tileHeight: 512,
-        minimumLevel: 18,
-        maximumLevel: 20,
-        credit: 'PNOA © IGN España',
-      });
-      
-      const hiResLayer = layers.addImageryProvider(pnoaHiRes);
-      layers.raiseToTop(hiResLayer);
-      
-      // CRITICAL: Neutral settings for maximum sharpness
-      hiResLayer.brightness = 1.0;
-      hiResLayer.contrast = 1.0;
-      hiResLayer.gamma = 1.0;
-      hiResLayer.saturation = 1.0;
-      hiResLayer.alpha = 1.0;
-      
-      pnoaHiRes.errorEvent.addEventListener(() => {});
-      
-      console.log(
-        `[StudioViewer] ✓ PNOA WMS ${isUltraSmall ? 'High-DPI: PNG + 1024×1024 tiles + level 15-20' : 'upgraded to 512×512 tiles (level 15-20)'}`
-      );
-    } catch (pnoaError) {
-      console.warn('[StudioViewer] PNOA upgrade failed (optional):', pnoaError);
+    } catch (orthoError) {
+      console.warn('[StudioViewer] Ortho overlay failed (optional):', orthoError);
     }
     
     // ── DYNAMIC FRUSTUM & SHADOW MAP ADJUSTMENT ──
