@@ -205,8 +205,8 @@ async function loadParcelFromSnapshot(
       }
       
       // HIGH-DPI CONFIGURATION: Use WMS proxy for real high-resolution tiles
-      // WMTS returns fixed 256×256 — setting tileWidth:1024 just upscales and blurs.
-      // WMS supports arbitrary pixel sizes, so 1024×1024 is actual server-rendered resolution.
+      // Only at zoom 18+ (close-up) — keeps fast WMTS base for wider views.
+      // WMS renders server-side at 512×512 = 4× more pixels than WMTS 256×256.
       const pnoaHiRes = new Cesium.WebMapServiceImageryProvider({
         url: '/api/pnoa-wms',
         layers: 'OI.OrthoimageCoverage',
@@ -214,9 +214,9 @@ async function loadParcelFromSnapshot(
           FORMAT: 'image/png',
           TRANSPARENT: false,
         },
-        tileWidth: isUltraSmall ? 1024 : 512,
-        tileHeight: isUltraSmall ? 1024 : 512,
-        minimumLevel: 15,
+        tileWidth: 512,
+        tileHeight: 512,
+        minimumLevel: 18,
         maximumLevel: 20,
         credit: 'PNOA © IGN España',
       });
