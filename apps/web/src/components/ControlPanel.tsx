@@ -180,27 +180,27 @@ export default function ControlPanel({
         if (job.status === 'completed' && job.result) {
           // The engine has generated everything server-side.
           // Construct a minimal TwinRecipe with the twin_id.
-          // The viewer will fetch geometry from the tiles API.
+          // The viewer will fetch full geometry from the tiles API.
           const recipe = {
             twinId: twin_id,
-            preset: 'dehesa' as const,
+            preset: 'dehesa',
             createdAt: new Date().toISOString(),
-            centroid: [0, 0] as [number, number],
-            bbox: [0, 0, 0, 0] as [number, number, number, number],
+            centroid: [0, 0],
+            bbox: [0, 0, 0, 0],
             area_ha: 0,
-            camera: { headingDeg: 315, pitchDeg: -35, range_m: 1500 },
-            presetConfig: { fillColor: '#00e5ff', fillOpacity: 0.3, boundaryColor: '#ffd600', boundaryWidth: 3 },
+            camera: { longitude: 0, latitude: 0, height: 1500, heading: 315, pitch: -35, roll: 0 },
+            presetConfig: { name: 'dehesa', displayName: 'Dehesa', description: '', terrain: { verticalExaggeration: 1, lightingIntensity: 1 }, atmosphere: { brightness: 1, saturation: 1, hueShift: 0 }, groundTint: { r: 0, g: 0, b: 0, a: 1 } },
             layers: [],
             geometryPath: `tiles/${twin_id}/geometry.geojson`,
-          } as TwinRecipe;
-          // Try to load geometry from the engine output to get real centroid/bbox
+          } as unknown as TwinRecipe;
+          // Try to load real centroid/bbox from engine pipeline result
           try {
             const geoResp = await fetch(`${API_BASE}/api/tiles/${twin_id}/pipeline_result.json`);
             if (geoResp.ok) {
               const result = await geoResp.json();
-              if (result.centroid) recipe.centroid = result.centroid;
-              if (result.bbox) recipe.bbox = result.bbox;
-              if (result.area_ha) recipe.area_ha = result.area_ha;
+              if (result.centroid) (recipe as any).centroid = result.centroid;
+              if (result.bbox) (recipe as any).bbox = result.bbox;
+              if (result.area_ha) (recipe as any).area_ha = result.area_ha;
             }
           } catch { /* ignore */ }
           onRecipeLoaded(recipe);
