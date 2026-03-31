@@ -414,7 +414,9 @@ def select_resolution(area_ha: float) -> dict:
     Returns:
         dict con dem_resolution_m, ortho_resolution_cm, max_triangles.
     """
-    if area_ha < 100:
+    if area_ha < 5:
+        return {"dem_resolution_m": 2, "ortho_resolution_cm": 5, "max_triangles": 200_000}
+    elif area_ha < 100:
         return {"dem_resolution_m": 5, "ortho_resolution_cm": 5, "max_triangles": 200_000}
     elif area_ha < 500:
         return {"dem_resolution_m": 5, "ortho_resolution_cm": 10, "max_triangles": 500_000}

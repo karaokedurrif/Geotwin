@@ -88,6 +88,8 @@ export default function ControlPanel({
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [isLoadingSample, setIsLoadingSample] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [refcatInput, setRefcatInput] = useState('');
+  const [isRefcatLoading, setIsRefcatLoading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Debug: log export state changes
@@ -147,6 +149,63 @@ export default function ControlPanel({
     fileInputRef.current?.click();
   };
 
+  // Handle refcat submission
+  const handleRefcatSubmit = async () => {
+    const trimmed = refcatInput.trim().toUpperCase();
+    if (!/^[A-Z0-9]{14}([A-Z0-9]{6})?$/.test(trimmed)) {
+      setUploadError('Ref. catastral inválida (14 o 20 caracteres alfanuméricos)');
+      return;
+    }
+    setIsRefcatLoading(true);
+    setUploadError(null);
+    try {
+      const API_BASE = process.env.NEXT_PUBLIC_API_URL || '';
+      const resp = await fetch(`${API_BASE}/api/twin/from-refcat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refcat: trimmed }),
+      });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({ error: resp.statusText }));
+        throw new Error(err.error || `Error ${resp.status}`);
+      }
+      const { job_id, twin_id } = await resp.json() as { job_id: string; twin_id: string };
+      // Poll job until complete
+      let attempts = 0;
+      while (attempts < 120) {
+        await new Promise(r => setTimeout(r, 3000));
+        const jobResp = await fetch(`${API_BASE}/api/twin/from-refcat/${job_id}`);
+        if (!jobResp.ok) break;
+        const job = await jobResp.json() as { status: string; result?: any; error?: string };
+        if (job.status === 'completed' && job.result) {
+          // Load the twin (same UX as KML upload completion)
+          const recipe: TwinRecipe = {
+            twinId: twin_id,
+            geometry: { type: 'Feature', geometry: { type: 'Polygon', coordinates: [] }, properties: {} },
+            layers: [],
+            preset: 'dehesa',
+          };
+          // Try to load geometry from the engine output
+          try {
+            const geoResp = await fetch(`${API_BASE}/api/tiles/${twin_id}/geometry.geojson`);
+            if (geoResp.ok) recipe.geometry = await geoResp.json();
+          } catch { /* ignore */ }
+          onRecipeLoaded(recipe);
+          return;
+        }
+        if (job.status === 'failed') {
+          throw new Error(job.error || 'Pipeline failed');
+        }
+        attempts++;
+      }
+      throw new Error('Timeout: pipeline tardó demasiado');
+    } catch (error: any) {
+      setUploadError(error.message || 'Error al procesar referencia catastral');
+    } finally {
+      setIsRefcatLoading(false);
+    }
+  };
+
   return (
     <aside className={styles.panel}>
       {/* Header */}
@@ -175,6 +234,37 @@ export default function ControlPanel({
           onChange={handleFileSelect}
           style={{ display: 'none' }}
         />
+
+        {/* Referencia Catastral Input */}
+        <div style={{ display: 'flex', gap: '4px', marginTop: '8px' }}>
+          <input
+            type="text"
+            value={refcatInput}
+            onChange={(e) => setRefcatInput(e.target.value)}
+            placeholder="Ref. Catastral"
+            maxLength={20}
+            disabled={isRefcatLoading}
+            style={{
+              flex: 1,
+              padding: '6px 8px',
+              background: 'rgba(255,255,255,0.06)',
+              border: '1px solid rgba(255,255,255,0.15)',
+              borderRadius: '6px',
+              color: '#e0e0e0',
+              fontSize: '12px',
+              fontFamily: 'monospace',
+            }}
+            onKeyDown={(e) => e.key === 'Enter' && handleRefcatSubmit()}
+          />
+          <button
+            className={styles.secondaryButton}
+            onClick={handleRefcatSubmit}
+            disabled={isRefcatLoading || !refcatInput.trim()}
+            style={{ padding: '6px 10px', minWidth: 'auto', marginTop: 0 }}
+          >
+            {isRefcatLoading ? '...' : 'Crear'}
+          </button>
+        </div>
 
         {/* Sample Data Button */}
         <button

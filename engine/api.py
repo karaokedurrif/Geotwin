@@ -477,3 +477,149 @@ def _run_drone_pipeline(job_id: str, req: DroneProcessRequest) -> None:
         job.status = JobStatus.FAILED
         job.error = str(exc)
         logger.error("Drone job %s failed: %s", job_id, exc)
+
+
+# ─── AutoTwin from Referencia Catastral ─────────────────────────────────────
+
+class AutoTwinRequest(BaseModel):
+    refcat: str = Field(..., min_length=14, max_length=20, pattern=r"^[A-Za-z0-9]+$")
+
+
+class AutoTwinResponse(BaseModel):
+    job_id: str
+    twin_id: str
+    refcat: str
+    status: JobStatus
+
+
+def _run_autotwin(job_id: str, refcat: str, twin_id: str) -> None:
+    """Execute the full autotwin pipeline: refcat → cadastre → mesh → 3D Tiles."""
+    import asyncio
+    import json as _json
+
+    job = _jobs[job_id]
+    job.status = JobStatus.RUNNING
+
+    def on_progress(step: str, pct: float) -> None:
+        job.current_step = step
+        job.progress = pct
+
+    try:
+        # ── 1. Fetch parcel geometry from Catastro WFS ──
+        on_progress("Descargando parcela catastral", 5)
+        from .cadastre.refcat import fetch_parcel_by_refcat, fetch_buildings_by_refcat
+
+        loop = asyncio.new_event_loop()
+        parcel_feature = loop.run_until_complete(fetch_parcel_by_refcat(refcat))
+        on_progress("Descargando edificios", 10)
+        buildings = loop.run_until_complete(fetch_buildings_by_refcat(refcat))
+        loop.close()
+
+        # ── 2. Save geometry as GeoJSON for the pipeline ──
+        output_dir = settings.tiles_dir / twin_id
+        output_dir.mkdir(parents=True, exist_ok=True)
+        geojson_path = output_dir / "geometry.geojson"
+        geojson_path.write_text(_json.dumps(parcel_feature, indent=2))
+
+        # ── 3. Run the standard terrain pipeline ──
+        on_progress("Procesando terreno", 15)
+        result = process_twin(
+            input_files=[geojson_path],
+            twin_id=twin_id,
+            output_dir=output_dir,
+            on_progress=on_progress,
+        )
+
+        # ── 4. Extrude buildings (if found) ──
+        building_info = []
+        if buildings:
+            on_progress("Extruyendo edificios 3D", 92)
+            from .buildings.extruder import extrude_building
+            import numpy as _np
+
+            for i, bldg_feature in enumerate(buildings):
+                try:
+                    bldg_mesh = extrude_building(
+                        footprint=bldg_feature["geometry"],
+                        num_floors=bldg_feature["properties"].get(
+                            "numberOfFloorsAboveGround", 1
+                        ),
+                        ground_elevation=0.0,
+                        use=bldg_feature["properties"].get("currentUse", "residential"),
+                        metadata={
+                            "refcat": refcat,
+                            "index": i,
+                            "use": bldg_feature["properties"].get("currentUse"),
+                        },
+                    )
+                    bldg_glb_path = output_dir / f"building_{i}.glb"
+                    bldg_mesh.export(str(bldg_glb_path), file_type="glb")
+                    building_info.append({
+                        "index": i,
+                        "use": bldg_feature["properties"].get("currentUse"),
+                        "floors": bldg_feature["properties"].get(
+                            "numberOfFloorsAboveGround", 1
+                        ),
+                        "area_m2": bldg_feature["properties"].get("area_m2"),
+                        "glb_path": str(bldg_glb_path),
+                    })
+                except Exception as bldg_err:
+                    logger.warning("Building %d extrusion failed: %s", i, bldg_err)
+
+        # ── 5. Finalize ──
+        job.status = JobStatus.COMPLETED
+        job.progress = 100.0
+        job.current_step = "Completado"
+        job.result = {
+            "twin_id": result.twin_id,
+            "refcat": refcat,
+            "area_ha": result.aoi_metadata.area_ha,
+            "centroid": [
+                result.aoi_metadata.centroid_lon,
+                result.aoi_metadata.centroid_lat,
+            ],
+            "vertex_count": result.vertex_count,
+            "face_count": result.face_count,
+            "lod_count": result.lod_count,
+            "processing_time_s": round(result.processing_time_s, 2),
+            "tileset_path": result.tileset_path,
+            "glb_path": result.glb_path,
+            "buildings": building_info,
+            "ndvi": result.ndvi,
+            "ortho": result.ortho,
+        }
+        logger.info(
+            "AutoTwin %s completed: refcat=%s, %.1f ha, %d buildings",
+            job_id, refcat, result.aoi_metadata.area_ha, len(building_info),
+        )
+
+    except Exception as exc:
+        job.status = JobStatus.FAILED
+        job.error = str(exc)
+        logger.error("AutoTwin %s failed: %s", job_id, exc)
+
+
+@app.post("/autotwin", response_model=AutoTwinResponse, status_code=202)
+def create_autotwin(req: AutoTwinRequest):
+    """Pipeline completo: referencia catastral → gemelo digital 3D.
+
+    Async job (202 + polling via GET /jobs/{job_id}).
+    """
+    from .cadastre.refcat import validate_refcat
+
+    refcat = validate_refcat(req.refcat)
+    job_id = uuid.uuid4().hex[:12]
+    twin_id = f"rc_{refcat[:14]}"
+
+    job = JobState(job_id=job_id, twin_id=twin_id)
+    _jobs[job_id] = job
+
+    thread = Thread(target=_run_autotwin, args=(job_id, refcat, twin_id), daemon=True)
+    thread.start()
+
+    return AutoTwinResponse(
+        job_id=job_id,
+        twin_id=twin_id,
+        refcat=refcat,
+        status=JobStatus.QUEUED,
+    )

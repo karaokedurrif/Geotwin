@@ -92,14 +92,19 @@ class TestAOIMetadata:
 
 
 class TestSelectResolution:
+    def test_tiny_farm(self):
+        """Parcelas <5ha usan MDT02 (2m resolution)."""
+        res = select_resolution(2)
+        assert res["dem_resolution_m"] == 2
+
     def test_small_farm(self):
         res = select_resolution(50)
-        assert res["dem_resolution_m"] == 2
+        assert res["dem_resolution_m"] == 5
 
     def test_medium_farm(self):
         res = select_resolution(300)
         assert res["dem_resolution_m"] == 5
 
     def test_large_farm(self):
-        res = select_resolution(3000)
+        res = select_resolution(6000)
         assert res["dem_resolution_m"] == 10
