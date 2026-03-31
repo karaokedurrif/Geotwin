@@ -623,3 +623,59 @@ def create_autotwin(req: AutoTwinRequest):
         refcat=refcat,
         status=JobStatus.QUEUED,
     )
+
+
+# ─── Regenerate stale twins ────────────────────────────────────────────────
+
+@app.post("/regenerate/{twin_id}", response_model=ProcessResponse, status_code=202)
+def regenerate_twin(twin_id: str):
+    """Re-process an existing twin using the stored GeoJSON.
+
+    Useful when engine code has been updated and cached tiles are stale
+    (e.g., missing TEXCOORD_0 in LOD GLBs).
+    """
+    import re
+    if not re.match(r"^[a-zA-Z0-9_-]{1,64}$", twin_id):
+        raise HTTPException(status_code=400, detail="Invalid twin ID")
+
+    tiles_dir = settings.tiles_dir / twin_id
+    geojson_path = tiles_dir / "aoi.geojson"
+    if not geojson_path.exists():
+        raise HTTPException(status_code=404, detail=f"No geometry found for {twin_id}")
+
+    job_id = uuid.uuid4().hex[:12]
+    job = JobState(job_id=job_id, twin_id=twin_id)
+    _jobs[job_id] = job
+
+    def _run_regen(jid: str, tid: str, gjpath: Path) -> None:
+        j = _jobs[jid]
+        j.status = JobStatus.RUNNING
+        try:
+            result = process_twin(
+                input_files=[gjpath],
+                twin_id=tid,
+                coverage="mdt05",
+                on_progress=lambda step, pct: setattr(j, 'current_step', step) or setattr(j, 'progress', pct),
+            )
+            j.status = JobStatus.COMPLETED
+            j.progress = 100.0
+            j.current_step = "Regenerado"
+            j.result = {
+                "twin_id": result.twin_id,
+                "area_ha": result.aoi_metadata.area_ha,
+                "centroid": [result.aoi_metadata.centroid_lon, result.aoi_metadata.centroid_lat],
+                "vertex_count": result.vertex_count,
+                "face_count": result.face_count,
+                "lod_count": result.lod_count,
+                "processing_time_s": round(result.processing_time_s, 2),
+            }
+            logger.info("Regenerated twin %s in %.1fs", tid, result.processing_time_s)
+        except Exception as exc:
+            j.status = JobStatus.FAILED
+            j.error = str(exc)
+            logger.error("Regeneration of %s failed: %s", tid, exc)
+
+    thread = Thread(target=_run_regen, args=(job_id, twin_id, geojson_path), daemon=True)
+    thread.start()
+
+    return ProcessResponse(job_id=job_id, twin_id=twin_id, status=JobStatus.QUEUED)

@@ -126,7 +126,15 @@ def _fix_texcoord_accessor(glb_bytes: bytes) -> bytes:
 
         changed = False
 
-        # Fix 1: Ensure TEXCOORD_0 accessor is VEC2
+        # Extract binary chunk for potential UV injection
+        bin_chunk_offset = 20 + json_len
+        has_bin_chunk = len(glb_bytes) > bin_chunk_offset + 8
+        bin_data = bytearray()
+        if has_bin_chunk:
+            bin_chunk_len = struct.unpack_from('<I', glb_bytes, bin_chunk_offset)[0]
+            bin_data = bytearray(glb_bytes[bin_chunk_offset + 8:bin_chunk_offset + 8 + bin_chunk_len])
+
+        # Fix 1: Ensure TEXCOORD_0 accessor is VEC2, or INJECT it if missing
         for mesh_obj in gltf.get('meshes', []):
             for prim in mesh_obj.get('primitives', []):
                 tc_idx = prim.get('attributes', {}).get('TEXCOORD_0')
@@ -142,6 +150,60 @@ def _fix_texcoord_accessor(glb_bytes: bytes) -> bytes:
                             acc['count'] = acc['count'] // 2
                         acc['type'] = 'VEC2'
                         changed = True
+                elif tc_idx is None:
+                    # TEXCOORD_0 is completely missing — inject synthetic UVs
+                    # This prevents Cesium's shader crash when the material
+                    # has a baseColorTexture but the primitive has no UVs
+                    pos_idx = prim.get('attributes', {}).get('POSITION')
+                    if pos_idx is not None and pos_idx < len(gltf.get('accessors', [])):
+                        pos_acc = gltf['accessors'][pos_idx]
+                        vert_count = pos_acc['count']
+
+                        # Generate flat UVs: all (0.5, 0.5) — center of texture
+                        uv_bytes = struct.pack('<' + 'ff' * vert_count,
+                                               *([0.5, 0.5] * vert_count))
+
+                        # Append UV data at end of binary buffer
+                        uv_offset = len(bin_data)
+                        # Align to 4 bytes
+                        pad = (4 - uv_offset % 4) % 4
+                        bin_data += b'\x00' * pad
+                        uv_offset = len(bin_data)
+                        bin_data += uv_bytes
+
+                        # Add bufferView for UVs
+                        bv_idx = len(gltf.setdefault('bufferViews', []))
+                        gltf['bufferViews'].append({
+                            'buffer': 0,
+                            'byteOffset': uv_offset,
+                            'byteLength': len(uv_bytes),
+                            'target': 34962,  # ARRAY_BUFFER
+                        })
+
+                        # Add accessor for TEXCOORD_0
+                        acc_idx = len(gltf.setdefault('accessors', []))
+                        gltf['accessors'].append({
+                            'bufferView': bv_idx,
+                            'byteOffset': 0,
+                            'componentType': 5126,  # FLOAT
+                            'count': vert_count,
+                            'type': 'VEC2',
+                            'min': [0.5, 0.5],
+                            'max': [0.5, 0.5],
+                        })
+
+                        # Set TEXCOORD_0 on the primitive
+                        prim['attributes']['TEXCOORD_0'] = acc_idx
+
+                        # Update buffer[0] total length
+                        if gltf.get('buffers'):
+                            gltf['buffers'][0]['byteLength'] = len(bin_data)
+
+                        changed = True
+                        logger.warning(
+                            "GLB: injected synthetic TEXCOORD_0 (%d verts) — "
+                            "stale tile without UVs", vert_count,
+                        )
 
         # Fix 2: Ensure every texture references a valid sampler
         # Missing samplers cause Cesium's shader generator to skip v_texCoord_0
@@ -170,16 +232,26 @@ def _fix_texcoord_accessor(glb_bytes: bytes) -> bytes:
         pad = (4 - len(new_json) % 4) % 4
         new_json += b' ' * pad
 
-        # Extract binary chunk (everything after the original JSON chunk)
-        bin_rest = glb_bytes[20 + json_len:]
+        # Rebuild binary chunk: use modified bin_data if we injected UVs,
+        # otherwise use the original binary chunk from the GLB
+        if not bin_data and has_bin_chunk:
+            # No UV injection → use original binary chunk bytes
+            bin_chunk_bytes = glb_bytes[bin_chunk_offset:]
+        elif bin_data:
+            # UV injection → rebuild binary chunk with new data
+            bin_pad = (4 - len(bin_data) % 4) % 4
+            padded_bin = bytes(bin_data) + b'\x00' * bin_pad
+            bin_chunk_bytes = struct.pack('<II', len(padded_bin), 0x004E4942) + padded_bin
+        else:
+            bin_chunk_bytes = b''
 
-        # Rebuild GLB: header(12) + JSON chunk header(8) + JSON + BIN rest
+        # Rebuild GLB: header(12) + JSON chunk header(8) + JSON + BIN chunk
         buf = io.BytesIO()
-        total_len = 12 + 8 + len(new_json) + len(bin_rest)
+        total_len = 12 + 8 + len(new_json) + len(bin_chunk_bytes)
         buf.write(struct.pack('<4sII', b'glTF', 2, total_len))
         buf.write(struct.pack('<II', len(new_json), 0x4E4F534A))  # JSON chunk
         buf.write(new_json)
-        buf.write(bin_rest)
+        buf.write(bin_chunk_bytes)
         result = bytearray(buf.getvalue())
         # Patch total length in header (bytes 8-11)
         struct.pack_into('<I', result, 8, len(result))

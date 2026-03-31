@@ -47,3 +47,4 @@ data/dem/
 *.egg-info/
 __pycache__/
 .venv/
+.env.vercel

@@ -708,6 +708,8 @@ export default function StudioViewer({
   const [cesiumLoaded, setCesiumLoaded] = useState(false);
   const [showControlsHint, setShowControlsHint] = useState(false);
   const [helicopterMode, setHelicopterMode] = useState(false);
+  const [shaderCrash, setShaderCrash] = useState(false);
+  const [regenerating, setRegenerating] = useState(false);
   const helicopterIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   // Wait for Cesium to load
@@ -811,6 +813,7 @@ export default function StudioViewer({
           console.error('[StudioViewer] 🔴 Render error intercepted:', msg);
           if (msg.includes('v_texCoord_0') || msg.includes('Fragment shader failed')) {
             console.warn('[StudioViewer] ⚠️ Shader crash detected — removing 3D Tileset to restore rendering');
+            setShaderCrash(true);
             // Remove all 3D Tilesets from primitives (they caused the crash)
             const prims = scene.primitives;
             const toRemove: any[] = [];
@@ -1450,6 +1453,35 @@ export default function StudioViewer({
     );
   }
 
+  const handleRegenerate = async () => {
+    if (!twinId || regenerating) return;
+    setRegenerating(true);
+    try {
+      const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || '';
+      const res = await fetch(`${apiBase}/api/twin/regenerate/${twinId}`, { method: 'POST' });
+      if (!res.ok) throw new Error(`Regenerate failed: ${res.status}`);
+      const data = await res.json();
+      const jobId = data.job_id;
+      // Poll for completion
+      for (let i = 0; i < 120; i++) {
+        await new Promise(r => setTimeout(r, 3000));
+        const jr = await fetch(`${apiBase}/api/twin/job/${jobId}`);
+        const j = await jr.json();
+        if (j.status === 'completed') {
+          setShaderCrash(false);
+          setRegenerating(false);
+          // Reload the page to pick up the new tiles
+          window.location.reload();
+          return;
+        }
+        if (j.status === 'failed') throw new Error(j.error || 'Regeneration failed');
+      }
+    } catch (err) {
+      console.error('[StudioViewer] Regeneration error:', err);
+    }
+    setRegenerating(false);
+  };
+
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%' }}>
       <div
@@ -1462,6 +1494,29 @@ export default function StudioViewer({
           left: 0,
         }}
       />
+
+      {/* Shader crash banner */}
+      {shaderCrash && (
+        <div style={{
+          position: 'absolute', top: 12, left: '50%', transform: 'translateX(-50%)',
+          background: 'rgba(220,50,50,0.95)', color: '#fff', padding: '10px 20px',
+          borderRadius: 8, zIndex: 100, fontSize: 13, display: 'flex',
+          alignItems: 'center', gap: 12, boxShadow: '0 4px 16px rgba(0,0,0,0.3)',
+        }}>
+          <span>⚠️ Mallado 3D con textura dañada (tiles obsoletos)</span>
+          <button
+            onClick={handleRegenerate}
+            disabled={regenerating}
+            style={{
+              background: '#fff', color: '#c00', border: 'none', borderRadius: 6,
+              padding: '6px 14px', cursor: regenerating ? 'wait' : 'pointer',
+              fontWeight: 600, fontSize: 12,
+            }}
+          >
+            {regenerating ? 'Regenerando...' : 'Regenerar Mallado'}
+          </button>
+        </div>
+      )}
 
       {/* Floating control buttons */}
       <div
