@@ -178,17 +178,30 @@ export default function ControlPanel({
         if (!jobResp.ok) break;
         const job = await jobResp.json() as { status: string; result?: any; error?: string };
         if (job.status === 'completed' && job.result) {
-          // Load the twin (same UX as KML upload completion)
-          const recipe: TwinRecipe = {
+          // The engine has generated everything server-side.
+          // Construct a minimal TwinRecipe with the twin_id.
+          // The viewer will fetch geometry from the tiles API.
+          const recipe = {
             twinId: twin_id,
-            geometry: { type: 'Feature', geometry: { type: 'Polygon', coordinates: [] }, properties: {} },
+            preset: 'dehesa' as const,
+            createdAt: new Date().toISOString(),
+            centroid: [0, 0] as [number, number],
+            bbox: [0, 0, 0, 0] as [number, number, number, number],
+            area_ha: 0,
+            camera: { headingDeg: 315, pitchDeg: -35, range_m: 1500 },
+            presetConfig: { fillColor: '#00e5ff', fillOpacity: 0.3, boundaryColor: '#ffd600', boundaryWidth: 3 },
             layers: [],
-            preset: 'dehesa',
-          };
-          // Try to load geometry from the engine output
+            geometryPath: `tiles/${twin_id}/geometry.geojson`,
+          } as TwinRecipe;
+          // Try to load geometry from the engine output to get real centroid/bbox
           try {
-            const geoResp = await fetch(`${API_BASE}/api/tiles/${twin_id}/geometry.geojson`);
-            if (geoResp.ok) recipe.geometry = await geoResp.json();
+            const geoResp = await fetch(`${API_BASE}/api/tiles/${twin_id}/pipeline_result.json`);
+            if (geoResp.ok) {
+              const result = await geoResp.json();
+              if (result.centroid) recipe.centroid = result.centroid;
+              if (result.bbox) recipe.bbox = result.bbox;
+              if (result.area_ha) recipe.area_ha = result.area_ha;
+            }
           } catch { /* ignore */ }
           onRecipeLoaded(recipe);
           return;
