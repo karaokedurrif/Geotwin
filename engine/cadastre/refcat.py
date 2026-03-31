@@ -81,14 +81,27 @@ def _parse_gml_polygon(gml_element: ET.Element) -> dict | None:
 
 
 def _detect_srs(root: ET.Element) -> str | None:
-    """Detect the SRS from a GML response."""
+    """Detect the SRS from a GML response.
+
+    Handles multiple formats:
+    - URN: urn:ogc:def:crs:EPSG::25830
+    - URL: http://www.opengis.net/def/crs/EPSG/0/25830
+    - Short: EPSG:4326
+    """
     for elem in root.iter():
         srs = elem.get("srsName")
         if srs:
-            # Normalize: "urn:ogc:def:crs:EPSG::25830" → "EPSG:25830"
-            if "EPSG" in srs:
-                code = srs.rsplit(":", 1)[-1].rsplit("::", 1)[-1]
-                return f"EPSG:{code}"
+            if "EPSG" not in srs:
+                continue
+            # URL format: http://www.opengis.net/def/crs/EPSG/0/XXXX
+            import re as _re
+            url_match = _re.search(r"/EPSG/\d+/(\d+)", srs)
+            if url_match:
+                return f"EPSG:{url_match.group(1)}"
+            # URN format: urn:ogc:def:crs:EPSG::25830
+            urn_match = _re.search(r"EPSG:{1,2}(\d+)", srs)
+            if urn_match:
+                return f"EPSG:{urn_match.group(1)}"
     return None
 
 
@@ -105,7 +118,7 @@ def _reproject_to_4326(geometry: dict, source_crs: str) -> dict:
 
 async def fetch_parcel_by_refcat(
     refcat: str,
-    srs: str = "EPSG::4326",
+    srs: str = "urn:ogc:def:crs:EPSG::4326",
     timeout: float = 30.0,
 ) -> dict:
     """Descarga la geometría de la parcela por referencia catastral.
@@ -207,7 +220,7 @@ async def fetch_parcel_by_refcat(
 
 async def fetch_buildings_by_refcat(
     refcat: str,
-    srs: str = "EPSG::4326",
+    srs: str = "urn:ogc:def:crs:EPSG::4326",
     timeout: float = 30.0,
 ) -> list[dict]:
     """Descarga las huellas de edificios de la parcela.
