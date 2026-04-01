@@ -98,6 +98,15 @@ def extrude_building(
         raise ValueError("footprint must be a non-empty Polygon")
 
     num_floors = max(1, num_floors)
+
+    # Agricultural/industrial buildings are tall open naves: use higher floor_height
+    # Catastro reports "1 floor" for a 10m-tall industrial hall
+    use_lower = use.lower() if use else ""
+    if floor_height == 3.0 and use_lower in ("agricultural", "agriculture", "industrial"):
+        floor_height = 6.0  # naves/bodegas: ~6m per "floor"
+    elif floor_height == 3.0 and use_lower in ("commercial",):
+        floor_height = 4.0
+
     height = num_floors * floor_height
 
     logger.info(

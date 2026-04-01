@@ -101,13 +101,15 @@ async def refcat_from_coords(lon: float, lat: float) -> str | None:
 
 
 def _parse_gml_polygon(gml_element: ET.Element) -> dict | None:
-    """Parse a GML Polygon/MultiSurface element into a GeoJSON geometry dict."""
-    # Try gml:posList inside gml:LinearRing
+    """Parse a GML Polygon/MultiSurface element into a GeoJSON geometry dict.
+
+    Returns the FIRST ring found.  For multi-polygon parsing use
+    ``_parse_gml_all_polygons``.
+    """
     for pos_list in gml_element.iter(f"{{{_NS['gml']}}}posList"):
         text = pos_list.text
         if not text:
             continue
-        # GML posList: "lat lon lat lon ..." — Note: GML uses lat,lon order!
         values = [float(v) for v in text.strip().split()]
         srs_dim = int(pos_list.get("srsDimension", "2"))
 
@@ -115,15 +117,40 @@ def _parse_gml_polygon(gml_element: ET.Element) -> dict | None:
         for i in range(0, len(values), srs_dim):
             lat = values[i]
             lon = values[i + 1]
-            coords.append([lon, lat])  # GeoJSON uses [lon, lat]
+            coords.append([lon, lat])
 
         if len(coords) >= 3:
-            # Ensure ring is closed
             if coords[0] != coords[-1]:
                 coords.append(coords[0])
             return {"type": "Polygon", "coordinates": [coords]}
 
     return None
+
+
+def _parse_gml_all_polygons(gml_element: ET.Element) -> list[dict]:
+    """Extract ALL polygon rings from a GML element (multiple PolygonPatches).
+
+    Returns a list of GeoJSON Polygon geometries — one per PolygonPatch / posList.
+    """
+    polygons: list[dict] = []
+    for pos_list in gml_element.iter(f"{{{_NS['gml']}}}posList"):
+        text = pos_list.text
+        if not text:
+            continue
+        values = [float(v) for v in text.strip().split()]
+        srs_dim = int(pos_list.get("srsDimension", "2"))
+
+        coords = []
+        for i in range(0, len(values), srs_dim):
+            lat = values[i]
+            lon = values[i + 1]
+            coords.append([lon, lat])
+
+        if len(coords) >= 3:
+            if coords[0] != coords[-1]:
+                coords.append(coords[0])
+            polygons.append({"type": "Polygon", "coordinates": [coords]})
+    return polygons
 
 
 def _detect_srs(root: ET.Element) -> str | None:
@@ -271,45 +298,115 @@ async def fetch_buildings_by_refcat(
 ) -> list[dict]:
     """Descarga las huellas de edificios de la parcela.
 
-    The Catastro INSPIRE WFS returns buildings in GML FeatureCollection
-    using ``gml:featureMember`` (NOT ``wfs:member``). Building properties
-    use varying namespace prefixes (``bu-base``, ``bu-ext2d``…) so we
-    match element local-names instead of fixed namespace URIs.
+    Strategy:
+    1. ``GetBuildingPartByParcel`` → individual volumes with per-part floor counts
+    2. If no parts: ``GetBuildingByParcel`` → building envelope, split multi-surface
+       into separate polygons
+    3. If still empty: DNPRC fallback (synthetic footprints)
 
-    Args:
-        refcat: Referencia catastral (14 o 20 chars).
-
-    Returns:
-        Lista de GeoJSON Features con la huella y propiedades de cada edificio.
+    Heights come from per-part ``numberOfFloorsAboveGround``.  When nil,
+    we fall back to DNPRC construction data to estimate plausible heights.
     """
     refcat = validate_refcat(refcat)
 
-    url = (
-        f"{WFS_BUILDINGS}?service=wfs&version=2"
-        f"&request=getfeature&STOREDQUERIE_ID=GetBuildingByParcel"
-        f"&REFCAT={refcat}&srsname={srs}"
-    )
-
-    logger.info("Fetching buildings: %s", url)
-
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        resp = await client.get(url)
-        resp.raise_for_status()
-
-    if not resp.content:
-        logger.info("No buildings found for refcat=%s", refcat)
-        return []
-
-    root = ET.fromstring(resp.content)
-    source_crs = _detect_srs(root) or "EPSG:4326"
-
-    buildings: list[dict] = []
-
-    # ── Helper: strip namespace from tag ──
     def _local(tag: str) -> str:
         return tag.split("}")[-1] if "}" in tag else tag
 
-    # ── Iterate over gml:featureMember OR wfs:member ──
+    # ── 1. Try GetBuildingPartByParcel first (individual volumes) ──
+    parts_url = (
+        f"{WFS_BUILDINGS}?service=wfs&version=2"
+        f"&request=getfeature&STOREDQUERIE_ID=GetBuildingPartByParcel"
+        f"&REFCAT={refcat}&srsname={srs}"
+    )
+    logger.info("Fetching building parts: %s", parts_url)
+
+    buildings: list[dict] = []
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            parts_resp = await client.get(parts_url)
+            parts_resp.raise_for_status()
+
+        if parts_resp.content:
+            parts_root = ET.fromstring(parts_resp.content)
+            # Check it's not an exception
+            exc = parts_root.find(".//{http://www.opengis.net/ows/1.1}ExceptionText")
+            if exc is None or not exc.text:
+                source_crs = _detect_srs(parts_root) or "EPSG:4326"
+                buildings = _parse_building_members(parts_root, refcat, source_crs)
+                if buildings:
+                    logger.info(
+                        "BuildingParts: %d volumes for refcat=%s",
+                        len(buildings), refcat,
+                    )
+    except Exception as pe:
+        logger.warning("GetBuildingPartByParcel failed: %s", pe)
+
+    # ── 2. Fallback: GetBuildingByParcel (building envelope) ──
+    if not buildings:
+        env_url = (
+            f"{WFS_BUILDINGS}?service=wfs&version=2"
+            f"&request=getfeature&STOREDQUERIE_ID=GetBuildingByParcel"
+            f"&REFCAT={refcat}&srsname={srs}"
+        )
+        logger.info("Fetching building envelope: %s", env_url)
+
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.get(env_url)
+            resp.raise_for_status()
+
+        if resp.content:
+            root = ET.fromstring(resp.content)
+            exc = root.find(".//{http://www.opengis.net/ows/1.1}ExceptionText")
+            if exc is not None and exc.text:
+                logger.warning("WFS error: %s", exc.text)
+            else:
+                source_crs = _detect_srs(root) or "EPSG:4326"
+                # Parse ALL PolygonPatches as separate buildings (multi-surface)
+                buildings = _parse_building_members(
+                    root, refcat, source_crs, split_multi_surface=True,
+                )
+                logger.info(
+                    "BuildingByParcel: %d polygons for refcat=%s",
+                    len(buildings), refcat,
+                )
+
+    # ── 3. Enrich heights from DNPRC when floors are missing/nil ──
+    if buildings:
+        await _enrich_heights_from_dnprc(buildings, refcat, timeout)
+
+    # ── 4. Final fallback: DNPRC synthetic ──
+    if not buildings:
+        logger.info(
+            "WFS returned 0 buildings for %s — trying DNPRC fallback", refcat
+        )
+        fallback = await _dnprc_fallback_buildings(refcat, timeout=timeout)
+        if fallback:
+            buildings = fallback
+
+    logger.info(
+        "Buildings total: %d for refcat=%s, total_area=%.0f m²",
+        len(buildings),
+        refcat,
+        sum(b["properties"].get("area_m2", 0) for b in buildings),
+    )
+    return buildings
+
+
+def _parse_building_members(
+    root: ET.Element,
+    refcat: str,
+    source_crs: str,
+    *,
+    split_multi_surface: bool = False,
+) -> list[dict]:
+    """Parse featureMembers from a WFS Building/BuildingPart response.
+
+    When ``split_multi_surface`` is True, a single featureMember with
+    multiple PolygonPatches is split into separate buildings (one per patch).
+    """
+    def _local(tag: str) -> str:
+        return tag.split("}")[-1] if "}" in tag else tag
+
     members: list[ET.Element] = []
     for elem in root:
         local = _local(elem.tag)
@@ -317,70 +414,37 @@ async def fetch_buildings_by_refcat(
             members.append(elem)
 
     if not members:
-        logger.info(
-            "No featureMember/member elements in WFS response for refcat=%s "
-            "(root tag=%s, children=%d)",
-            refcat, _local(root.tag), len(list(root)),
-        )
         return []
 
-    logger.info("Found %d featureMember(s) in WFS response", len(members))
+    buildings: list[dict] = []
+    transformer = Transformer.from_crs("EPSG:4326", "EPSG:25830", always_xy=True)
 
     for member in members:
-        geometry = None
-
-        # Find geometry: try gml:Polygon, then gml:PolygonPatch
-        for tag_name in ("Polygon", "PolygonPatch"):
-            for poly in member.iter(f"{{{_NS['gml']}}}{tag_name}"):
-                geometry = _parse_gml_polygon(poly)
-                if geometry:
-                    break
-            if geometry:
-                break
-
-        # Fallback: search by local tag name (some responses use alt ns)
-        if geometry is None:
-            for elem in member.iter():
-                if _local(elem.tag) in ("Polygon", "PolygonPatch", "Surface"):
-                    geometry = _parse_gml_polygon(elem)
-                    if geometry:
-                        break
-
-        # Last resort: find any posList directly in the member tree
-        if geometry is None:
-            geometry = _parse_gml_polygon(member)
-
-        if geometry is None:
-            logger.debug("Member has no parseable Polygon — skipping")
-            continue
-
-        geometry = _reproject_to_4326(geometry, source_crs)
-
-        # ── Extract building properties by local name ──
+        # ── Extract common properties ──
         props: dict = {"refcat": refcat}
 
         for elem in member.iter():
             local_tag = _local(elem.tag)
 
             if local_tag == "numberOfFloorsAboveGround":
-                # May be nil='true' — check for xsi:nil or nilReason
-                nil_attr = elem.get("{http://www.w3.org/2001/XMLSchema-instance}nil")
+                nil_attr = elem.get(
+                    "{http://www.w3.org/2001/XMLSchema-instance}nil"
+                )
                 nil_reason = elem.get("nilReason") or elem.get("nil")
                 if nil_attr == "true" or nil_reason:
-                    # No floor data — will be forced to 1 below
+                    props["_floors_nil"] = True
                     continue
                 if elem.text and elem.text.strip().isdigit():
-                    props["numberOfFloorsAboveGround"] = int(elem.text.strip())
+                    val = int(elem.text.strip())
+                    props["numberOfFloorsAboveGround"] = val
 
             elif local_tag == "currentUse" and elem.text:
                 raw_use = elem.text.strip()
-                # Catastro format: "1_residential" → "residential"
                 if "_" in raw_use:
                     raw_use = raw_use.split("_", 1)[1]
                 props["currentUse"] = raw_use
 
             elif local_tag == "value":
-                # officialArea > OfficialArea > value
                 uom = elem.get("uom", "")
                 if uom == "m2" and elem.text:
                     try:
@@ -394,37 +458,166 @@ async def fetch_buildings_by_refcat(
                 except ValueError:
                     pass
 
-        # Force minimum 1 floor — a building with 0/missing floors is not visible
-        if props.get("numberOfFloorsAboveGround", 0) < 1:
-            props["numberOfFloorsAboveGround"] = 1
-            logger.warning(
-                "Building has 0 or missing floors → forcing 1 floor (3m)"
+        # ── Parse geometry ──
+        if split_multi_surface:
+            all_polys = _parse_gml_all_polygons(member)
+        else:
+            single = _parse_gml_polygon(member)
+            all_polys = [single] if single else []
+
+        for poly_geom in all_polys:
+            geom = _reproject_to_4326(poly_geom, source_crs)
+            p = dict(props)  # copy per-polygon
+
+            # Compute area from geometry
+            shp = shape(geom)
+            projected = shapely_transform(transformer.transform, shp)
+            p["area_m2"] = projected.area
+
+            # Floor defaults: 0 or nil → marked for DNPRC enrichment
+            if p.get("numberOfFloorsAboveGround", 0) < 1:
+                p["_floors_nil"] = True
+
+            buildings.append({
+                "type": "Feature",
+                "geometry": geom,
+                "properties": p,
+            })
+
+    logger.info("Parsed %d building polygons from %d featureMembers", len(buildings), len(members))
+    return buildings
+
+
+async def _enrich_heights_from_dnprc(
+    buildings: list[dict],
+    refcat: str,
+    timeout: float = 15.0,
+) -> None:
+    """Enrich building floor counts using DNPRC construction data.
+
+    For each building with nil/0 floors, estimate height heuristically:
+    - Official area ≥ 200 m² → likely industrial nave → 3..4 floors equiv
+    - Official area < 200 m² → smaller structure → 1 floor
+    - If DNPRC has construction details with stl areas, use those to
+      estimate floor heights.
+    """
+    needs_enrichment = any(
+        b["properties"].get("_floors_nil") for b in buildings
+    )
+    if not needs_enrichment:
+        return
+
+    # Fetch DNPRC data for floor/area details
+    dnprc_url = (
+        "http://ovc.catastro.meh.es/OVCServWeb/OVCWcfCallejero/"
+        "COVCCallejero.svc/json/Consulta_DNPRC"
+    )
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.get(f"{dnprc_url}?RefCat={refcat}")
+            resp.raise_for_status()
+        data = resp.json()
+        result = data.get("consulta_dnprcResult", {})
+
+        if result.get("control", {}).get("cuerr"):
+            logger.info("DNPRC returned error for %s — using heuristic heights", refcat)
+            _apply_heuristic_heights(buildings)
+            return
+
+        bico = result.get("bico", {})
+        lcons = bico.get("lcons", {})
+        # lcons can be a list (multiple units) or dict with "cons" key
+        if isinstance(lcons, list):
+            cons_list = lcons
+        elif isinstance(lcons, dict):
+            cons_list = lcons.get("cons", [])
+        else:
+            cons_list = []
+        if isinstance(cons_list, dict):
+            cons_list = [cons_list]
+
+        # Sum total construction area from DNPRC
+        total_stl = 0
+        max_stl = 0
+        for cons in cons_list:
+            # stl may be in dfcons.stl (new format) or dt.stl (old format)
+            dfcons = cons.get("dfcons", {})
+            stl = float(dfcons.get("stl", 0) or cons.get("stl", 0) or 0)
+            total_stl += stl
+            max_stl = max(max_stl, stl)
+
+        logger.info(
+            "DNPRC constructions: %d units, total_stl=%.0f m², max_unit=%.0f m²",
+            len(cons_list), total_stl, max_stl,
+        )
+
+        # Detect dominant use from DNPRC lcd (land classification)
+        dnprc_use = "agricultural"
+        for cons in cons_list:
+            lcd = (cons.get("lcd", "") or "").lower()
+            dvcons = cons.get("dvcons", {})
+            dtip = (dvcons.get("dtip", "") if isinstance(dvcons, dict) else "").lower()
+            if "industr" in lcd or "industr" in dtip:
+                dnprc_use = "industrial"
+                break
+            elif "residenc" in lcd or "viviend" in dtip:
+                dnprc_use = "residential"
+            elif "comerc" in lcd:
+                dnprc_use = "commercial"
+
+        # Propagate use to all buildings without one
+        for b in buildings:
+            if not b["properties"].get("currentUse"):
+                b["properties"]["currentUse"] = dnprc_use
+
+        # Heuristic: if total construction area is large → industrial/agricultural
+        # estimate height from area:
+        #   - naves > 200 m² → 2 floors equivalent (6-8m height)
+        #   - naves > 100 m² → 1.5 floors (4.5m)
+        #   - smaller → 1 floor (3m)
+        for b in buildings:
+            if not b["properties"].get("_floors_nil"):
+                continue
+
+            area = b["properties"].get("area_m2", 0)
+            # For nil-floor buildings: estimate based on footprint area
+            # Industrial naves with 6m floor_height:
+            #   1 floor=6m, 2 floors=12m — already realistic for naves
+            if area >= 200:
+                b["properties"]["numberOfFloorsAboveGround"] = 2  # ~12m nave
+            elif area >= 50:
+                b["properties"]["numberOfFloorsAboveGround"] = 2  # ~12m
+            else:
+                b["properties"]["numberOfFloorsAboveGround"] = 1  # ~6m
+
+            # Boost if DNPRC shows large total construction area (bodega/industrial)
+            if total_stl > 500 and area >= 100:
+                b["properties"]["numberOfFloorsAboveGround"] = max(
+                    b["properties"]["numberOfFloorsAboveGround"], 2
+                )  # industrial complex → at least ~12m with 6m floor_height
+
+            b["properties"].pop("_floors_nil", None)
+            logger.info(
+                "Enriched building (area=%.0f m²) → %d floors",
+                area, b["properties"]["numberOfFloorsAboveGround"],
             )
 
-        # Compute area from geometry
-        geom = shape(geometry)
-        transformer = Transformer.from_crs("EPSG:4326", "EPSG:25830", always_xy=True)
-        projected = shapely_transform(transformer.transform, geom)
-        props["area_m2"] = projected.area
+    except Exception as e:
+        logger.warning("DNPRC enrichment failed: %s — using heuristics", e)
+        _apply_heuristic_heights(buildings)
 
-        buildings.append({
-            "type": "Feature",
-            "geometry": geometry,
-            "properties": props,
-        })
 
-    logger.info("Buildings fetched: %d for refcat=%s", len(buildings), refcat)
-
-    # ── Fallback: if WFS returned no buildings, try DNPRC API ──
-    if not buildings:
-        logger.info(
-            "WFS returned 0 buildings for %s — trying DNPRC fallback", refcat
-        )
-        fallback = await _dnprc_fallback_buildings(refcat, timeout=timeout)
-        if fallback:
-            buildings = fallback
-
-    return buildings
+def _apply_heuristic_heights(buildings: list[dict]) -> None:
+    """Fallback height estimation when DNPRC is unavailable."""
+    for b in buildings:
+        if not b["properties"].get("_floors_nil"):
+            continue
+        area = b["properties"].get("area_m2", 0)
+        if area >= 100:
+            b["properties"]["numberOfFloorsAboveGround"] = 2
+        else:
+            b["properties"]["numberOfFloorsAboveGround"] = 1
+        b["properties"].pop("_floors_nil", None)
 
 
 # ─── DNPRC API Endpoints (non-INSPIRE, always available) ────────────────────
