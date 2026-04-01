@@ -179,7 +179,7 @@ def process_twin(
     mesh = dem_to_mesh(
         dem_data,
         adaptive=True,
-        slope_threshold=10.0,
+        slope_threshold=2.0,
         max_triangles=resolution["max_triangles"],
     )
 

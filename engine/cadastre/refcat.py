@@ -392,6 +392,123 @@ async def fetch_buildings_by_refcat(
     return buildings
 
 
+def union_adjacent_buildings(
+    buildings: list[dict],
+    buffer_m: float = 2.0,
+) -> list[dict]:
+    """Union adjacent building footprints into larger combined meshes.
+
+    Buildings whose footprints touch (or are within ``buffer_m`` meters)
+    are merged into a single polygon.  The resulting feature inherits
+    the **maximum** floor count and height from contributing parts.
+
+    This makes small adjacent BuildingParts appear as a single continuous
+    complex rather than isolated boxes.
+    """
+    if len(buildings) <= 1:
+        return buildings
+
+    from shapely.geometry import shape as _shape, mapping as _mapping
+    from shapely.ops import unary_union
+    import math
+
+    # Approximate buffer in degrees (at mid-latitude)
+    mid_lat = 41.59  # default Iberian latitude
+    for b in buildings:
+        geom = _shape(b["geometry"])
+        if geom.centroid.y > 0:
+            mid_lat = geom.centroid.y
+            break
+    m_per_deg = 111_320.0 * math.cos(math.radians(mid_lat))
+    buffer_deg = buffer_m / m_per_deg
+
+    polys = [_shape(b["geometry"]) for b in buildings]
+    buffered = [p.buffer(buffer_deg) for p in polys]
+
+    # Group by connectivity: if buffered polygons intersect, they belong
+    # to the same cluster.
+    n = len(polys)
+    parent = list(range(n))
+
+    def find(x: int) -> int:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def unite(a: int, b: int) -> None:
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[ra] = rb
+
+    for i in range(n):
+        for j in range(i + 1, n):
+            if buffered[i].intersects(buffered[j]):
+                unite(i, j)
+
+    # Collect clusters
+    clusters: dict[int, list[int]] = {}
+    for i in range(n):
+        root = find(i)
+        clusters.setdefault(root, []).append(i)
+
+    merged: list[dict] = []
+    for indices in clusters.values():
+        if len(indices) == 1:
+            merged.append(buildings[indices[0]])
+            continue
+
+        # Union the original (unbuffered) polygons
+        group_polys = [polys[i] for i in indices]
+        union_poly = unary_union(group_polys)
+
+        # Take max floors and height from contributing parts
+        max_floors = max(
+            buildings[i]["properties"].get("numberOfFloorsAboveGround", 1)
+            for i in indices
+        )
+        # Collect all properties from the first, override key fields
+        props = dict(buildings[indices[0]]["properties"])
+        props["numberOfFloorsAboveGround"] = max_floors
+        props["_merged_from"] = len(indices)
+
+        # Compute combined area
+        from pyproj import Transformer
+        from shapely.ops import transform as shapely_transform
+        t = Transformer.from_crs("EPSG:4326", "EPSG:25830", always_xy=True)
+        proj_union = shapely_transform(t.transform, union_poly)
+        props["area_m2"] = proj_union.area
+
+        # Handle MultiPolygon from union (keep as separate features)
+        if union_poly.geom_type == "MultiPolygon":
+            for sub in union_poly.geoms:
+                sub_proj = shapely_transform(t.transform, sub)
+                sub_props = dict(props)
+                sub_props["area_m2"] = sub_proj.area
+                merged.append({
+                    "type": "Feature",
+                    "geometry": _mapping(sub),
+                    "properties": sub_props,
+                })
+        else:
+            merged.append({
+                "type": "Feature",
+                "geometry": _mapping(union_poly),
+                "properties": props,
+            })
+
+    total_before = sum(p.area for p in polys) * m_per_deg * 111_320
+    total_after = sum(
+        _shape(b["geometry"]).area for b in merged
+    ) * m_per_deg * 111_320
+    logger.info(
+        "Union adjacent buildings: %d → %d features, "
+        "area %.0f → %.0f m² (buffer=%.1fm)",
+        len(buildings), len(merged), total_before, total_after, buffer_m,
+    )
+    return merged
+
+
 def _parse_building_members(
     root: ET.Element,
     refcat: str,

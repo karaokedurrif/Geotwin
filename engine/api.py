@@ -115,7 +115,7 @@ def _run_pipeline(job_id: str, req: ProcessRequest) -> None:
         building_info: list[dict] = []
         try:
             import asyncio
-            from .cadastre.refcat import refcat_from_coords, fetch_buildings_by_refcat
+            from .cadastre.refcat import refcat_from_coords, fetch_buildings_by_refcat, union_adjacent_buildings
             from .buildings.extruder import extrude_building
             from .terrain.export import get_local_origin
 
@@ -128,6 +128,10 @@ def _run_pipeline(job_id: str, req: ProcessRequest) -> None:
             if refcat:
                 buildings = loop.run_until_complete(fetch_buildings_by_refcat(refcat))
             loop.close()
+
+            # Union adjacent building footprints into larger combined meshes
+            if len(buildings) > 1:
+                buildings = union_adjacent_buildings(buildings, buffer_m=2.0)
 
             if buildings:
                 on_progress("Extruyendo edificios 3D", 92)
@@ -618,13 +622,17 @@ def _run_autotwin(job_id: str, refcat: str, twin_id: str) -> None:
     try:
         # ── 1. Fetch parcel geometry from Catastro WFS ──
         on_progress("Descargando parcela catastral", 5)
-        from .cadastre.refcat import fetch_parcel_by_refcat, fetch_buildings_by_refcat
+        from .cadastre.refcat import fetch_parcel_by_refcat, fetch_buildings_by_refcat, union_adjacent_buildings
 
         loop = asyncio.new_event_loop()
         parcel_feature = loop.run_until_complete(fetch_parcel_by_refcat(refcat))
         on_progress("Descargando edificios", 10)
         buildings = loop.run_until_complete(fetch_buildings_by_refcat(refcat))
         loop.close()
+
+        # Union adjacent building footprints into larger combined meshes
+        if len(buildings) > 1:
+            buildings = union_adjacent_buildings(buildings, buffer_m=2.0)
 
         # ── 2. Save geometry as GeoJSON for the pipeline ──
         output_dir = settings.tiles_dir / twin_id
@@ -850,7 +858,7 @@ def regenerate_twin(twin_id: str):
             building_info: list[dict] = []
             try:
                 import asyncio, math
-                from .cadastre.refcat import refcat_from_coords, fetch_buildings_by_refcat
+                from .cadastre.refcat import refcat_from_coords, fetch_buildings_by_refcat, union_adjacent_buildings
                 from .buildings.extruder import extrude_building
                 from .terrain.export import get_local_origin, merge_buildings_into_glb
 
@@ -871,6 +879,10 @@ def regenerate_twin(twin_id: str):
                     loop2 = asyncio.new_event_loop()
                     buildings = loop2.run_until_complete(fetch_buildings_by_refcat(refcat))
                     loop2.close()
+
+                # Union adjacent building footprints into larger combined meshes
+                if len(buildings) > 1:
+                    buildings = union_adjacent_buildings(buildings, buffer_m=2.0)
 
                 if buildings:
                     local_origin = get_local_origin()

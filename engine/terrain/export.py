@@ -699,17 +699,14 @@ def merge_buildings_into_glb(
     terrain_glb_path: Path,
     building_glb_paths: list[Path],
     *,
-    debug_y_offset: float = 50.0,
+    debug_y_offset: float = 0.0,
 ) -> None:
     """Merge building GLBs into the main terrain GLB.
 
-    Critical fixes vs previous version:
-    - Samples terrain mesh to find correct Y at each building's XZ position
-      (buildings were at Y=0, buried 30-50m under the terrain surface).
-    - Applies RED NEON emissive material for debug visibility.
+    - Samples terrain mesh to find correct Y at each building's XZ position.
+    - Shifts building base to terrain surface + debug_y_offset.
     - Calls trimesh.repair.fix_normals to prevent transparency.
-    - Adds debug_y_offset (default +50m) so buildings float above terrain
-      to confirm they exist. Set to 0.0 for production.
+    - White bone material (roughness 0.8) for concrete/stone appearance.
     """
     if not building_glb_paths:
         return
@@ -735,17 +732,15 @@ def merge_buildings_into_glb(
             terrain_verts[:, 2].min(), terrain_verts[:, 2].max(),
         )
 
-        # ── RED NEON emissive material for debug visibility ──
+        # ── White bone material — concrete/stone appearance ──
         from PIL import Image
 
-        bldg_color = Image.new("RGB", (16, 16), (255, 0, 0))  # RED
+        bldg_color = Image.new("RGB", (16, 16), (235, 230, 220))  # white bone
         bldg_mat = trimesh.visual.material.PBRMaterial(
             baseColorTexture=bldg_color,
-            baseColorFactor=[1.0, 0.0, 0.0, 1.0],
-            emissiveFactor=[1.0, 0.0, 0.0],        # RED NEON glow
-            emissiveTexture=bldg_color,
+            baseColorFactor=[0.92, 0.90, 0.86, 1.0],
             metallicFactor=0.0,
-            roughnessFactor=0.4,
+            roughnessFactor=0.8,
             doubleSided=True,
         )
 
@@ -796,7 +791,7 @@ def merge_buildings_into_glb(
                 # ── Fix normals (prevents invisible/transparent faces) ──
                 trimesh.repair.fix_normals(bm)
 
-                # ── Apply RED debug material + UVs ──
+                # ── Apply white bone material + UVs ──
                 uv = np.zeros((len(bm.vertices), 2), dtype=np.float32)
                 bm.visual = trimesh.visual.TextureVisuals(uv=uv, material=bldg_mat)
                 bm.metadata["_isBuilding"] = True
@@ -811,7 +806,7 @@ def merge_buildings_into_glb(
             terrain_glb_path.write_bytes(merged_data)
             logger.info(
                 "Merged %d buildings into %s (%.1f KB) "
-                "[debug_y_offset=+%.0fm, material=RED_NEON]",
+                "[y_offset=+%.1fm, material=white_bone]",
                 added, terrain_glb_path, len(merged_data) / 1024, debug_y_offset,
             )
         else:
