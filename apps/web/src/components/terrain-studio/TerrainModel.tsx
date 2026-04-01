@@ -107,7 +107,9 @@ export default function TerrainModel({ url }: TerrainModelProps) {
     finalBox.getSize(finalSize);
     const maxDim = Math.max(finalSize.x, finalSize.y, finalSize.z);
     const dist = Math.max(maxDim * 2.2, 2);
-    camera.position.set(dist * 0.6, dist * 0.5, dist * 0.6);
+    // Camera at NW (+X=East, +Y=Up, -Z=North): view from South looking North
+    // This matches standard map orientation (North = top of screen)
+    camera.position.set(finalCenter.x - dist * 0.3, finalCenter.y + dist * 0.7, finalCenter.z + dist * 0.6);
     camera.lookAt(finalCenter);
     camera.updateProjectionMatrix();
 

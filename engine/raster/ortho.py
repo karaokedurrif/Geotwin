@@ -288,3 +288,67 @@ def extract_texture_image(
 
     logger.info("Textura %s: %s (%.0f KB)", fmt, output_path, output_path.stat().st_size / 1024)
     return output_path
+
+
+def cap_texture_size(
+    texture_path: Path,
+    area_ha: float,
+    *,
+    force_max_px: int | None = None,
+) -> Path:
+    """Resize texture to a cap based on parcel area to avoid VRAM saturation.
+
+    Size caps:
+    - < 1 ha  → 2048 px (2K) — small parcel, high detail per pixel
+    - < 10 ha → 4096 px (4K) — medium
+    - < 100 ha → 4096 px (4K) — still manageable
+    - ≥ 100 ha → 2048 px (2K) — large area, 2K is sufficient for terrain overview
+
+    For RTX 5080 (16GB VRAM) users can request 8K via force_max_px=8192.
+
+    Args:
+        texture_path: Path to the texture image.
+        area_ha: Parcel area in hectares.
+        force_max_px: Override the automatic cap (e.g., 8192 for RTX 5080).
+
+    Returns:
+        Path to the (possibly resized) texture.
+    """
+    from PIL import Image
+
+    if force_max_px:
+        max_px = force_max_px
+    elif area_ha < 1:
+        max_px = 2048
+    elif area_ha < 100:
+        max_px = 4096
+    else:
+        max_px = 2048  # Large parcels: 2K is sufficient for vineyard-scale terrain
+
+    img = Image.open(texture_path)
+    w, h = img.size
+
+    if max(w, h) <= max_px:
+        logger.info("Texture %dx%d already within %d cap", w, h, max_px)
+        return texture_path
+
+    # Resize preserving aspect ratio
+    scale = max_px / max(w, h)
+    new_w = int(w * scale)
+    new_h = int(h * scale)
+    img_resized = img.resize((new_w, new_h), Image.LANCZOS)
+
+    # Overwrite the original texture (same format)
+    fmt = "PNG" if texture_path.suffix.lower() == ".png" else "JPEG"
+    if fmt == "PNG":
+        img_resized.save(texture_path, "PNG", optimize=True)
+    else:
+        img_resized.save(texture_path, "JPEG", quality=95)
+
+    old_kb = (w * h * 3) / 1024  # rough uncompressed estimate
+    new_kb = (new_w * new_h * 3) / 1024
+    logger.info(
+        "Texture capped: %dx%d → %dx%d (cap=%d, VRAM saving ~%.0f KB)",
+        w, h, new_w, new_h, max_px, old_kb - new_kb,
+    )
+    return texture_path

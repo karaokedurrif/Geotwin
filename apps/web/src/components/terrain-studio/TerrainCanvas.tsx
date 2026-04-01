@@ -123,9 +123,10 @@ export default function TerrainCanvas({ glbUrl, geojson }: TerrainCanvasProps) {
         makeDefault
         enableDamping
         dampingFactor={0.1}
-        minDistance={0.1}
-        maxDistance={50}
+        minDistance={0.01}
+        maxDistance={200}
         maxPolarAngle={Math.PI * 0.85}
+        zoomSpeed={1.5}
       />
 
       <MeasureTool />

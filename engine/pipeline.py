@@ -215,7 +215,7 @@ def process_twin(
     texture_path = None
     try:
         _progress("Descargando ortofoto PNOA", 63)
-        from .raster.ortho import extract_texture_image, get_ortho_for_aoi
+        from .raster.ortho import extract_texture_image, get_ortho_for_aoi, cap_texture_size
 
         # Resolución adaptativa según el tamaño de la parcela
         if aoi_meta.area_ha < 0.5:
@@ -268,6 +268,9 @@ def process_twin(
         tex_fmt = "PNG" if aoi_meta.area_ha < 1.0 else "JPEG"
         texture_path = extract_texture_image(ortho_tif, fmt=tex_fmt)
 
+        # Cap texture size to avoid VRAM saturation (2K for large parcels, 4K for medium)
+        texture_path = cap_texture_size(texture_path, aoi_meta.area_ha)
+
         # Asignar UVs al mesh basados en el bbox de la textura
         mesh = compute_uv_from_bbox(mesh, tuple(ortho_result["bbox"]))
         set_texture(texture_path)
@@ -317,6 +320,34 @@ def process_twin(
     # También exportar GLB combinado para AR/VR
     glb_path = output_dir / f"{twin_id}.glb"
     export_single_glb(mesh, glb_path)
+
+    # ─── 6b. Export split assets (terrain_low + building_high) ──────────
+    from .terrain.export import export_terrain_and_buildings
+    split_result = {}
+    try:
+        # Collect any building meshes from the autotwin flow
+        building_meshes = []
+        bldg_dir_files = list(output_dir.glob("building_*.glb"))
+        if bldg_dir_files:
+            import trimesh as _tri
+            for bf in bldg_dir_files:
+                try:
+                    bm = _tri.load(str(bf), process=False)
+                    if hasattr(bm, 'vertices'):
+                        building_meshes.append(bm)
+                except Exception:
+                    pass
+
+        split_result = export_terrain_and_buildings(
+            terrain_mesh=mesh,
+            building_meshes=building_meshes,
+            output_dir=output_dir,
+            twin_id=twin_id,
+            area_ha=aoi_meta.area_ha,
+        )
+        logger.info("Split export: %s", list(split_result.keys()))
+    except Exception as split_err:
+        logger.warning("Split export failed (non-critical): %s", split_err)
 
     # Limpiar textura compartida después de exportar
     set_texture(None)
@@ -404,6 +435,7 @@ def process_twin(
             ).name),
         } if result.ortho else None,
         "local_origin": get_local_origin(),
+        "split_assets": split_result if split_result else None,
     }, indent=2))
 
     _progress("Completado", 100)
