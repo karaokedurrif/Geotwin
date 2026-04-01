@@ -208,14 +208,57 @@ export default function TerrainModel({ url }: TerrainModelProps) {
 
     // Collect model info
     let verts = 0, tris = 0;
+    const buildingBox = new THREE.Box3();
+    let hasBuildingGeometry = false;
     scene.traverse((child) => {
       if ((child as THREE.Mesh).isMesh) {
-        const geo = (child as THREE.Mesh).geometry;
+        const mesh = child as THREE.Mesh;
+        const geo = mesh.geometry;
         verts += geo.attributes.position?.count ?? 0;
         tris += geo.index ? geo.index.count / 3 : (geo.attributes.position?.count ?? 0) / 3;
+
+        // Detect building meshes: small vertex count + _isBuilding flag or name hint
+        const vertCount = geo.attributes.position?.count ?? 0;
+        const isBuilding =
+          mesh.userData._isBuilding ||
+          mesh.name.toLowerCase().includes('building') ||
+          (vertCount > 0 && vertCount <= 100);
+        if (isBuilding && vertCount > 0) {
+          mesh.userData._isBuilding = true;
+          geo.computeBoundingBox();
+          if (geo.boundingBox) {
+            buildingBox.expandByObject(mesh);
+            hasBuildingGeometry = true;
+          }
+        }
       }
     });
     setModelInfo({ vertices: verts, faces: Math.round(tris) });
+
+    // If buildings exist, re-target camera closer to building complex
+    if (hasBuildingGeometry && !buildingBox.isEmpty()) {
+      const bCenter = new THREE.Vector3();
+      buildingBox.getCenter(bCenter);
+      const bSize = new THREE.Vector3();
+      buildingBox.getSize(bSize);
+      const bMaxDim = Math.max(bSize.x, bSize.y, bSize.z);
+      // Only refocus if buildings are significantly smaller than terrain
+      if (bMaxDim < maxDim * 0.5 && bMaxDim > 0.001) {
+        const bDist = Math.max(bMaxDim * 4, 0.3);
+        camera.position.set(
+          bCenter.x - bDist * 0.3,
+          bCenter.y + bDist * 0.8,
+          bCenter.z + bDist * 0.5
+        );
+        camera.lookAt(bCenter);
+        camera.updateProjectionMatrix();
+        console.log(
+          `[TerrainModel] Camera re-targeted to building complex: ` +
+            `center=(${bCenter.x.toFixed(2)}, ${bCenter.y.toFixed(2)}, ${bCenter.z.toFixed(2)}), ` +
+            `size=(${bSize.x.toFixed(1)}×${bSize.y.toFixed(1)}×${bSize.z.toFixed(1)})`
+        );
+      }
+    }
 
     invalidate();
   }, [scene, camera, invalidate, setModelInfo]);
