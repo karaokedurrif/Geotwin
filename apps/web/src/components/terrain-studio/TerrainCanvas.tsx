@@ -87,11 +87,12 @@ export default function TerrainCanvas({ glbUrl, geojson }: TerrainCanvasProps) {
         intensity={1.5}
         shadow-mapSize-width={4096}
         shadow-mapSize-height={4096}
-        shadow-camera-far={1000}
-        shadow-camera-left={-200}
-        shadow-camera-right={200}
-        shadow-camera-top={200}
-        shadow-camera-bottom={-200}
+        shadow-camera-far={50}
+        shadow-camera-left={-5}
+        shadow-camera-right={5}
+        shadow-camera-top={5}
+        shadow-camera-bottom={-5}
+        shadow-bias={-0.0005}
       />
 
       {showGrid && (

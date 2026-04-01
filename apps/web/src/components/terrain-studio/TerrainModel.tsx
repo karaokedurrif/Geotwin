@@ -23,9 +23,17 @@ function BuildingChild({ url, debug }: { url: string; debug?: boolean }) {
         mesh.receiveShadow = true;
         const mat = mesh.material as THREE.MeshStandardMaterial;
         if (mat) {
-          mat.roughness = 0.7;
-          mat.metalness = 0.05;
+          // Warm sandstone — blends with Castilla rural landscape
+          mat.color = new THREE.Color(0xB8A07A);
+          mat.roughness = 0.85;
+          mat.metalness = 0.02;
+          mat.envMapIntensity = 0.6;
           mat.side = THREE.DoubleSide;
+          // Anisotropy on any building texture
+          if (mat.map) {
+            mat.map.anisotropy = 16;
+            mat.map.needsUpdate = true;
+          }
           mat.needsUpdate = true;
         }
       }

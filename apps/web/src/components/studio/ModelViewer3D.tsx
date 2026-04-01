@@ -15,6 +15,7 @@
 import React, { Suspense, useEffect, useMemo, useState, useRef } from 'react';
 import { Canvas, useThree } from '@react-three/fiber';
 import { OrbitControls, useGLTF, Environment, Grid, Html } from '@react-three/drei';
+import * as THREE from 'three';
 import { X, Box, Eye, Grid3x3, Download, Info, RotateCcw, Compass } from 'lucide-react';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3001';
@@ -45,7 +46,6 @@ function TerrainMesh({ url, viewMode, onStats, controlsRef, resetCameraRef, topV
 
   // Center, scale, and auto-fit camera + OrbitControls target
   useEffect(() => {
-    const THREE = require('three');
     const box = new THREE.Box3().setFromObject(scene);
     const center = new THREE.Vector3();
     box.getCenter(center);
@@ -90,7 +90,7 @@ function TerrainMesh({ url, viewMode, onStats, controlsRef, resetCameraRef, topV
 
     invalidate();
 
-    // Collect stats
+    // Collect stats + sharpen textures
     let verts = 0;
     let tris = 0;
     scene.traverse((child: any) => {
@@ -98,6 +98,16 @@ function TerrainMesh({ url, viewMode, onStats, controlsRef, resetCameraRef, topV
         const geo = child.geometry;
         verts += geo.attributes.position ? geo.attributes.position.count : 0;
         tris += geo.index ? geo.index.count / 3 : (geo.attributes.position ? geo.attributes.position.count / 3 : 0);
+
+        // Max anisotropy for 4K ortho sharpness at grazing angles
+        const mat = child.material as THREE.MeshStandardMaterial;
+        if (mat?.map) {
+          mat.map.anisotropy = 16;
+          mat.map.minFilter = THREE.LinearFilter;
+          mat.map.magFilter = THREE.LinearFilter;
+          mat.map.generateMipmaps = false;
+          mat.map.needsUpdate = true;
+        }
       }
     });
     onStats?.({ vertices: verts, triangles: Math.round(tris), gridY: finalBox.min.y - 0.02 });
@@ -321,7 +331,18 @@ export default function ModelViewer3D({ twinId, visible, onClose, onOpenStudio }
           >
             <color attach="background" args={['#0a0a0e']} />
             <ambientLight intensity={0.5} />
-            <directionalLight position={[5, 8, 5]} intensity={1.0} castShadow />
+            <directionalLight
+              position={[5, 8, 5]}
+              intensity={1.0}
+              castShadow
+              shadow-mapSize-width={2048}
+              shadow-mapSize-height={2048}
+              shadow-camera-far={50}
+              shadow-camera-left={-5}
+              shadow-camera-right={5}
+              shadow-camera-top={5}
+              shadow-camera-bottom={-5}
+            />
             <directionalLight position={[-3, 4, -2]} intensity={0.3} />
 
             <Suspense fallback={<LoadingSpinner />}>
