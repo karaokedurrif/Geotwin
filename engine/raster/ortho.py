@@ -421,6 +421,94 @@ def crop_texture_to_mesh_bbox(
     return texture_path
 
 
+def extract_sharp_texture(
+    ortho_tif_path: Path,
+    mesh_bbox: tuple[float, float, float, float],
+    output_path: Path,
+    target_max_px: int = 4096,
+) -> Path:
+    """Extract a high-resolution, sharpened texture from the ortho GeoTIFF.
+
+    Reads directly from the GeoTIFF at the mesh's geographic extent using
+    rasterio cubic resampling to produce a 4K texture. Then applies
+    professional sharpening (UnsharpMask) and local contrast enhancement.
+
+    This replaces the naive crop approach that produced tiny (~1K) textures.
+    For a 57m parcel, the old crop gave 1137×905 px; this gives 4096×3261 px.
+
+    Args:
+        ortho_tif_path: Path to the downloaded ortho GeoTIFF.
+        mesh_bbox: (min_lon, min_lat, max_lon, max_lat) of the mesh vertices.
+        output_path: Where to save the sharp PNG texture.
+        target_max_px: Target pixel size for the longest dimension.
+
+    Returns:
+        Path to the generated sharp texture.
+    """
+    from PIL import Image, ImageFilter, ImageEnhance
+    from rasterio.windows import from_bounds
+    from rasterio.enums import Resampling
+
+    min_lon, min_lat, max_lon, max_lat = mesh_bbox
+
+    # Compute real-world dimensions for proper aspect ratio
+    lat_mid = (min_lat + max_lat) / 2
+    m_per_deg_lon = 111_320 * np.cos(np.radians(lat_mid))
+    m_per_deg_lat = 110_574.0
+    width_m = (max_lon - min_lon) * m_per_deg_lon
+    height_m = (max_lat - min_lat) * m_per_deg_lat
+
+    if width_m <= 0 or height_m <= 0:
+        logger.warning("Invalid mesh bbox for texture extraction, skipping")
+        return output_path
+
+    # Compute output dimensions preserving aspect ratio
+    if width_m >= height_m:
+        out_width = target_max_px
+        out_height = max(1, int(target_max_px * height_m / width_m))
+    else:
+        out_height = target_max_px
+        out_width = max(1, int(target_max_px * width_m / height_m))
+
+    with rasterio.open(ortho_tif_path) as src:
+        # Get the window in pixel coordinates for the mesh bbox
+        window = from_bounds(min_lon, min_lat, max_lon, max_lat, src.transform)
+
+        # Read bands 1-3 (RGB) with cubic resampling to target resolution
+        # Cubic gives sharper results than bilinear for upsampling aerial imagery
+        bands_to_read = min(3, src.count)
+        data = src.read(
+            list(range(1, bands_to_read + 1)),
+            window=window,
+            out_shape=(bands_to_read, out_height, out_width),
+            resampling=Resampling.cubic,
+        )
+
+    # Convert from (bands, H, W) to (H, W, bands) for PIL
+    img_array = np.moveaxis(data, 0, -1)
+    if img_array.shape[2] == 1:
+        img_array = np.repeat(img_array, 3, axis=2)
+    img = Image.fromarray(img_array.astype(np.uint8), "RGB")
+
+    # Apply professional sharpening pipeline:
+    # 1. UnsharpMask — enhances edges without creating halos
+    img = img.filter(ImageFilter.UnsharpMask(radius=2, percent=120, threshold=3))
+    # 2. Subtle contrast boost — makes terrain features pop
+    enhancer = ImageEnhance.Contrast(img)
+    img = enhancer.enhance(1.08)  # 8% boost — just enough without clipping
+
+    img.save(output_path, "PNG", optimize=True)
+    final_kb = output_path.stat().st_size / 1024
+
+    logger.info(
+        "Sharp texture extracted: %dx%d px (%.1fm × %.1fm, %.1f px/m) "
+        "from GeoTIFF with cubic resampling + sharpening (%.0f KB)",
+        out_width, out_height, width_m, height_m,
+        out_width / width_m, final_kb,
+    )
+    return output_path
+
+
 def download_hires_crop(
     center_lon: float,
     center_lat: float,

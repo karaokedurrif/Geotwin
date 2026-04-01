@@ -270,13 +270,28 @@ def process_twin(
         # Extraer textura — PNG lossless para parcelas <1ha, JPEG para grandes
         from pathlib import Path as P
         ortho_tif = P(ortho_result["path"])
-        tex_fmt = "PNG" if aoi_meta.area_ha < 1.0 else "JPEG"
-        texture_path = extract_texture_image(ortho_tif, fmt=tex_fmt)
 
-        # Cap texture size to avoid VRAM saturation (2K for large parcels, 4K for medium)
-        texture_path = cap_texture_size(texture_path, aoi_meta.area_ha, force_max_px=8192)
+        # ── Sharp texture extraction from GeoTIFF at mesh bbox ──
+        # Instead of extracting the full ortho to PNG then cropping (which
+        # produced tiny ~1K textures), we read directly from the GeoTIFF
+        # at the mesh's geographic extent with cubic resampling to 4K+.
+        from .raster.ortho import extract_sharp_texture
+        mb = mesh.bounds
+        mesh_geo_bbox = (mb["min_lon"], mb["min_lat"], mb["max_lon"], mb["max_lat"])
 
-        # ── Hi-res 4K inset for the building zone (100m radius) ──
+        # Target texture size based on parcel area
+        if aoi_meta.area_ha < 1.0:
+            sharp_target_px = 4096
+        elif aoi_meta.area_ha < 10.0:
+            sharp_target_px = 4096
+        else:
+            sharp_target_px = 8192
+
+        tex_ext = ".png"  # PNG lossless for max quality in GLB
+        texture_path = ortho_tif.with_suffix(tex_ext)
+        extract_sharp_texture(ortho_tif, mesh_geo_bbox, texture_path, target_max_px=sharp_target_px)
+
+        # ── Hi-res 4K inset composite (adds building-zone detail on top) ──
         try:
             from .raster.ortho import download_hires_crop, composite_hires_inset
 
@@ -284,7 +299,6 @@ def process_twin(
             hires_bbox_center_lon = aoi_meta.centroid_lon
             hires_bbox_center_lat = aoi_meta.centroid_lat
 
-            # Download 4K crop at ~5cm/px around the centroid (building zone)
             download_hires_crop(
                 hires_bbox_center_lon, hires_bbox_center_lat,
                 radius_m=100.0,
@@ -292,7 +306,6 @@ def process_twin(
                 target_px=4096,
             )
 
-            # Compute the bbox of the hi-res crop
             import math as _math
             _m_lon = 111_320 * _math.cos(_math.radians(hires_bbox_center_lat))
             _buf_lon = 100.0 / _m_lon
@@ -306,7 +319,7 @@ def process_twin(
 
             composite_hires_inset(
                 texture_path,
-                tuple(ortho_result["bbox"]),
+                mesh_geo_bbox,  # composite against mesh bbox (not ortho bbox)
                 hires_tif,
                 hires_bbox,
             )
@@ -314,13 +327,7 @@ def process_twin(
         except Exception as hires_err:
             logger.warning("Hi-res crop failed (non-critical): %s", hires_err)
 
-        # Asignar UVs al mesh basados en el bbox REAL del mesh (no del ortho descargado)
-        # Primero recortar la textura al extent geográfico del mesh para que
-        # los UVs cubran [0,1] y se aproveche el 100% de los píxeles.
-        from .raster.ortho import crop_texture_to_mesh_bbox
-        mb = mesh.bounds
-        mesh_geo_bbox = (mb["min_lon"], mb["min_lat"], mb["max_lon"], mb["max_lat"])
-        crop_texture_to_mesh_bbox(texture_path, tuple(ortho_result["bbox"]), mesh_geo_bbox)
+        # Assign UVs against mesh geographic bounds → guaranteed [0, 1] full coverage
         mesh = compute_uv_from_bbox(mesh, mesh_geo_bbox)
         set_texture(texture_path)
 
