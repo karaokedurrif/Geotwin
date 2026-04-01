@@ -1,8 +1,72 @@
-import { useEffect, useRef, useMemo, useCallback } from 'react';
+import { useEffect, useRef, useMemo, useCallback, useState } from 'react';
 import { useThree, useFrame, ThreeEvent } from '@react-three/fiber';
 import { useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
 import { useStudioStore } from './store';
+
+/* ------------------------------------------------------------------ */
+/* BuildingChild — loads a single building_*.glb, adds debug helpers  */
+/* ------------------------------------------------------------------ */
+function BuildingChild({ url, debug }: { url: string; debug?: boolean }) {
+  const { scene } = useGLTF(url);
+  const { invalidate } = useThree();
+
+  useEffect(() => {
+    if (!scene) return;
+
+    // Mark every mesh as building so view-mode traversals skip it
+    scene.traverse((child) => {
+      if ((child as THREE.Mesh).isMesh) {
+        const mesh = child as THREE.Mesh;
+        mesh.userData._isBuilding = true;
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        const mat = mesh.material as THREE.MeshStandardMaterial;
+        if (mat) {
+          mat.roughness = 0.7;
+          mat.metalness = 0.05;
+          mat.side = THREE.DoubleSide;
+          mat.needsUpdate = true;
+        }
+      }
+    });
+
+    // Debug helpers
+    if (debug) {
+      const box = new THREE.Box3().setFromObject(scene);
+      const boxHelper = new THREE.Box3Helper(box, new THREE.Color(0xff0000));
+      boxHelper.name = '_bldg_debug_box';
+      scene.add(boxHelper);
+
+      const center = new THREE.Vector3();
+      box.getCenter(center);
+      // scale-aware size: helper length = max building dimension
+      const sz = new THREE.Vector3();
+      box.getSize(sz);
+      const axes = new THREE.AxesHelper(Math.max(sz.x, sz.y, sz.z) * 0.6);
+      axes.position.copy(center);
+      axes.name = '_bldg_debug_axes';
+      scene.add(axes);
+
+      console.log(
+        `[Building] ${url.split('/').pop()} bbox: X=[${box.min.x.toFixed(1)}..${box.max.x.toFixed(1)}] Y=[${box.min.y.toFixed(1)}..${box.max.y.toFixed(1)}] Z=[${box.min.z.toFixed(1)}..${box.max.z.toFixed(1)}]`
+      );
+    }
+
+    invalidate();
+
+    return () => {
+      // Clean up debug helpers on unmount
+      const toRemove: THREE.Object3D[] = [];
+      scene.traverse((c) => {
+        if (c.name.startsWith('_bldg_debug_')) toRemove.push(c);
+      });
+      toRemove.forEach((c) => c.parent?.remove(c));
+    };
+  }, [scene, url, debug, invalidate]);
+
+  return <primitive object={scene} />;
+}
 
 // Matcap texture generated procedurally
 function createMatcapTexture(): THREE.DataTexture {
@@ -40,6 +104,7 @@ export default function TerrainModel({ url }: TerrainModelProps) {
   const originalMaterials = useRef<Map<string, THREE.Material>>(new Map());
   const matcapTex = useMemo(() => createMatcapTexture(), []);
   const fpsRef = useRef({ frames: 0, lastTime: performance.now(), fps: 60 });
+  const [buildingUrls, setBuildingUrls] = useState<string[]>([]);
 
   const viewMode = useStudioStore((s) => s.viewMode);
   const roughness = useStudioStore((s) => s.roughness);
@@ -155,10 +220,32 @@ export default function TerrainModel({ url }: TerrainModelProps) {
     invalidate();
   }, [scene, camera, invalidate, setModelInfo]);
 
+  // Discover and load building GLBs that sit alongside the terrain GLB
+  useEffect(() => {
+    const basePath = url.substring(0, url.lastIndexOf('/'));
+    const probes = Array.from({ length: 10 }, (_, i) => `${basePath}/building_${i}.glb`);
+
+    Promise.all(
+      probes.map((bUrl) =>
+        fetch(bUrl, { method: 'HEAD' })
+          .then((r) => (r.ok ? bUrl : null))
+          .catch(() => null)
+      )
+    ).then((results) => {
+      const valid = results.filter((u): u is string => u !== null);
+      if (valid.length > 0) {
+        console.log(`[TerrainModel] Found ${valid.length} building GLB(s):`, valid);
+      }
+      setBuildingUrls(valid);
+    });
+  }, [url]);
+
   // Apply view mode changes
   useEffect(() => {
     scene.traverse((child) => {
       if (!(child as THREE.Mesh).isMesh) return;
+      // Skip building meshes — they keep their own material
+      if (child.userData._isBuilding) return;
       const mesh = child as THREE.Mesh;
       const orig = originalMaterials.current.get(mesh.uuid) as THREE.MeshStandardMaterial | undefined;
 
@@ -310,5 +397,12 @@ export default function TerrainModel({ url }: TerrainModelProps) {
     }
   });
 
-  return <primitive ref={meshRef} object={scene} onClick={handleClick} />;
+  return (
+    <primitive ref={meshRef} object={scene} onClick={handleClick}>
+      {/* Buildings are children of the terrain scene → inherit position/scale */}
+      {buildingUrls.map((bUrl) => (
+        <BuildingChild key={bUrl} url={bUrl} debug />
+      ))}
+    </primitive>
+  );
 }

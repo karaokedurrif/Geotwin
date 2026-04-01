@@ -34,7 +34,7 @@ _REFCAT_RE = re.compile(r"^[A-Za-z0-9]{14}([A-Za-z0-9]{6})?$")
 _NS = {
     "gml": "http://www.opengis.net/gml/3.2",
     "cp": "urn:x-inspire:specification:gmlas:CadastralParcels:3.0",
-    "bu": "urn:x-inspire:specification:gmlas:BuildingsBase:3.0",
+    "bu": "urn:x-inspire:specification:gmlas:Buildings:3.0",
     "bu-ext": "urn:x-inspire:specification:gmlas:BuildingsExtended:3.0",
     "wfs": "http://www.opengis.net/wfs/2.0",
 }
@@ -225,6 +225,11 @@ async def fetch_buildings_by_refcat(
 ) -> list[dict]:
     """Descarga las huellas de edificios de la parcela.
 
+    The Catastro INSPIRE WFS returns buildings in GML FeatureCollection
+    using ``gml:featureMember`` (NOT ``wfs:member``). Building properties
+    use varying namespace prefixes (``bu-base``, ``bu-ext2d``…) so we
+    match element local-names instead of fixed namespace URIs.
+
     Args:
         refcat: Referencia catastral (14 o 20 chars).
 
@@ -235,8 +240,8 @@ async def fetch_buildings_by_refcat(
 
     url = (
         f"{WFS_BUILDINGS}?service=wfs&version=2"
-        f"&request=getfeature&STOREDQUERIE_ID=GETBUILDINGBYPARCEL"
-        f"&refcat={refcat}&srsname={srs}"
+        f"&request=getfeature&STOREDQUERIE_ID=GetBuildingByParcel"
+        f"&REFCAT={refcat}&srsname={srs}"
     )
 
     logger.info("Fetching buildings: %s", url)
@@ -254,32 +259,103 @@ async def fetch_buildings_by_refcat(
 
     buildings: list[dict] = []
 
-    # Iterate over building members
-    for member in root.iter(f"{{{_NS['wfs']}}}member"):
+    # ── Helper: strip namespace from tag ──
+    def _local(tag: str) -> str:
+        return tag.split("}")[-1] if "}" in tag else tag
+
+    # ── Iterate over gml:featureMember OR wfs:member ──
+    members: list[ET.Element] = []
+    for elem in root:
+        local = _local(elem.tag)
+        if local in ("featureMember", "member"):
+            members.append(elem)
+
+    if not members:
+        logger.info(
+            "No featureMember/member elements in WFS response for refcat=%s "
+            "(root tag=%s, children=%d)",
+            refcat, _local(root.tag), len(list(root)),
+        )
+        return []
+
+    logger.info("Found %d featureMember(s) in WFS response", len(members))
+
+    for member in members:
         geometry = None
-        # Find geometry within this member
-        for poly in member.iter(f"{{{_NS['gml']}}}Polygon"):
-            geometry = _parse_gml_polygon(poly)
+
+        # Find geometry: try gml:Polygon, then gml:PolygonPatch
+        for tag_name in ("Polygon", "PolygonPatch"):
+            for poly in member.iter(f"{{{_NS['gml']}}}{tag_name}"):
+                geometry = _parse_gml_polygon(poly)
+                if geometry:
+                    break
             if geometry:
                 break
 
+        # Fallback: search by local tag name (some responses use alt ns)
         if geometry is None:
+            for elem in member.iter():
+                if _local(elem.tag) in ("Polygon", "PolygonPatch", "Surface"):
+                    geometry = _parse_gml_polygon(elem)
+                    if geometry:
+                        break
+
+        # Last resort: find any posList directly in the member tree
+        if geometry is None:
+            geometry = _parse_gml_polygon(member)
+
+        if geometry is None:
+            logger.debug("Member has no parseable Polygon — skipping")
             continue
 
         geometry = _reproject_to_4326(geometry, source_crs)
 
-        # Extract building properties
+        # ── Extract building properties by local name ──
         props: dict = {"refcat": refcat}
 
-        for floors_el in member.iter(f"{{{_NS['bu']}}}numberOfFloorsAboveGround"):
-            if floors_el.text:
-                props["numberOfFloorsAboveGround"] = int(floors_el.text)
+        for elem in member.iter():
+            local_tag = _local(elem.tag)
 
-        for use_el in member.iter(f"{{{_NS['bu']}}}currentUse"):
-            if use_el.text:
-                props["currentUse"] = use_el.text
+            if local_tag == "numberOfFloorsAboveGround":
+                # May be nil='true' — check for xsi:nil or nilReason
+                nil_attr = elem.get("{http://www.w3.org/2001/XMLSchema-instance}nil")
+                nil_reason = elem.get("nilReason") or elem.get("nil")
+                if nil_attr == "true" or nil_reason:
+                    # No floor data — will be forced to 1 below
+                    continue
+                if elem.text and elem.text.strip().isdigit():
+                    props["numberOfFloorsAboveGround"] = int(elem.text.strip())
 
-        # Compute area
+            elif local_tag == "currentUse" and elem.text:
+                raw_use = elem.text.strip()
+                # Catastro format: "1_residential" → "residential"
+                if "_" in raw_use:
+                    raw_use = raw_use.split("_", 1)[1]
+                props["currentUse"] = raw_use
+
+            elif local_tag == "value":
+                # officialArea > OfficialArea > value
+                uom = elem.get("uom", "")
+                if uom == "m2" and elem.text:
+                    try:
+                        props["officialArea_m2"] = float(elem.text.strip())
+                    except ValueError:
+                        pass
+
+            elif local_tag == "numberOfBuildingUnits" and elem.text:
+                try:
+                    props["numberOfBuildingUnits"] = int(elem.text.strip())
+                except ValueError:
+                    pass
+
+        # Force minimum 1 floor — a building with 0/missing floors is not visible
+        if props.get("numberOfFloorsAboveGround", 0) < 1:
+            props["numberOfFloorsAboveGround"] = 1
+            logger.warning(
+                "Building has 0 or missing floors → forcing 1 floor (3m)"
+            )
+
+        # Compute area from geometry
         geom = shape(geometry)
         transformer = Transformer.from_crs("EPSG:4326", "EPSG:25830", always_xy=True)
         projected = shapely_transform(transformer.transform, geom)
@@ -292,7 +368,152 @@ async def fetch_buildings_by_refcat(
         })
 
     logger.info("Buildings fetched: %d for refcat=%s", len(buildings), refcat)
+
+    # ── Fallback: if WFS returned no buildings, try DNPRC API ──
+    if not buildings:
+        logger.info(
+            "WFS returned 0 buildings for %s — trying DNPRC fallback", refcat
+        )
+        fallback = await _dnprc_fallback_buildings(refcat, timeout=timeout)
+        if fallback:
+            buildings = fallback
+
     return buildings
+
+
+# ─── DNPRC API Endpoints (non-INSPIRE, always available) ────────────────────
+
+DNPRC_URL = (
+    "http://ovc.catastro.meh.es/OVCServWeb/OVCWcfCallejero/"
+    "COVCCallejero.svc/json/Consulta_DNPRC"
+)
+
+
+async def _dnprc_fallback_buildings(
+    refcat: str,
+    timeout: float = 15.0,
+) -> list[dict]:
+    """Create synthetic building footprints from Catastro DNPRC descriptive data.
+
+    When the WFS INSPIRE building service returns empty, this function
+    queries the DNPRC API (which always has data) to get construction
+    area and floors, then generates a rectangular footprint centered
+    on the parcel centroid.
+
+    Returns:
+        List of GeoJSON Features, or empty list if no constructions found.
+    """
+    try:
+        # Fetch parcel to get centroid
+        parcel = await fetch_parcel_by_refcat(refcat, timeout=timeout)
+        parcel_geom = shape(parcel["geometry"])
+        centroid = parcel_geom.centroid
+        c_lon, c_lat = centroid.x, centroid.y
+
+        # Fetch descriptive data from DNPRC
+        url = f"{DNPRC_URL}?RefCat={refcat}"
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+
+        data = resp.json()
+        result = data.get("consulta_dnprcResult", {})
+
+        if result.get("control", {}).get("cuerr"):
+            logger.info("DNPRC returned error for %s", refcat)
+            return []
+
+        bico = result.get("bico", {})
+        bi = bico.get("bi", {})
+        # When there are multiple units, bi may be a list — use first
+        if isinstance(bi, list):
+            bi = bi[0] if bi else {}
+        debi = bi.get("debi", {})
+        if isinstance(debi, list):
+            debi = debi[0] if debi else {}
+        sfc_str = debi.get("sfc", "0")
+        sfc = float(sfc_str) if sfc_str else 0.0
+
+        if sfc <= 0:
+            logger.info(
+                "No construction area (sfc=0) for refcat=%s — no buildings",
+                refcat,
+            )
+            return []
+
+        # Extract construction details if available
+        lcons = bico.get("lcons", {})
+        cons_list = lcons.get("cons", [])
+        if isinstance(cons_list, dict):
+            cons_list = [cons_list]
+
+        # Determine floors and use from construction details
+        num_floors = 1
+        use = "agricultural"
+        for cons in cons_list:
+            lcd = cons.get("lcd", "")
+            if lcd and lcd[0].isdigit():
+                try:
+                    num_floors = max(num_floors, int(lcd[0]))
+                except ValueError:
+                    pass
+            dt = cons.get("dt", {})
+            if "stl" in dt:
+                stl = dt["stl"]
+                if "residencial" in stl.lower() or "vivienda" in stl.lower():
+                    use = "residential"
+                elif "industrial" in stl.lower() or "almac" in stl.lower():
+                    use = "industrial"
+                elif "agrario" in stl.lower():
+                    use = "agricultural"
+
+        # Generate a rectangular footprint from construction area
+        # Approximate: sqrt(area) × sqrt(area) → but elongated 1.5:1
+        import math
+
+        side_short = math.sqrt(sfc / 1.5)
+        side_long = side_short * 1.5
+
+        # Convert meters to degrees
+        lat_rad = math.radians(c_lat)
+        m_per_deg_lon = 111_320.0 * math.cos(lat_rad)
+        m_per_deg_lat = 111_320.0
+
+        dx = (side_long / 2) / m_per_deg_lon
+        dy = (side_short / 2) / m_per_deg_lat
+
+        # Create rectangular polygon centered on parcel centroid
+        ring = [
+            [c_lon - dx, c_lat - dy],
+            [c_lon + dx, c_lat - dy],
+            [c_lon + dx, c_lat + dy],
+            [c_lon - dx, c_lat + dy],
+            [c_lon - dx, c_lat - dy],
+        ]
+
+        props = {
+            "refcat": refcat,
+            "numberOfFloorsAboveGround": max(1, num_floors),
+            "currentUse": use,
+            "area_m2": sfc,
+            "synthetic": True,  # Flag: footprint is approximate
+        }
+
+        logger.info(
+            "DNPRC fallback: sfc=%.0f m², %d floors, use=%s → "
+            "synthetic %.1f×%.1f m footprint at (%.6f, %.6f)",
+            sfc, num_floors, use, side_long, side_short, c_lon, c_lat,
+        )
+
+        return [{
+            "type": "Feature",
+            "geometry": {"type": "Polygon", "coordinates": [ring]},
+            "properties": props,
+        }]
+
+    except Exception as e:
+        logger.warning("DNPRC fallback failed for %s: %s", refcat, e)
+        return []
 
 
 async def fetch_building_photo(refcat: str, timeout: float = 15.0) -> bytes | None:

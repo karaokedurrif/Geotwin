@@ -48,3 +48,4 @@ data/dem/
 __pycache__/
 .venv/
 .env.vercel
+scripts/output/

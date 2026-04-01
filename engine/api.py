@@ -535,21 +535,83 @@ def _run_autotwin(job_id: str, refcat: str, twin_id: str) -> None:
         if buildings:
             on_progress("Extruyendo edificios 3D", 92)
             from .buildings.extruder import extrude_building
-            import numpy as _np
+            from .terrain.export import get_local_origin
+
+            # Get the terrain's local origin (set during process_twin export)
+            local_origin = get_local_origin()
+            if local_origin is None:
+                # Fallback: compute origin from parcel centroid
+                import math
+                c_lon = result.aoi_metadata.centroid_lon
+                c_lat = result.aoi_metadata.centroid_lat
+                lat_rad = math.radians(c_lat)
+                local_origin = {
+                    "centroid_lon": c_lon,
+                    "centroid_lat": c_lat,
+                    "min_elev": 0.0,
+                    "m_per_deg_lon": 111_320.0 * math.cos(lat_rad),
+                    "m_per_deg_lat": 111_320.0,
+                    "z_sign": -1,
+                }
+                logger.warning(
+                    "No local_origin from terrain export — using fallback "
+                    "(min_elev=0)"
+                )
+
+            # Try to sample DEM elevation at each building centroid
+            dem_elevations: dict[int, float] = {}
+            try:
+                # Load DEM if available for elevation sampling
+                dem_tif = output_dir / "dem.tif"
+                if dem_tif.exists():
+                    import rasterio
+                    with rasterio.open(str(dem_tif)) as src:
+                        for i, bldg_feature in enumerate(buildings):
+                            from shapely.geometry import shape as _shape
+                            bldg_geom = _shape(bldg_feature["geometry"])
+                            bldg_centroid = bldg_geom.centroid
+                            try:
+                                row, col = src.index(
+                                    bldg_centroid.x, bldg_centroid.y
+                                )
+                                elev = float(src.read(1)[row, col])
+                                if elev > -1000:  # valid elevation
+                                    dem_elevations[i] = elev
+                            except (IndexError, ValueError):
+                                pass
+                    logger.info(
+                        "DEM elevation sampled for %d/%d buildings",
+                        len(dem_elevations), len(buildings),
+                    )
+            except Exception as dem_err:
+                logger.warning("DEM elevation sampling failed: %s", dem_err)
 
             for i, bldg_feature in enumerate(buildings):
                 try:
+                    n_floors = bldg_feature["properties"].get(
+                        "numberOfFloorsAboveGround", 1
+                    )
+                    # Force minimum 1 floor if missing or zero
+                    n_floors = max(1, n_floors)
+
+                    # Use DEM elevation or fallback to terrain min_elev
+                    base_elev = dem_elevations.get(
+                        i, local_origin.get("min_elev", 0.0)
+                    )
+
                     bldg_mesh = extrude_building(
                         footprint=bldg_feature["geometry"],
-                        num_floors=bldg_feature["properties"].get(
-                            "numberOfFloorsAboveGround", 1
+                        num_floors=n_floors,
+                        ground_elevation=base_elev,
+                        use=bldg_feature["properties"].get(
+                            "currentUse", "agricultural"
                         ),
-                        ground_elevation=0.0,
-                        use=bldg_feature["properties"].get("currentUse", "residential"),
+                        origin=local_origin,
                         metadata={
                             "refcat": refcat,
                             "index": i,
                             "use": bldg_feature["properties"].get("currentUse"),
+                            "floors": n_floors,
                         },
                     )
                     bldg_glb_path = output_dir / f"building_{i}.glb"
@@ -557,12 +619,18 @@ def _run_autotwin(job_id: str, refcat: str, twin_id: str) -> None:
                     building_info.append({
                         "index": i,
                         "use": bldg_feature["properties"].get("currentUse"),
-                        "floors": bldg_feature["properties"].get(
-                            "numberOfFloorsAboveGround", 1
-                        ),
+                        "floors": n_floors,
                         "area_m2": bldg_feature["properties"].get("area_m2"),
                         "glb_path": str(bldg_glb_path),
+                        "base_elevation": base_elev,
                     })
+                    logger.info(
+                        "Building %d extruded: %d floors, base=%.1fm, "
+                        "use=%s, path=%s",
+                        i, n_floors, base_elev,
+                        bldg_feature["properties"].get("currentUse"),
+                        bldg_glb_path,
+                    )
                 except Exception as bldg_err:
                     logger.warning("Building %d extrusion failed: %s", i, bldg_err)
 
