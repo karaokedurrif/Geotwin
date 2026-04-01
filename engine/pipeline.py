@@ -395,33 +395,40 @@ def process_twin(
     # Limpiar textura compartida después de exportar
     set_texture(None)
 
-    # ─── 7. NDVI real desde Sentinel-2 (opcional) ───────────────────────
+    # ─── 7. NDVI real desde Sentinel-2 (opcional — SKIP for <1ha) ──────
     ndvi_result = None
-    copernicus_id = settings.copernicus_client_id
-    copernicus_secret = settings.copernicus_client_secret
-
-    if copernicus_id and copernicus_secret:
-        try:
-            _progress("Calculando NDVI real (Sentinel-2)", 90)
-            from .raster.sentinel import compute_ndvi_from_sentinel
-
-            ndvi_result = compute_ndvi_from_sentinel(
-                aoi_feature,
-                output_dir,
-                client_id=copernicus_id,
-                client_secret=copernicus_secret,
-                max_cloud_cover=30.0,
-                days_back=120,
-            )
-            logger.info(
-                "NDVI real: mean=%.3f, fecha=%s",
-                ndvi_result["stats"]["mean"], ndvi_result["date"],
-            )
-        except Exception as e:
-            logger.warning("NDVI real no disponible: %s", e)
-            ndvi_result = None
+    if aoi_meta.area_ha < 1.0:
+        logger.info(
+            "Sentinel NDVI skipped for small parcel (%.2f ha < 1 ha) — "
+            "100%% ortho coverage preferred",
+            aoi_meta.area_ha,
+        )
     else:
-        logger.info("NDVI real omitido: credenciales Copernicus no configuradas")
+        copernicus_id = settings.copernicus_client_id
+        copernicus_secret = settings.copernicus_client_secret
+
+        if copernicus_id and copernicus_secret:
+            try:
+                _progress("Calculando NDVI real (Sentinel-2)", 90)
+                from .raster.sentinel import compute_ndvi_from_sentinel
+
+                ndvi_result = compute_ndvi_from_sentinel(
+                    aoi_feature,
+                    output_dir,
+                    client_id=copernicus_id,
+                    client_secret=copernicus_secret,
+                    max_cloud_cover=30.0,
+                    days_back=120,
+                )
+                logger.info(
+                    "NDVI real: mean=%.3f, fecha=%s",
+                    ndvi_result["stats"]["mean"], ndvi_result["date"],
+                )
+            except Exception as e:
+                logger.warning("NDVI real no disponible: %s", e)
+                ndvi_result = None
+        else:
+            logger.info("NDVI real omitido: credenciales Copernicus no configuradas")
 
     # ─── 8. Guardar metadatos ───────────────────────────────────────────
     _progress("Finalizando", 95)

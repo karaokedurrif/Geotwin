@@ -958,10 +958,12 @@ export default function CesiumViewer({
       // ── PNOA Orthophoto via proxy (IGN no tiene CORS) ──
       try {
         const layers = viewer.imageryLayers;
+        // For small parcels (<1 ha), push to Z21 for maximum ortho sharpness
+        const pnoaMaxLevel = recipe?.area_ha && recipe.area_ha < 1.0 ? 21 : 20;
         const pnoaProv = new Cesium.UrlTemplateImageryProvider({
           url: '/api/pnoa-tile/{z}/{x}/{y}',
           minimumLevel: 5,
-          maximumLevel: 20,
+          maximumLevel: pnoaMaxLevel,
           credit: 'PNOA © IGN España',
         });
         
@@ -1472,6 +1474,12 @@ export default function CesiumViewer({
 
     async function loadRealNDVI() {
       if (!realNDVIEnabled || !recipe) return;
+
+      // Skip Sentinel NDVI for small parcels (<1 ha) — ortho-only is sharper
+      if (recipe.area_ha && recipe.area_ha < 1.0) {
+        logMessage(`Sentinel NDVI skipped for small parcel (${recipe.area_ha.toFixed(2)} ha < 1 ha) — 100% ortho`, 'info');
+        return;
+      }
 
       // Guard: check viewer is still valid
       if (!viewer || viewer.isDestroyed()) {

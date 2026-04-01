@@ -220,7 +220,13 @@ def _run_pipeline(job_id: str, req: ProcessRequest) -> None:
             try:
                 from .terrain.export import merge_buildings_into_glb
                 bldg_paths = [Path(bi["glb_path"]) for bi in building_info]
-                merge_buildings_into_glb(Path(result.glb_path), bldg_paths)
+                _aoi_path = Path(result.glb_path).parent / "aoi.geojson"
+                merge_buildings_into_glb(
+                    Path(result.glb_path), bldg_paths,
+                    area_ha=result.aoi_metadata.area_ha,
+                    aoi_geojson_path=_aoi_path if _aoi_path.exists() else None,
+                    local_origin=local_origin,
+                )
             except Exception as merge_exc:
                 logger.warning("Building merge failed: %s", merge_exc)
 
@@ -758,7 +764,13 @@ def _run_autotwin(job_id: str, refcat: str, twin_id: str) -> None:
             try:
                 from .terrain.export import merge_buildings_into_glb
                 bldg_paths = [Path(bi["glb_path"]) for bi in building_info]
-                merge_buildings_into_glb(Path(result.glb_path), bldg_paths)
+                _aoi_path = Path(result.glb_path).parent / "aoi.geojson"
+                merge_buildings_into_glb(
+                    Path(result.glb_path), bldg_paths,
+                    area_ha=result.aoi_metadata.area_ha,
+                    aoi_geojson_path=_aoi_path if _aoi_path.exists() else None,
+                    local_origin=local_origin,
+                )
             except Exception as merge_exc:
                 logger.warning("Building merge into GLB failed: %s", merge_exc)
 
@@ -930,7 +942,13 @@ def regenerate_twin(twin_id: str):
 
                     if building_info:
                         bldg_paths = [Path(bi["glb_path"]) for bi in building_info]
-                        merge_buildings_into_glb(Path(result.glb_path), bldg_paths)
+                        _aoi_path = Path(result.glb_path).parent / "aoi.geojson"
+                        merge_buildings_into_glb(
+                            Path(result.glb_path), bldg_paths,
+                            area_ha=result.aoi_metadata.area_ha,
+                            aoi_geojson_path=_aoi_path if _aoi_path.exists() else None,
+                            local_origin=local_origin,
+                        )
 
                     logger.info("Regen %s: %d buildings merged", tid, len(building_info))
             except Exception as bldg_exc:

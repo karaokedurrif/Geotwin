@@ -791,18 +791,121 @@ def _bake_contact_ao(
     )
 
 
+def build_perimeter_wall(
+    aoi_geojson_path: Path,
+    origin: dict,
+    wall_height: float = 1.5,
+    wall_thickness: float = 0.15,
+) -> trimesh.Trimesh | None:
+    """Build a perimeter wall mesh from parcel geometry.
+
+    Extrudes the parcel boundary into a thin wall suitable for small
+    parcels (<1 ha) where a visual boundary aids drone flight planning.
+
+    Args:
+        aoi_geojson_path: Path to the aoi.geojson saved by the pipeline.
+        origin: Local origin dict (centroid_lon, centroid_lat, min_elev, etc.).
+        wall_height: Height of the wall in meters (default 1.5m).
+        wall_thickness: Wall thickness in meters (default 0.15m).
+
+    Returns:
+        trimesh.Trimesh in local Y-up coords, or None on failure.
+    """
+    import json as _json
+    from shapely.geometry import shape as _shape, Polygon as _Polygon
+    from shapely import buffer as _buffer
+
+    try:
+        geojson = _json.loads(aoi_geojson_path.read_text())
+        geom = _shape(geojson["geometry"])
+        if geom.geom_type == "MultiPolygon":
+            geom = max(geom.geoms, key=lambda g: g.area)
+
+        # Convert WGS84 exterior ring → local meters (X=East, Y_2d=North)
+        m_lon = origin["m_per_deg_lon"]
+        m_lat = origin["m_per_deg_lat"]
+        c_lon = origin["centroid_lon"]
+        c_lat = origin["centroid_lat"]
+        min_elev = origin.get("min_elev", 0.0)
+
+        exterior_lonlat = list(geom.exterior.coords)
+        local_2d = []
+        for lon, lat in exterior_lonlat:
+            x = (lon - c_lon) * m_lon
+            y = (lat - c_lat) * m_lat
+            local_2d.append((x, y))
+
+        # Log parcel corners in local coords
+        logger.info("Parcel corner coordinates (local meters, X=East, Z=-North):")
+        for i, (x, y) in enumerate(local_2d[:4]):
+            logger.info("  Corner %d: X=%.2f, Z=%.2f", i, x, -y)
+
+        # Create wall as buffer difference (outer - inner) → thin band
+        outer = _Polygon(local_2d)
+        inner = outer.buffer(-wall_thickness)
+        if inner.is_empty or not inner.is_valid:
+            inner = outer.buffer(-wall_thickness / 2)
+
+        wall_poly = outer.difference(inner)
+        if wall_poly.is_empty:
+            logger.warning("Perimeter wall polygon is empty — skipping")
+            return None
+
+        # Extrude the thin band upward
+        wall_mesh = trimesh.creation.extrude_polygon(wall_poly, wall_height)
+
+        # Axis swap: trimesh extrudes along +Z → we need Y=up, -Z=north
+        verts = np.asarray(wall_mesh.vertices, dtype=np.float64)
+        new_verts = np.empty_like(verts)
+        new_verts[:, 0] = verts[:, 0]      # X = East
+        new_verts[:, 1] = verts[:, 2]      # Y = elevation (was Z)
+        new_verts[:, 2] = -verts[:, 1]     # -Z = North (was Y in 2D)
+        wall_mesh.vertices = new_verts
+
+        # Reverse face winding after axis swap
+        wall_mesh.faces = wall_mesh.faces[:, ::-1]
+        trimesh.repair.fix_normals(wall_mesh)
+
+        # Dark sandstone material (darker than buildings)
+        from PIL import Image
+        wall_color = Image.new("RGB", (4, 4), (140, 120, 90))  # dark sandstone
+        wall_mat = trimesh.visual.material.PBRMaterial(
+            baseColorTexture=wall_color,
+            baseColorFactor=[0.55, 0.47, 0.35, 1.0],
+            metallicFactor=0.0,
+            roughnessFactor=0.9,
+            doubleSided=True,
+        )
+        uv = np.zeros((len(wall_mesh.vertices), 2), dtype=np.float32)
+        wall_mesh.visual = trimesh.visual.TextureVisuals(uv=uv, material=wall_mat)
+        wall_mesh.metadata["_isWall"] = True
+
+        logger.info(
+            "Perimeter wall built: %d verts, %d faces, height=%.1fm, thickness=%.2fm",
+            len(wall_mesh.vertices), len(wall_mesh.faces), wall_height, wall_thickness,
+        )
+        return wall_mesh
+    except Exception as e:
+        logger.warning("build_perimeter_wall failed: %s", e)
+        return None
+
+
 def merge_buildings_into_glb(
     terrain_glb_path: Path,
     building_glb_paths: list[Path],
     *,
     debug_y_offset: float = 0.0,
+    area_ha: float = 100.0,
+    aoi_geojson_path: Path | None = None,
+    local_origin: dict | None = None,
 ) -> None:
     """Merge building GLBs into the main terrain GLB.
 
     - Samples terrain mesh to find correct Y at each building's XZ position.
     - Shifts building base to terrain surface + debug_y_offset.
     - Calls trimesh.repair.fix_normals to prevent transparency.
-    - White bone material (roughness 0.8) for concrete/stone appearance.
+    - Sandstone material for stone/concrete appearance.
+    - For parcels <1ha: adds perimeter wall, recenters on house, stronger AO.
     """
     if not building_glb_paths:
         return
@@ -828,19 +931,20 @@ def merge_buildings_into_glb(
             terrain_verts[:, 2].min(), terrain_verts[:, 2].max(),
         )
 
-        # ── White bone material — concrete/stone appearance ──
+        # ── Sandstone material ──
         from PIL import Image
 
-        bldg_color = Image.new("RGB", (16, 16), (235, 230, 220))  # white bone
+        bldg_color = Image.new("RGB", (16, 16), (184, 160, 122))  # warm sandstone
         bldg_mat = trimesh.visual.material.PBRMaterial(
             baseColorTexture=bldg_color,
-            baseColorFactor=[0.92, 0.90, 0.86, 1.0],
+            baseColorFactor=[0.72, 0.63, 0.48, 1.0],
             metallicFactor=0.0,
-            roughnessFactor=0.8,
+            roughnessFactor=0.85,
             doubleSided=True,
         )
 
         added = 0
+        bldg_centers_xz = []  # track building centers for recentering
         for bp in building_glb_paths:
             bp = Path(bp)
             if not bp.exists():
@@ -877,6 +981,8 @@ def merge_buildings_into_glb(
                 bv[:, 1] += y_shift
                 bm.vertices = bv
 
+                bldg_centers_xz.append((cx, cz))
+
                 logger.info(
                     "Building %s AFTER relocation: terrain_y=%.1f, y_shift=+%.1f "
                     "(includes +%.1fm debug), Y=[%.2f,%.2f]",
@@ -887,7 +993,7 @@ def merge_buildings_into_glb(
                 # ── Fix normals (prevents invisible/transparent faces) ──
                 trimesh.repair.fix_normals(bm)
 
-                # ── Apply white bone material + UVs ──
+                # ── Apply sandstone material + UVs ──
                 uv = np.zeros((len(bm.vertices), 2), dtype=np.float32)
                 bm.visual = trimesh.visual.TextureVisuals(uv=uv, material=bldg_mat)
                 bm.metadata["_isBuilding"] = True
@@ -897,19 +1003,49 @@ def merge_buildings_into_glb(
             except Exception as be:
                 logger.warning("Failed loading building GLB %s: %s", bp, be)
 
-        if added > 0:
-            # ── Bake ambient occlusion at building-ground contact ──
+        # ── Perimeter wall for small parcels (<1 ha) ──
+        if area_ha < 1.0 and aoi_geojson_path and local_origin:
             try:
-                _bake_contact_ao(scene, ao_radius=5.0, ao_strength=0.5)
+                wall_mesh = build_perimeter_wall(
+                    aoi_geojson_path, local_origin,
+                    wall_height=1.5, wall_thickness=0.15,
+                )
+                if wall_mesh is not None:
+                    scene.add_geometry(wall_mesh, node_name="perimeter_wall")
+                    logger.info("Perimeter wall added to scene")
+            except Exception as wall_err:
+                logger.warning("Perimeter wall failed (non-critical): %s", wall_err)
+
+        if added > 0:
+            # ── Bake ambient occlusion — stronger for small parcels ──
+            ao_radius = 3.0 if area_ha < 1.0 else 5.0
+            ao_strength = 0.75 if area_ha < 1.0 else 0.5
+            try:
+                _bake_contact_ao(scene, ao_radius=ao_radius, ao_strength=ao_strength)
             except Exception as ao_err:
                 logger.warning("AO baking failed (non-critical): %s", ao_err)
+
+            # ── Recenter on house for small parcels (<1 ha) ──
+            if area_ha < 1.0 and bldg_centers_xz:
+                avg_x = np.mean([c[0] for c in bldg_centers_xz])
+                avg_z = np.mean([c[1] for c in bldg_centers_xz])
+                logger.info(
+                    "Recentering scene on house: shifting (%.2f, %.2f) → (0, 0)",
+                    avg_x, avg_z,
+                )
+                for geom in scene.geometry.values():
+                    gv = np.asarray(geom.vertices, dtype=np.float64)
+                    gv[:, 0] -= avg_x
+                    gv[:, 2] -= avg_z
+                    geom.vertices = gv
 
             merged_data = scene.export(file_type="glb")
             terrain_glb_path.write_bytes(merged_data)
             logger.info(
                 "Merged %d buildings into %s (%.1f KB) "
-                "[y_offset=+%.1fm, material=white_bone]",
-                added, terrain_glb_path, len(merged_data) / 1024, debug_y_offset,
+                "[y_offset=+%.1fm, material=sandstone, ao=%.0f%%]",
+                added, terrain_glb_path, len(merged_data) / 1024,
+                debug_y_offset, ao_strength * 100,
             )
         else:
             logger.warning("merge_buildings_into_glb: no buildings merged")
