@@ -294,6 +294,7 @@ def _mesh_to_glb(mesh: TerrainMesh, texture_path: Path | None = None, *, local_c
     t_mesh = trimesh.Trimesh(
         vertices=verts,
         faces=faces,
+        process=False,  # CRITICAL: prevent vertex merging that breaks UV mapping
     )
     # Force vertex normals into cache so glTF export includes NORMAL attribute
     # (required by Cesium's PBR shader when textures are present)
