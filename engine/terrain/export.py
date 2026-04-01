@@ -689,11 +689,27 @@ def export_terrain_and_buildings(
     return result
 
 
-def merge_buildings_into_glb(terrain_glb_path: Path, building_glb_paths: list[Path]) -> None:
-    """Merge building GLBs into the main terrain GLB so the viewer shows them together.
+def _sample_terrain_y(terrain_verts: np.ndarray, x: float, z: float) -> float:
+    """Find terrain elevation (Y) at a given (X, Z) position by nearest vertex."""
+    dists = (terrain_verts[:, 0] - x) ** 2 + (terrain_verts[:, 2] - z) ** 2
+    return float(terrain_verts[dists.argmin(), 1])
 
-    Loads the existing terrain GLB as a trimesh Scene, adds each building mesh
-    with a distinct beige material, and re-exports to the same path.
+
+def merge_buildings_into_glb(
+    terrain_glb_path: Path,
+    building_glb_paths: list[Path],
+    *,
+    debug_y_offset: float = 50.0,
+) -> None:
+    """Merge building GLBs into the main terrain GLB.
+
+    Critical fixes vs previous version:
+    - Samples terrain mesh to find correct Y at each building's XZ position
+      (buildings were at Y=0, buried 30-50m under the terrain surface).
+    - Applies RED NEON emissive material for debug visibility.
+    - Calls trimesh.repair.fix_normals to prevent transparency.
+    - Adds debug_y_offset (default +50m) so buildings float above terrain
+      to confirm they exist. Set to 0.0 for production.
     """
     if not building_glb_paths:
         return
@@ -704,17 +720,32 @@ def merge_buildings_into_glb(terrain_glb_path: Path, building_glb_paths: list[Pa
 
     try:
         scene = trimesh.load(str(terrain_glb_path))
-        # If trimesh loaded a single mesh, wrap it in a Scene
         if isinstance(scene, trimesh.Trimesh):
             scene = trimesh.Scene(geometry={"terrain": scene})
 
+        # ── Extract terrain mesh (largest by vertex count) for Y sampling ──
+        terrain_mesh = max(
+            scene.geometry.values(), key=lambda g: len(g.vertices)
+        )
+        terrain_verts = np.asarray(terrain_mesh.vertices)
+        logger.info(
+            "merge_buildings: terrain bounds X=[%.1f,%.1f] Y=[%.1f,%.1f] Z=[%.1f,%.1f]",
+            terrain_verts[:, 0].min(), terrain_verts[:, 0].max(),
+            terrain_verts[:, 1].min(), terrain_verts[:, 1].max(),
+            terrain_verts[:, 2].min(), terrain_verts[:, 2].max(),
+        )
+
+        # ── RED NEON emissive material for debug visibility ──
         from PIL import Image
 
-        bldg_color = Image.new("RGB", (16, 16), (200, 180, 150))  # beige
+        bldg_color = Image.new("RGB", (16, 16), (255, 0, 0))  # RED
         bldg_mat = trimesh.visual.material.PBRMaterial(
             baseColorTexture=bldg_color,
+            baseColorFactor=[1.0, 0.0, 0.0, 1.0],
+            emissiveFactor=[1.0, 0.0, 0.0],        # RED NEON glow
+            emissiveTexture=bldg_color,
             metallicFactor=0.0,
-            roughnessFactor=0.6,
+            roughnessFactor=0.4,
             doubleSided=True,
         )
 
@@ -725,21 +756,53 @@ def merge_buildings_into_glb(terrain_glb_path: Path, building_glb_paths: list[Pa
                 continue
             try:
                 bm = trimesh.load(str(bp), process=False)
+                # Unwrap Scene → single mesh
                 if isinstance(bm, trimesh.Scene):
-                    for name, geom in bm.geometry.items():
-                        if hasattr(geom, 'vertices'):
-                            # Apply UVs + material so it renders with color
-                            uv = np.zeros((len(geom.vertices), 2), dtype=np.float32)
-                            geom.visual = trimesh.visual.TextureVisuals(uv=uv, material=bldg_mat)
-                            geom.metadata["_isBuilding"] = True
-                            scene.add_geometry(geom, node_name=f"building_{added}")
-                            added += 1
-                elif hasattr(bm, 'vertices'):
-                    uv = np.zeros((len(bm.vertices), 2), dtype=np.float32)
-                    bm.visual = trimesh.visual.TextureVisuals(uv=uv, material=bldg_mat)
-                    bm.metadata["_isBuilding"] = True
-                    scene.add_geometry(bm, node_name=f"building_{added}")
-                    added += 1
+                    meshes = [g for g in bm.geometry.values() if hasattr(g, 'vertices')]
+                    if not meshes:
+                        continue
+                    bm = meshes[0]
+
+                bv = np.asarray(bm.vertices, dtype=np.float64)
+
+                # ── Log BEFORE relocation ──
+                logger.info(
+                    "Building %s BEFORE: verts=%d faces=%d "
+                    "X=[%.2f,%.2f] Y=[%.2f,%.2f] Z=[%.2f,%.2f]",
+                    bp.name, len(bv), len(bm.faces),
+                    bv[:, 0].min(), bv[:, 0].max(),
+                    bv[:, 1].min(), bv[:, 1].max(),
+                    bv[:, 2].min(), bv[:, 2].max(),
+                )
+
+                # ── Sample terrain Y at building XZ center ──
+                cx = (bv[:, 0].min() + bv[:, 0].max()) / 2.0
+                cz = (bv[:, 2].min() + bv[:, 2].max()) / 2.0
+                terrain_y = _sample_terrain_y(terrain_verts, cx, cz)
+                bldg_y_min = float(bv[:, 1].min())
+
+                # Shift building so its base sits on the terrain surface + debug offset
+                y_shift = terrain_y - bldg_y_min + debug_y_offset
+                bv[:, 1] += y_shift
+                bm.vertices = bv
+
+                logger.info(
+                    "Building %s AFTER relocation: terrain_y=%.1f, y_shift=+%.1f "
+                    "(includes +%.1fm debug), Y=[%.2f,%.2f]",
+                    bp.name, terrain_y, y_shift, debug_y_offset,
+                    bv[:, 1].min(), bv[:, 1].max(),
+                )
+
+                # ── Fix normals (prevents invisible/transparent faces) ──
+                trimesh.repair.fix_normals(bm)
+
+                # ── Apply RED debug material + UVs ──
+                uv = np.zeros((len(bm.vertices), 2), dtype=np.float32)
+                bm.visual = trimesh.visual.TextureVisuals(uv=uv, material=bldg_mat)
+                bm.metadata["_isBuilding"] = True
+
+                scene.add_geometry(bm, node_name=f"building_{added}")
+                added += 1
             except Exception as be:
                 logger.warning("Failed loading building GLB %s: %s", bp, be)
 
@@ -747,8 +810,9 @@ def merge_buildings_into_glb(terrain_glb_path: Path, building_glb_paths: list[Pa
             merged_data = scene.export(file_type="glb")
             terrain_glb_path.write_bytes(merged_data)
             logger.info(
-                "Merged %d buildings into %s (%.1f KB)",
-                added, terrain_glb_path, len(merged_data) / 1024,
+                "Merged %d buildings into %s (%.1f KB) "
+                "[debug_y_offset=+%.0fm, material=RED_NEON]",
+                added, terrain_glb_path, len(merged_data) / 1024, debug_y_offset,
             )
         else:
             logger.warning("merge_buildings_into_glb: no buildings merged")
