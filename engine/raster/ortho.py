@@ -427,31 +427,24 @@ def extract_sharp_texture(
     output_path: Path,
     target_max_px: int = 4096,
 ) -> Path:
-    """Extract a high-resolution, sharpened texture from the ortho GeoTIFF.
+    """Download a fresh high-res texture from PNOA WMS at the mesh bbox.
 
-    Reads directly from the GeoTIFF at the mesh's geographic extent using
-    rasterio cubic resampling to produce a 4K texture. Then applies
-    professional sharpening (UnsharpMask) and local contrast enhancement.
+    Instead of cropping from the buffered GeoTIFF (which only has ~1140 px
+    for the mesh area → upsampled to 4K = meaningless interpolation), this
+    makes a NEW WMS GetMap request specifically for the mesh's geographic
+    extent at maximum pixel density.
 
-    This replaces the naive crop approach that produced tiny (~1K) textures.
-    For a 57m parcel, the old crop gave 1137×905 px; this gives 4096×3261 px.
+    For a 57 m parcel with target 4096 px → 1.4 cm/px request. The IGN
+    server returns the sharpest data it can for exactly this area — vastly
+    better than upsampling from a 5 cm/px GeoTIFF.
 
-    Args:
-        ortho_tif_path: Path to the downloaded ortho GeoTIFF.
-        mesh_bbox: (min_lon, min_lat, max_lon, max_lat) of the mesh vertices.
-        output_path: Where to save the sharp PNG texture.
-        target_max_px: Target pixel size for the longest dimension.
-
-    Returns:
-        Path to the generated sharp texture.
+    Falls back to GeoTIFF extraction if the WMS request fails.
     """
+    import io
     from PIL import Image, ImageFilter, ImageEnhance
-    from rasterio.windows import from_bounds
-    from rasterio.enums import Resampling
 
     min_lon, min_lat, max_lon, max_lat = mesh_bbox
 
-    # Compute real-world dimensions for proper aspect ratio
     lat_mid = (min_lat + max_lat) / 2
     m_per_deg_lon = 111_320 * np.cos(np.radians(lat_mid))
     m_per_deg_lat = 110_574.0
@@ -462,49 +455,86 @@ def extract_sharp_texture(
         logger.warning("Invalid mesh bbox for texture extraction, skipping")
         return output_path
 
-    # Compute output dimensions preserving aspect ratio
+    # Compute output dimensions — cap at 4096 (IGN WMS limit per request)
     if width_m >= height_m:
-        out_width = target_max_px
-        out_height = max(1, int(target_max_px * height_m / width_m))
+        out_width = min(target_max_px, 4096)
+        out_height = max(1, int(out_width * height_m / width_m))
     else:
-        out_height = target_max_px
-        out_width = max(1, int(target_max_px * width_m / height_m))
+        out_height = min(target_max_px, 4096)
+        out_width = max(1, int(out_height * width_m / height_m))
 
-    with rasterio.open(ortho_tif_path) as src:
-        # Get the window in pixel coordinates for the mesh bbox
-        window = from_bounds(min_lon, min_lat, max_lon, max_lat, src.transform)
+    effective_cm = width_m / out_width * 100
 
-        # Read bands 1-3 (RGB) with cubic resampling to target resolution
-        # Cubic gives sharper results than bilinear for upsampling aerial imagery
-        bands_to_read = min(3, src.count)
-        data = src.read(
-            list(range(1, bands_to_read + 1)),
-            window=window,
-            out_shape=(bands_to_read, out_height, out_width),
-            resampling=Resampling.cubic,
+    logger.info(
+        "extract_sharp_texture: fresh WMS at mesh bbox "
+        "%.1fm×%.1fm → %dx%d px (%.2f cm/px)",
+        width_m, height_m, out_width, out_height, effective_cm,
+    )
+
+    img: Image.Image | None = None
+
+    # --- Strategy 1: Direct WMS download at mesh bbox ---
+    try:
+        params = {
+            "SERVICE": "WMS",
+            "VERSION": "1.3.0",
+            "REQUEST": "GetMap",
+            "LAYERS": "OI.OrthoimageCoverage",
+            "CRS": "EPSG:4326",
+            "BBOX": f"{min_lat},{min_lon},{max_lat},{max_lon}",
+            "WIDTH": str(out_width),
+            "HEIGHT": str(out_height),
+            "FORMAT": "image/png",
+            "STYLES": "",
+        }
+        with httpx.Client(timeout=180.0) as client:
+            resp = client.get(IGN_WMS_PNOA, params=params, timeout=180.0)
+            resp.raise_for_status()
+
+            ct = resp.headers.get("content-type", "")
+            if "xml" in ct or "text" in ct:
+                raise RuntimeError(f"WMS error: {resp.text[:300]}")
+
+            img = Image.open(io.BytesIO(resp.content)).convert("RGB")
+
+        logger.info(
+            "Fresh WMS OK: %dx%d (%.2f cm/px), %d KB",
+            img.size[0], img.size[1], effective_cm, len(resp.content) // 1024,
         )
+    except Exception as exc:
+        logger.warning("Fresh WMS failed (%s), falling back to GeoTIFF", exc)
 
-    # Convert from (bands, H, W) to (H, W, bands) for PIL
-    img_array = np.moveaxis(data, 0, -1)
-    if img_array.shape[2] == 1:
-        img_array = np.repeat(img_array, 3, axis=2)
-    img = Image.fromarray(img_array.astype(np.uint8), "RGB")
+    # --- Strategy 2: Fallback — extract from existing GeoTIFF ---
+    if img is None:
+        from rasterio.windows import from_bounds as _fb
+        from rasterio.enums import Resampling
 
-    # Apply professional sharpening pipeline:
-    # 1. UnsharpMask — enhances edges without creating halos
-    img = img.filter(ImageFilter.UnsharpMask(radius=2, percent=120, threshold=3))
-    # 2. Subtle contrast boost — makes terrain features pop
+        with rasterio.open(ortho_tif_path) as src:
+            window = _fb(min_lon, min_lat, max_lon, max_lat, src.transform)
+            n = min(3, src.count)
+            data = src.read(
+                list(range(1, n + 1)),
+                window=window,
+                out_shape=(n, out_height, out_width),
+                resampling=Resampling.cubic,
+            )
+        arr = np.moveaxis(data, 0, -1)
+        if arr.shape[2] == 1:
+            arr = np.repeat(arr, 3, axis=2)
+        img = Image.fromarray(arr.astype(np.uint8), "RGB")
+        logger.info("Fallback GeoTIFF extraction: %dx%d", img.size[0], img.size[1])
+
+    # --- Sharpening pipeline ---
+    img = img.filter(ImageFilter.UnsharpMask(radius=1.5, percent=100, threshold=2))
     enhancer = ImageEnhance.Contrast(img)
-    img = enhancer.enhance(1.08)  # 8% boost — just enough without clipping
+    img = enhancer.enhance(1.05)
 
     img.save(output_path, "PNG", optimize=True)
     final_kb = output_path.stat().st_size / 1024
 
     logger.info(
-        "Sharp texture extracted: %dx%d px (%.1fm × %.1fm, %.1f px/m) "
-        "from GeoTIFF with cubic resampling + sharpening (%.0f KB)",
-        out_width, out_height, width_m, height_m,
-        out_width / width_m, final_kb,
+        "Sharp texture saved: %dx%d px (%.1fm×%.1fm, %.2f cm/px, %.0f KB)",
+        img.size[0], img.size[1], width_m, height_m, effective_cm, final_kb,
     )
     return output_path
 

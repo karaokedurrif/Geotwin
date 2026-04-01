@@ -291,41 +291,51 @@ def process_twin(
         texture_path = ortho_tif.with_suffix(tex_ext)
         extract_sharp_texture(ortho_tif, mesh_geo_bbox, texture_path, target_max_px=sharp_target_px)
 
-        # ── Hi-res 4K inset composite (adds building-zone detail on top) ──
-        try:
-            from .raster.ortho import download_hires_crop, composite_hires_inset
+        # ── Hi-res 4K inset composite — only for large parcels ──
+        # For small parcels (<1 ha), extract_sharp_texture already downloads
+        # at max density (1.4 cm/px for 57m). The hires_crop at 100m radius
+        # would be LOWER resolution (~5 cm/px) and degrade the texture.
+        if aoi_meta.area_ha >= 1.0:
+            try:
+                from .raster.ortho import download_hires_crop, composite_hires_inset
 
-            hires_tif = output_dir / "ortho_hires_crop.tif"
-            hires_bbox_center_lon = aoi_meta.centroid_lon
-            hires_bbox_center_lat = aoi_meta.centroid_lat
+                hires_tif = output_dir / "ortho_hires_crop.tif"
+                hires_bbox_center_lon = aoi_meta.centroid_lon
+                hires_bbox_center_lat = aoi_meta.centroid_lat
 
-            download_hires_crop(
-                hires_bbox_center_lon, hires_bbox_center_lat,
-                radius_m=100.0,
-                output_path=hires_tif,
-                target_px=4096,
+                download_hires_crop(
+                    hires_bbox_center_lon, hires_bbox_center_lat,
+                    radius_m=100.0,
+                    output_path=hires_tif,
+                    target_px=4096,
+                )
+
+                import math as _math
+                _m_lon = 111_320 * _math.cos(_math.radians(hires_bbox_center_lat))
+                _buf_lon = 100.0 / _m_lon
+                _buf_lat = 100.0 / 110_574.0
+                hires_bbox = (
+                    hires_bbox_center_lon - _buf_lon,
+                    hires_bbox_center_lat - _buf_lat,
+                    hires_bbox_center_lon + _buf_lon,
+                    hires_bbox_center_lat + _buf_lat,
+                )
+
+                composite_hires_inset(
+                    texture_path,
+                    mesh_geo_bbox,  # composite against mesh bbox (not ortho bbox)
+                    hires_tif,
+                    hires_bbox,
+                )
+                logger.info("Hi-res 4K inset applied for building zone (100m radius)")
+            except Exception as hires_err:
+                logger.warning("Hi-res crop failed (non-critical): %s", hires_err)
+        else:
+            logger.info(
+                "Small parcel (%.2f ha) — skipping hires composite "
+                "(extract_sharp_texture already at max density)",
+                aoi_meta.area_ha,
             )
-
-            import math as _math
-            _m_lon = 111_320 * _math.cos(_math.radians(hires_bbox_center_lat))
-            _buf_lon = 100.0 / _m_lon
-            _buf_lat = 100.0 / 110_574.0
-            hires_bbox = (
-                hires_bbox_center_lon - _buf_lon,
-                hires_bbox_center_lat - _buf_lat,
-                hires_bbox_center_lon + _buf_lon,
-                hires_bbox_center_lat + _buf_lat,
-            )
-
-            composite_hires_inset(
-                texture_path,
-                mesh_geo_bbox,  # composite against mesh bbox (not ortho bbox)
-                hires_tif,
-                hires_bbox,
-            )
-            logger.info("Hi-res 4K inset applied for building zone (100m radius)")
-        except Exception as hires_err:
-            logger.warning("Hi-res crop failed (non-critical): %s", hires_err)
 
         # Assign UVs against mesh geographic bounds → guaranteed [0, 1] full coverage
         mesh = compute_uv_from_bbox(mesh, mesh_geo_bbox)
