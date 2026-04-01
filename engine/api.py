@@ -845,6 +845,85 @@ def regenerate_twin(twin_id: str):
                 coverage="mdt05",
                 on_progress=lambda step, pct: setattr(j, 'current_step', step) or setattr(j, 'progress', pct),
             )
+
+            # ── Building extrusion (same logic as _run_pipeline) ──
+            building_info: list[dict] = []
+            try:
+                import asyncio, math
+                from .cadastre.refcat import refcat_from_coords, fetch_buildings_by_refcat
+                from .buildings.extruder import extrude_building
+                from .terrain.export import get_local_origin, merge_buildings_into_glb
+
+                c_lon = result.aoi_metadata.centroid_lon
+                c_lat = result.aoi_metadata.centroid_lat
+
+                # Extract refcat from twin_id (rc_XXXXX) or reverse-geocode
+                refcat = None
+                if tid.startswith("rc_"):
+                    refcat = tid[3:]
+                else:
+                    loop = asyncio.new_event_loop()
+                    refcat = loop.run_until_complete(refcat_from_coords(c_lon, c_lat))
+                    loop.close()
+
+                buildings = []
+                if refcat:
+                    loop2 = asyncio.new_event_loop()
+                    buildings = loop2.run_until_complete(fetch_buildings_by_refcat(refcat))
+                    loop2.close()
+
+                if buildings:
+                    local_origin = get_local_origin()
+                    if local_origin is None:
+                        lat_rad = math.radians(c_lat)
+                        local_origin = {
+                            "centroid_lon": c_lon,
+                            "centroid_lat": c_lat,
+                            "min_elev": 0.0,
+                            "m_per_deg_lon": 111_320.0 * math.cos(lat_rad),
+                            "m_per_deg_lat": 111_320.0,
+                            "z_sign": -1,
+                        }
+
+                    output_dir = Path(result.glb_path).parent
+                    for i, bldg_feature in enumerate(buildings):
+                        try:
+                            n_floors = max(1, bldg_feature["properties"].get(
+                                "numberOfFloorsAboveGround", 1
+                            ))
+                            base_elev = local_origin.get("min_elev", 0.0)
+                            bldg_mesh = extrude_building(
+                                footprint=bldg_feature["geometry"],
+                                num_floors=n_floors,
+                                ground_elevation=base_elev,
+                                use=bldg_feature["properties"].get(
+                                    "currentUse", "agricultural"
+                                ),
+                                origin=local_origin,
+                            )
+                            bldg_glb_path = output_dir / f"building_{i}.glb"
+                            bldg_mesh.export(str(bldg_glb_path), file_type="glb")
+                            building_info.append({
+                                "index": i,
+                                "floors": n_floors,
+                                "use": bldg_feature["properties"].get("currentUse"),
+                                "glb_path": str(bldg_glb_path),
+                            })
+                            logger.info(
+                                "Regen building %d: %d floors, path=%s",
+                                i, n_floors, bldg_glb_path,
+                            )
+                        except Exception as be:
+                            logger.warning("Regen building %d failed: %s", i, be)
+
+                    if building_info:
+                        bldg_paths = [Path(bi["glb_path"]) for bi in building_info]
+                        merge_buildings_into_glb(Path(result.glb_path), bldg_paths)
+
+                    logger.info("Regen %s: %d buildings merged", tid, len(building_info))
+            except Exception as bldg_exc:
+                logger.warning("Regen building phase failed: %s", bldg_exc)
+
             j.status = JobStatus.COMPLETED
             j.progress = 100.0
             j.current_step = "Regenerado"
@@ -856,6 +935,7 @@ def regenerate_twin(twin_id: str):
                 "face_count": result.face_count,
                 "lod_count": result.lod_count,
                 "processing_time_s": round(result.processing_time_s, 2),
+                "buildings": len(building_info),
             }
             logger.info("Regenerated twin %s in %.1fs", tid, result.processing_time_s)
         except Exception as exc:
