@@ -67,7 +67,8 @@ export function useCesiumToThreeSync({
 
     const localX = (lonDeg - localOrigin.centroid_lon) * localOrigin.m_per_deg_lon;
     const localY = heightM - localOrigin.min_elev;
-    const localZ = (latDeg - localOrigin.centroid_lat) * localOrigin.m_per_deg_lat;
+    const zSign = localOrigin.z_sign ?? -1;
+    const localZ = zSign * (latDeg - localOrigin.centroid_lat) * localOrigin.m_per_deg_lat;
 
     // Apply the same scene scale that TerrainModel uses
     threeCamera.position.set(
@@ -80,12 +81,12 @@ export function useCesiumToThreeSync({
     const heading = cam.heading; // radians, 0=north, CW
     const pitch = cam.pitch;     // radians, -PI/2 = straight down, 0 = horizontal
 
-    // In Three.js local coords: X=east, Y=up, Z=north
-    // Cesium heading: 0=north=+Z, PI/2=east=+X
+    // In Three.js local coords: X=east, Y=up, -Z=north (glTF forward)
+    // Cesium heading: 0=north=-Z, PI/2=east=+X
     const dir = new THREE.Vector3(
       Math.sin(heading) * Math.cos(pitch),
       Math.sin(pitch),
-      Math.cos(heading) * Math.cos(pitch),
+      -Math.cos(heading) * Math.cos(pitch),  // -Z = north
     );
 
     const target = new THREE.Vector3().copy(threeCamera.position).add(dir);

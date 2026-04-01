@@ -1,6 +1,7 @@
 import { Suspense } from 'react';
 import { Canvas } from '@react-three/fiber';
-import { OrbitControls, Environment, Grid, ContactShadows, Html } from '@react-three/drei';
+import { OrbitControls, Environment, Grid, ContactShadows, Html, Sky, Bvh } from '@react-three/drei';
+import * as THREE from 'three';
 import TerrainModel from './TerrainModel';
 import StudioPostProcessing from './effects/StudioPostProcessing';
 import WireframeOverlay from './WireframeOverlay';
@@ -45,11 +46,18 @@ export default function TerrainCanvas({ glbUrl, geojson }: TerrainCanvasProps) {
 
   return (
     <Canvas
-      gl={{ antialias: true, toneMapping: 3, toneMappingExposure: 1.0, alpha: true }}
+      shadows
+      gl={{
+        antialias: true,
+        toneMapping: THREE.ACESFilmicToneMapping,
+        toneMappingExposure: 1.0,
+        alpha: true,
+      }}
       camera={{ fov: 45, near: 0.01, far: 5000 }}
       dpr={[1, 2]}
       style={{ background: '#0a0a14' }}
     >
+      <Bvh firstHitOnly>
       <Suspense fallback={<LoadingFallback />}>
         <TerrainModel key={effectiveUrl} url={effectiveUrl} geojson={geojson} />
         {viewMode === 'wire_texture' && <WireframeOverlay url={effectiveUrl} />}
@@ -62,8 +70,29 @@ export default function TerrainCanvas({ glbUrl, geojson }: TerrainCanvasProps) {
         environmentRotation={[0, (lightRotation * Math.PI) / 180, 0]}
       />
 
-      <ambientLight intensity={0.15} />
-      <directionalLight position={[5, 8, 3]} intensity={0.6} castShadow />
+      {/* Sky for outdoor lighting context — hidden in night mode */}
+      {lightPreset !== 'night' && (
+        <Sky
+          distance={450000}
+          sunPosition={[100, 150, 80]}
+          inclination={0}
+          azimuth={0.25}
+        />
+      )}
+
+      <ambientLight intensity={0.3} />
+      <directionalLight
+        castShadow
+        position={[100, 150, 80]}
+        intensity={1.5}
+        shadow-mapSize-width={4096}
+        shadow-mapSize-height={4096}
+        shadow-camera-far={1000}
+        shadow-camera-left={-200}
+        shadow-camera-right={200}
+        shadow-camera-top={200}
+        shadow-camera-bottom={-200}
+      />
 
       {showGrid && (
         <Grid
@@ -81,11 +110,13 @@ export default function TerrainCanvas({ glbUrl, geojson }: TerrainCanvasProps) {
       )}
 
       <ContactShadows
-        position={[0, -0.01, 0]}
-        opacity={0.3}
-        scale={10}
+        position={[0, -0.1, 0]}
+        opacity={0.6}
+        scale={300}
         blur={2}
-        far={4}
+        far={10}
+        resolution={2048}
+        color="#000"
       />
 
       <OrbitControls
@@ -101,6 +132,7 @@ export default function TerrainCanvas({ glbUrl, geojson }: TerrainCanvasProps) {
       <AnnotationTool />
 
       <StudioPostProcessing />
+      </Bvh>
     </Canvas>
   );
 }

@@ -8,6 +8,7 @@ export interface LocalOrigin {
   min_elev: number;
   m_per_deg_lon: number;
   m_per_deg_lat: number;
+  z_sign?: number;  // -1 (default) = -Z is North (glTF forward)
 }
 
 interface StudioStore {

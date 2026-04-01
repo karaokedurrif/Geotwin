@@ -111,22 +111,30 @@ export default function TerrainModel({ url }: TerrainModelProps) {
     camera.lookAt(finalCenter);
     camera.updateProjectionMatrix();
 
-    // Store original materials and optimize texture filtering for close-up sharpness
+    // Store original materials, enable shadows, optimize textures
     scene.traverse((child) => {
       if ((child as THREE.Mesh).isMesh) {
         const mesh = child as THREE.Mesh;
+        // Enable shadow casting/receiving for terrain and buildings
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+
         originalMaterials.current.set(mesh.uuid, mesh.material as THREE.Material);
 
-        // Apply LinearFilter to all textures for 5cm/px sharpness at close zoom.
-        // Mipmap-based filtering (LinearMipmapLinearFilter) causes blurriness on
-        // small parcels because the texture detail is lost at lower mip levels.
+        // Pro material settings for agronomic terrain
         const mat = mesh.material as THREE.MeshStandardMaterial;
-        if (mat?.map) {
-          mat.map.minFilter = THREE.LinearMipmapLinearFilter;
-          mat.map.magFilter = THREE.LinearFilter;
-          mat.map.generateMipmaps = true;
-          mat.map.anisotropy = 16;  // Max anisotropic filtering for sharpness at oblique angles
-          mat.map.needsUpdate = true;
+        if (mat) {
+          mat.roughness = 0.8;   // Matte finish for terrain
+          mat.metalness = 0.1;   // Avoid metallic shine on crops/soil
+
+          // Max anisotropy + LinearFilter for 5cm/px sharpness at close zoom (RTX 5080)
+          if (mat.map) {
+            mat.map.anisotropy = 16;
+            mat.map.minFilter = THREE.LinearFilter;
+            mat.map.magFilter = THREE.LinearFilter;
+            mat.map.generateMipmaps = false;
+            mat.map.needsUpdate = true;
+          }
         }
       }
     });

@@ -38,7 +38,7 @@ def _degrees_to_local_meters(
     """Convierte vértices [lon, lat, elev] a coordenadas locales en metros.
 
     Produce coordenadas glTF-compliant (Y-up, right-handed):
-      X = East, Y = Elevation (up), Z = North
+      X = East, Y = Elevation (up), -Z = North (glTF forward)
 
     Returns:
         (local_vertices, origin_meta): local coords + dict with the centroid
@@ -56,7 +56,7 @@ def _degrees_to_local_meters(
     local = np.empty_like(vertices)
     local[:, 0] = (vertices[:, 0] - centroid_lon) * m_per_deg_lon  # X = East
     local[:, 1] = vertices[:, 2] - min_elev                        # Y = Elevation (up)
-    local[:, 2] = (vertices[:, 1] - centroid_lat) * m_per_deg_lat  # Z = North
+    local[:, 2] = -(vertices[:, 1] - centroid_lat) * m_per_deg_lat  # -Z = North (glTF forward)
 
     origin_meta = {
         "centroid_lon": centroid_lon,
@@ -64,6 +64,7 @@ def _degrees_to_local_meters(
         "min_elev": min_elev,
         "m_per_deg_lon": m_per_deg_lon,
         "m_per_deg_lat": m_per_deg_lat,
+        "z_sign": -1,
     }
     return local, origin_meta
 
@@ -284,10 +285,9 @@ def _mesh_to_glb(mesh: TerrainMesh, texture_path: Path | None = None, *, local_c
     if local_coords:
         verts, origin_meta = _degrees_to_local_meters(mesh.vertices)
         _last_local_origin = origin_meta
-        # _degrees_to_local_meters swaps Y↔Z (lat→Z, elev→Y) which flips
-        # coordinate system handedness.  Reverse face winding to keep normals
-        # pointing up (positive Y) in the Y-up glTF convention.
-        faces = mesh.faces[:, ::-1]
+        # With -Z = North, the coordinate system is right-handed and
+        # face winding is preserved naturally (normals point +Y up).
+        faces = mesh.faces
     else:
         verts = mesh.vertices
         faces = mesh.faces

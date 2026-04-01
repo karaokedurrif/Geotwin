@@ -60,10 +60,11 @@ export default function ParcelOutline3D({ geojson }: ParcelOutline3DProps) {
       mPerDegLat = 111320;
     }
 
-    // Convert to local meters (X=east, Y=0, Z=north) — same system as GLB
+    // Convert to local meters (X=east, Y=0, -Z=north) — same system as GLB
+    const zSign = localOrigin?.z_sign ?? -1;
     const pts: [number, number, number][] = ring.map((p) => {
       const x = (p[0] - centLon) * mPerDegLon;
-      const z = (p[1] - centLat) * mPerDegLat;
+      const z = zSign * (p[1] - centLat) * mPerDegLat;
       return [x, 0.02, z] as [number, number, number];
     });
 
