@@ -314,8 +314,14 @@ def process_twin(
         except Exception as hires_err:
             logger.warning("Hi-res crop failed (non-critical): %s", hires_err)
 
-        # Asignar UVs al mesh basados en el bbox de la textura
-        mesh = compute_uv_from_bbox(mesh, tuple(ortho_result["bbox"]))
+        # Asignar UVs al mesh basados en el bbox REAL del mesh (no del ortho descargado)
+        # Primero recortar la textura al extent geográfico del mesh para que
+        # los UVs cubran [0,1] y se aproveche el 100% de los píxeles.
+        from .raster.ortho import crop_texture_to_mesh_bbox
+        mb = mesh.bounds
+        mesh_geo_bbox = (mb["min_lon"], mb["min_lat"], mb["max_lon"], mb["max_lat"])
+        crop_texture_to_mesh_bbox(texture_path, tuple(ortho_result["bbox"]), mesh_geo_bbox)
+        mesh = compute_uv_from_bbox(mesh, mesh_geo_bbox)
         set_texture(texture_path)
 
         logger.info(
@@ -329,7 +335,9 @@ def process_twin(
         )
         # Always compute UVs even without real ortho — prevents Cesium shader crash
         # The export layer (_mesh_to_glb) will generate a fallback flat material
-        mesh = compute_uv_from_bbox(mesh, aoi_meta.bbox)
+        mb = mesh.bounds
+        mesh_geo_bbox_fb = (mb["min_lon"], mb["min_lat"], mb["max_lon"], mb["max_lat"])
+        mesh = compute_uv_from_bbox(mesh, mesh_geo_bbox_fb)
         ortho_result = None
         texture_path = None
         set_texture(None)

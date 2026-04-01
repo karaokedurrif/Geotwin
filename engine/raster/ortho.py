@@ -354,6 +354,73 @@ def cap_texture_size(
     return texture_path
 
 
+def crop_texture_to_mesh_bbox(
+    texture_path: Path,
+    ortho_bbox: tuple[float, float, float, float],
+    mesh_bbox: tuple[float, float, float, float],
+) -> Path:
+    """Crop texture image to the mesh's geographic extent.
+
+    The downloaded ortho covers a buffered bbox larger than the mesh.
+    This crops the texture to match the mesh bounds exactly so UV
+    mapping to [0,1] uses 100 % of the texture pixels.
+
+    Args:
+        texture_path: Path to the full texture image (PNG/JPEG).
+        ortho_bbox: (min_lon, min_lat, max_lon, max_lat) of the ortho download.
+        mesh_bbox: (min_lon, min_lat, max_lon, max_lat) of the mesh vertices.
+
+    Returns:
+        Path to the cropped texture (overwrites the input file).
+    """
+    from PIL import Image
+
+    o_min_lon, o_min_lat, o_max_lon, o_max_lat = ortho_bbox
+    m_min_lon, m_min_lat, m_max_lon, m_max_lat = mesh_bbox
+
+    o_lon_range = o_max_lon - o_min_lon
+    o_lat_range = o_max_lat - o_min_lat
+
+    if o_lon_range <= 0 or o_lat_range <= 0:
+        logger.warning("Invalid ortho bbox for crop, skipping")
+        return texture_path
+
+    img = Image.open(texture_path)
+    w, h = img.size
+
+    # Geographic → pixel coordinates (image y-axis is inverted: top=0)
+    x_min = int(((m_min_lon - o_min_lon) / o_lon_range) * w)
+    x_max = int(((m_max_lon - o_min_lon) / o_lon_range) * w)
+    y_min = int((1.0 - (m_max_lat - o_min_lat) / o_lat_range) * h)
+    y_max = int((1.0 - (m_min_lat - o_min_lat) / o_lat_range) * h)
+
+    # Clamp to image bounds
+    x_min = max(0, x_min)
+    x_max = min(w, x_max)
+    y_min = max(0, y_min)
+    y_max = min(h, y_max)
+
+    if x_max <= x_min or y_max <= y_min:
+        logger.warning("Crop region empty (%d,%d → %d,%d), skipping", x_min, y_min, x_max, y_max)
+        return texture_path
+
+    cropped = img.crop((x_min, y_min, x_max, y_max))
+
+    logger.info(
+        "Texture cropped to mesh bbox: %dx%d → %dx%d (was using %.0f%%×%.0f%%)",
+        w, h, cropped.size[0], cropped.size[1],
+        (x_max - x_min) / w * 100, (y_max - y_min) / h * 100,
+    )
+
+    fmt = "PNG" if texture_path.suffix.lower() == ".png" else "JPEG"
+    if fmt == "PNG":
+        cropped.save(texture_path, "PNG", optimize=True)
+    else:
+        cropped.save(texture_path, "JPEG", quality=95)
+
+    return texture_path
+
+
 def download_hires_crop(
     center_lon: float,
     center_lat: float,

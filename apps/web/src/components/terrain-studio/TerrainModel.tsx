@@ -168,7 +168,7 @@ export default function TerrainModel({ url }: TerrainModelProps) {
     const yRange = size.y || 0.001;
     const flatRatio = hzMax / yRange;
     if (flatRatio > 10) {
-      const yExag = Math.min(flatRatio / 10, 3);
+      const yExag = Math.min(flatRatio / 20, 2);
       scene.scale.y = scale * yExag;
     }
 

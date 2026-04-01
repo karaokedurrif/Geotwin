@@ -63,7 +63,7 @@ function TerrainMesh({ url, viewMode, onStats, controlsRef, resetCameraRef, topV
 
     // If terrain is very flat, exaggerate Y (elevation) so relief is visible
     if (flatRatio > 10) {
-      const yExag = Math.min(flatRatio / 10, 3);
+      const yExag = Math.min(flatRatio / 20, 2);
       scene.scale.y = baseScale * yExag;
     }
 
