@@ -54,6 +54,52 @@ def validate_refcat(refcat: str) -> str:
     return refcat
 
 
+# Catastro reverse-geocoding endpoint (coordinates → refcat)
+_OVC_COORDS = (
+    "https://ovc.catastro.meh.es/ovcservweb/"
+    "OVCSWLocalizacionRC/OVCCoordenadas.asmx/Consulta_RCCOOR"
+)
+
+
+async def refcat_from_coords(lon: float, lat: float) -> str | None:
+    """Reverse-geocode WGS84 lon/lat to the 14-char referencia catastral.
+
+    Uses the Catastro OVCCoordenadas service. Returns None if no parcel is
+    found at those coordinates.
+    """
+    # The API expects X=lon, Y=lat when SRS=EPSG:4326
+    params = {
+        "SRS": "EPSG:4326",
+        "Coordenada_X": str(lon),
+        "Coordenada_Y": str(lat),
+    }
+    async with httpx.AsyncClient(timeout=15) as client:
+        resp = await client.get(_OVC_COORDS, params=params)
+        resp.raise_for_status()
+
+    root = ET.fromstring(resp.text)
+    # Response XML: <consulta_coordenadas><coordenadas><coord><pc><pc1>...</pc1><pc2>...</pc2></pc>...
+    ns = {"": "http://www.catastro.meh.es/"}
+    # Try without namespace first (sometimes returned without it)
+    pc1 = root.findtext(".//pc1") or root.findtext(".//pc/pc1", namespaces=ns)
+    pc2 = root.findtext(".//pc2") or root.findtext(".//pc/pc2", namespaces=ns)
+
+    if pc1 and pc2:
+        refcat = (pc1 + pc2).strip()
+        logger.info("Reverse-geocoded (%.6f, %.6f) → refcat=%s", lon, lat, refcat)
+        return refcat
+
+    # Fallback: scan all text for a 14-char pattern
+    for elem in root.iter():
+        txt = (elem.text or "").strip()
+        if _REFCAT_RE.match(txt):
+            logger.info("Reverse-geocoded (%.6f, %.6f) → refcat=%s (fallback)", lon, lat, txt)
+            return txt
+
+    logger.warning("No refcat found at (%.6f, %.6f)", lon, lat)
+    return None
+
+
 def _parse_gml_polygon(gml_element: ET.Element) -> dict | None:
     """Parse a GML Polygon/MultiSurface element into a GeoJSON geometry dict."""
     # Try gml:posList inside gml:LinearRing

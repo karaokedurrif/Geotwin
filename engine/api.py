@@ -110,6 +110,107 @@ def _run_pipeline(job_id: str, req: ProcessRequest) -> None:
             on_progress=on_progress,
         )
 
+        # ── Building extrusion ──
+        # Reverse-geocode centroid → refcat → fetch buildings → extrude
+        building_info: list[dict] = []
+        try:
+            import asyncio
+            from .cadastre.refcat import refcat_from_coords, fetch_buildings_by_refcat
+            from .buildings.extruder import extrude_building
+            from .terrain.export import get_local_origin
+
+            c_lon = result.aoi_metadata.centroid_lon
+            c_lat = result.aoi_metadata.centroid_lat
+
+            loop = asyncio.new_event_loop()
+            refcat = loop.run_until_complete(refcat_from_coords(c_lon, c_lat))
+            buildings = []
+            if refcat:
+                buildings = loop.run_until_complete(fetch_buildings_by_refcat(refcat))
+            loop.close()
+
+            if buildings:
+                on_progress("Extruyendo edificios 3D", 92)
+                import math
+
+                local_origin = get_local_origin()
+                if local_origin is None:
+                    lat_rad = math.radians(c_lat)
+                    local_origin = {
+                        "centroid_lon": c_lon,
+                        "centroid_lat": c_lat,
+                        "min_elev": 0.0,
+                        "m_per_deg_lon": 111_320.0 * math.cos(lat_rad),
+                        "m_per_deg_lat": 111_320.0,
+                        "z_sign": -1,
+                    }
+
+                output_dir = Path(result.glb_path).parent
+                dem_tif = output_dir / "dem.tif"
+                dem_elevations: dict[int, float] = {}
+
+                if dem_tif.exists():
+                    try:
+                        import rasterio
+                        with rasterio.open(str(dem_tif)) as src:
+                            for i, bldg_f in enumerate(buildings):
+                                from shapely.geometry import shape as _shape
+                                bc = _shape(bldg_f["geometry"]).centroid
+                                try:
+                                    row, col = src.index(bc.x, bc.y)
+                                    elev = float(src.read(1)[row, col])
+                                    if elev > -1000:
+                                        dem_elevations[i] = elev
+                                except (IndexError, ValueError):
+                                    pass
+                    except Exception as de:
+                        logger.warning("DEM sampling failed: %s", de)
+
+                for i, bldg_feature in enumerate(buildings):
+                    try:
+                        n_floors = max(1, bldg_feature["properties"].get(
+                            "numberOfFloorsAboveGround", 1
+                        ))
+                        base_elev = dem_elevations.get(
+                            i, local_origin.get("min_elev", 0.0)
+                        )
+                        bldg_mesh = extrude_building(
+                            footprint=bldg_feature["geometry"],
+                            num_floors=n_floors,
+                            ground_elevation=base_elev,
+                            use=bldg_feature["properties"].get(
+                                "currentUse", "agricultural"
+                            ),
+                            origin=local_origin,
+                        )
+                        bldg_glb_path = output_dir / f"building_{i}.glb"
+                        bldg_mesh.export(str(bldg_glb_path), file_type="glb")
+                        building_info.append({
+                            "index": i,
+                            "floors": n_floors,
+                            "use": bldg_feature["properties"].get("currentUse"),
+                            "glb_path": str(bldg_glb_path),
+                            "base_elevation": base_elev,
+                        })
+                        logger.info(
+                            "Building %d extruded: %d floors, base=%.1fm, path=%s",
+                            i, n_floors, base_elev, bldg_glb_path,
+                        )
+                    except Exception as be:
+                        logger.warning("Building %d extrusion failed: %s", i, be)
+
+                logger.info(
+                    "Pipeline %s: %d buildings extruded for refcat=%s",
+                    req.twin_id, len(building_info), refcat,
+                )
+            else:
+                logger.info(
+                    "Pipeline %s: no buildings found (refcat=%s)",
+                    req.twin_id, refcat,
+                )
+        except Exception as bldg_exc:
+            logger.warning("Building extrusion phase failed: %s", bldg_exc)
+
         job.status = JobStatus.COMPLETED
         job.progress = 100.0
         job.current_step = "Completado"
@@ -123,6 +224,7 @@ def _run_pipeline(job_id: str, req: ProcessRequest) -> None:
             "processing_time_s": round(result.processing_time_s, 2),
             "tileset_path": result.tileset_path,
             "glb_path": result.glb_path,
+            "buildings": building_info,
             "ndvi": result.ndvi,
             "ortho": result.ortho,
         }
