@@ -61,9 +61,17 @@ function TerrainMesh({ url, viewMode, onStats, controlsRef, resetCameraRef, topV
     const baseScale = 2 / hzMax;
     scene.scale.set(baseScale, baseScale, baseScale);
 
-    // If terrain is very flat, exaggerate Y (elevation) so relief is visible
+    // Exaggerate Y (elevation) so relief is visible on flat terrain
+    // Ultra-flat parcels (ratio > 25, e.g. small gardens) get gentle exag
+    // to avoid mesh gaps/artefacts from amplified noise
     if (flatRatio > 10) {
-      const yExag = Math.min(flatRatio / 20, 2);
+      let yExag: number;
+      if (flatRatio > 25) {
+        // Ultra-flat: gentle exag — enough to hint at slope, not enough to explode
+        yExag = Math.min(flatRatio / 25, 2.0);
+      } else {
+        yExag = Math.min(flatRatio / 15, 2.5);
+      }
       scene.scale.y = baseScale * yExag;
     }
 

@@ -623,7 +623,18 @@ async function flyToSavedCamera(viewer: any, snapshot: TwinSnapshot): Promise<vo
   const camera = snapshot.camera || {};
   const heading = camera.headingDeg !== undefined ? camera.headingDeg : 315; // NW
   const pitch = camera.pitchDeg !== undefined ? camera.pitchDeg : -50; // MÁS INCLINADO (era -38)
-  const range = camera.range_m !== undefined ? camera.range_m : 1800; // MÁS CERCA (era 2200)
+
+  // Compute ideal range based on parcel area, then sanity-check saved value
+  const areaHa = snapshot.parcel?.area_ha ?? 100;
+  let idealRange: number;
+  if (areaHa < 0.5)       idealRange = Math.max(Math.sqrt(areaHa * 10000) * 5, 80);
+  else if (areaHa < 5)    idealRange = Math.max(Math.sqrt(areaHa * 10000) * 3, 300);
+  else if (areaHa < 50)   idealRange = Math.max(Math.sqrt(areaHa * 10000) * 2, 1000);
+  else                    idealRange = Math.max(Math.sqrt(areaHa * 10000) * 1.5, 2000);
+
+  const savedRange = camera.range_m ?? 0;
+  // If saved range is absurd (>10x ideal), use ideal instead
+  const range = (savedRange > 0 && savedRange < idealRange * 10) ? savedRange : idealRange;
 
   const targetHeight = groundHeight + range;
 
@@ -1399,10 +1410,15 @@ export default function StudioViewer({
     const [lon, lat] = centroid;
 
     const areaHa = snapshot.parcel?.area_ha ?? 100;
-    const distanceM = Math.max(1500, Math.min(5000, Math.sqrt(areaHa) * 160));
+    // Area-adaptive distance — small parcels need the camera close
+    let distanceM: number;
+    if (areaHa < 0.5)       distanceM = Math.max(Math.sqrt(areaHa * 10000) * 5, 80); // ~150m for 0.13ha
+    else if (areaHa < 5)    distanceM = Math.max(Math.sqrt(areaHa * 10000) * 3, 300);
+    else if (areaHa < 50)   distanceM = Math.max(Math.sqrt(areaHa * 10000) * 2, 1000);
+    else                    distanceM = Math.max(Math.sqrt(areaHa * 10000) * 1.5, 2000);
 
     viewer.camera.flyTo({
-      destination: Cesium.Cartesian3.fromDegrees(lon, lat, distanceM * 1.5),
+      destination: Cesium.Cartesian3.fromDegrees(lon, lat, distanceM * 1.2),
       orientation: {
         heading: 0,
         pitch:   Cesium.Math.toRadians(-90),
@@ -1411,7 +1427,7 @@ export default function StudioViewer({
       duration: 2,
     });
 
-    console.log('[StudioViewer] 🗺️ Vista cenital completa');
+    console.log(`[StudioViewer] 🗺️ Vista cenital completa (${areaHa.toFixed(2)} ha → ${distanceM.toFixed(0)}m)`);
   };
 
   // Cleanup helicopter mode on unmount

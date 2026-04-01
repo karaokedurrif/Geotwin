@@ -223,7 +223,7 @@ export default function TwinStudioPage() {
               centroid: recipe.parcel?.centroid || [0, 0],
             },
             layers: {},
-            camera: recipe.camera || { headingDeg: 0, pitchDeg: -45, range_m: 3000, centerLon: 0, centerLat: 0 },
+            camera: recipe.camera || { headingDeg: 315, pitchDeg: -45, range_m: 0, centerLon: 0, centerLat: 0 },
           } as TwinSnapshot;
           applySnapshot(minSnap);
         } else {

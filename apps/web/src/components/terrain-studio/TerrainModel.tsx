@@ -165,10 +165,17 @@ export default function TerrainModel({ url }: TerrainModelProps) {
     scene.scale.set(scale, scale, scale);
 
     // Exaggerate Y (elevation) if very flat — subtle exaggeration to reveal relief
+    // Ultra-flat parcels (ratio > 25, e.g. small gardens) get gentle exag
+    // to avoid mesh gaps/artefacts from amplified noise
     const yRange = size.y || 0.001;
     const flatRatio = hzMax / yRange;
     if (flatRatio > 10) {
-      const yExag = Math.min(flatRatio / 20, 2);
+      let yExag: number;
+      if (flatRatio > 25) {
+        yExag = Math.min(flatRatio / 25, 2.0);
+      } else {
+        yExag = Math.min(flatRatio / 15, 2.5);
+      }
       scene.scale.y = scale * yExag;
     }
 
