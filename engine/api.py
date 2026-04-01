@@ -211,6 +211,15 @@ def _run_pipeline(job_id: str, req: ProcessRequest) -> None:
         except Exception as bldg_exc:
             logger.warning("Building extrusion phase failed: %s", bldg_exc)
 
+        # ── Merge buildings into main terrain GLB ──
+        if building_info:
+            try:
+                from .terrain.export import merge_buildings_into_glb
+                bldg_paths = [Path(bi["glb_path"]) for bi in building_info]
+                merge_buildings_into_glb(Path(result.glb_path), bldg_paths)
+            except Exception as merge_exc:
+                logger.warning("Building merge failed: %s", merge_exc)
+
         job.status = JobStatus.COMPLETED
         job.progress = 100.0
         job.current_step = "Completado"
@@ -735,6 +744,15 @@ def _run_autotwin(job_id: str, refcat: str, twin_id: str) -> None:
                     )
                 except Exception as bldg_err:
                     logger.warning("Building %d extrusion failed: %s", i, bldg_err)
+
+        # ── Merge buildings into main terrain GLB ──
+        if building_info:
+            try:
+                from .terrain.export import merge_buildings_into_glb
+                bldg_paths = [Path(bi["glb_path"]) for bi in building_info]
+                merge_buildings_into_glb(Path(result.glb_path), bldg_paths)
+            except Exception as merge_exc:
+                logger.warning("Building merge into GLB failed: %s", merge_exc)
 
         # ── 5. Finalize ──
         job.status = JobStatus.COMPLETED

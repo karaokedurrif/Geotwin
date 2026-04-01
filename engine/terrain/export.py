@@ -687,3 +687,70 @@ def export_terrain_and_buildings(
         )
 
     return result
+
+
+def merge_buildings_into_glb(terrain_glb_path: Path, building_glb_paths: list[Path]) -> None:
+    """Merge building GLBs into the main terrain GLB so the viewer shows them together.
+
+    Loads the existing terrain GLB as a trimesh Scene, adds each building mesh
+    with a distinct beige material, and re-exports to the same path.
+    """
+    if not building_glb_paths:
+        return
+    terrain_glb_path = Path(terrain_glb_path)
+    if not terrain_glb_path.exists():
+        logger.warning("merge_buildings_into_glb: terrain GLB not found: %s", terrain_glb_path)
+        return
+
+    try:
+        scene = trimesh.load(str(terrain_glb_path))
+        # If trimesh loaded a single mesh, wrap it in a Scene
+        if isinstance(scene, trimesh.Trimesh):
+            scene = trimesh.Scene(geometry={"terrain": scene})
+
+        from PIL import Image
+
+        bldg_color = Image.new("RGB", (16, 16), (200, 180, 150))  # beige
+        bldg_mat = trimesh.visual.material.PBRMaterial(
+            baseColorTexture=bldg_color,
+            metallicFactor=0.0,
+            roughnessFactor=0.6,
+            doubleSided=True,
+        )
+
+        added = 0
+        for bp in building_glb_paths:
+            bp = Path(bp)
+            if not bp.exists():
+                continue
+            try:
+                bm = trimesh.load(str(bp), process=False)
+                if isinstance(bm, trimesh.Scene):
+                    for name, geom in bm.geometry.items():
+                        if hasattr(geom, 'vertices'):
+                            # Apply UVs + material so it renders with color
+                            uv = np.zeros((len(geom.vertices), 2), dtype=np.float32)
+                            geom.visual = trimesh.visual.TextureVisuals(uv=uv, material=bldg_mat)
+                            geom.metadata["_isBuilding"] = True
+                            scene.add_geometry(geom, node_name=f"building_{added}")
+                            added += 1
+                elif hasattr(bm, 'vertices'):
+                    uv = np.zeros((len(bm.vertices), 2), dtype=np.float32)
+                    bm.visual = trimesh.visual.TextureVisuals(uv=uv, material=bldg_mat)
+                    bm.metadata["_isBuilding"] = True
+                    scene.add_geometry(bm, node_name=f"building_{added}")
+                    added += 1
+            except Exception as be:
+                logger.warning("Failed loading building GLB %s: %s", bp, be)
+
+        if added > 0:
+            merged_data = scene.export(file_type="glb")
+            terrain_glb_path.write_bytes(merged_data)
+            logger.info(
+                "Merged %d buildings into %s (%.1f KB)",
+                added, terrain_glb_path, len(merged_data) / 1024,
+            )
+        else:
+            logger.warning("merge_buildings_into_glb: no buildings merged")
+    except Exception as e:
+        logger.error("merge_buildings_into_glb failed: %s", e)
