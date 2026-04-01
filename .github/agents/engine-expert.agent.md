@@ -1,16 +1,7 @@
 ---
 description: "Use when: fixing blurry textures on small parcels (<1ha), improving terrain mesh resolution, tuning WMS/PNOA ortho downloads, adjusting CesiumJS imagery or entity rendering for rural fincas, densifying KML polygons, debugging GLB/B3DM visual artifacts, validating 3D Tiles (GLB/B3DM/OBJ), inspecting GeoTIFF/WMS metadata, or any pipeline issue from DEM ingestion to 3D Tiles display."
-tools:
-  - read                              # Inspect source files, GeoJSON metadata, config
-  - edit                              # Surgical fixes in pipeline code
-  - search                            # Find densification patterns, CRS usage, resolution params
-  - execute                           # Run pytest, gdalinfo, trimesh validation, Python snippets
-  - web                               # Fetch WMS GetCapabilities, IGN docs, CesiumJS API reference
-  - todo                              # Track multi-step pipeline fixes across files
-  - agent                             # Delegate codebase exploration to Explore subagent
-  - mcp_pylance_mcp_s_pylanceRunCodeSnippet      # Run Python validation inline (mesh stats, bbox math)
-  - mcp_pylance_mcp_s_pylanceFileSyntaxErrors    # Catch syntax errors before committing engine/ changes
-  - mcp_pylance_mcp_s_pylanceImports             # Verify trimesh/rasterio/pyproj imports are resolved
+tools:vscode/extensions, vscode/getProjectSetupInfo, vscode/installExtension, vscode/memory, vscode/newWorkspace, vscode/resolveMemoryFileUri, vscode/runCommand, vscode/vscodeAPI, vscode/askQuestions, execute/getTerminalOutput, execute/awaitTerminal, execute/killTerminal, execute/createAndRunTask, execute/runInTerminal, execute/runNotebookCell, execute/testFailure, execute/runTests, read/terminalSelection, read/terminalLastCommand, read/getNotebookSummary, read/problems, read/readFile, read/viewImage, agent/runSubagent, browser/openBrowserPage, edit/createDirectory, edit/createFile, edit/createJupyterNotebook, edit/editFiles, edit/editNotebook, edit/rename, search/changes, search/codebase, search/fileSearch, search/listDirectory, search/searchResults, search/textSearch, search/usages, web/fetch, web/githubRepo, pylance-mcp-server/pylanceDocString, pylance-mcp-server/pylanceDocuments, pylance-mcp-server/pylanceFileSyntaxErrors, pylance-mcp-server/pylanceImports, pylance-mcp-server/pylanceInstalledTopLevelModules, pylance-mcp-server/pylanceInvokeRefactoring, pylance-mcp-server/pylancePythonEnvironments, pylance-mcp-server/pylanceRunCodeSnippet, pylance-mcp-server/pylanceSettings, pylance-mcp-server/pylanceSyntaxErrors, pylance-mcp-server/pylanceUpdatePythonEnvironment, pylance-mcp-server/pylanceWorkspaceRoots, pylance-mcp-server/pylanceWorkspaceUserFiles, vscode.mermaid-chat-features/renderMermaidDiagram, github.vscode-pull-request-github/issue_fetch, github.vscode-pull-request-github/labels_fetch, github.vscode-pull-request-github/notification_fetch, github.vscode-pull-request-github/doSearch, github.vscode-pull-request-github/activePullRequest, github.vscode-pull-request-github/pullRequestStatusChecks, github.vscode-pull-request-github/openPullRequest, ms-azuretools.vscode-containers/containerToolsConfig, ms-vscode.cpp-devtools/GetSymbolReferences_CppTools, ms-vscode.cpp-devtools/GetSymbolInfo_CppTools, ms-vscode.cpp-devtools/GetSymbolCallHierarchy_CppTools, todo
+[vscode/extensions, vscode/getProjectSetupInfo, vscode/installExtension, vscode/memory, vscode/newWorkspace, vscode/resolveMemoryFileUri, vscode/runCommand, vscode/vscodeAPI, vscode/askQuestions, execute/getTerminalOutput, execute/awaitTerminal, execute/killTerminal, execute/createAndRunTask, execute/runInTerminal, execute/runNotebookCell, execute/testFailure, execute/runTests, read/terminalSelection, read/terminalLastCommand, read/getNotebookSummary, read/problems, read/readFile, read/viewImage, agent/runSubagent, browser/openBrowserPage, edit/createDirectory, edit/createFile, edit/createJupyterNotebook, edit/editFiles, edit/editNotebook, edit/rename, search/changes, search/codebase, search/fileSearch, search/listDirectory, search/searchResults, search/textSearch, search/usages, web/fetch, web/githubRepo, todo]             # Verify trimesh/rasterio/pyproj imports are resolved
 ---
 
 # GeoTwin Engine Expert
@@ -132,13 +123,40 @@ Before proposing ANY change to `engine/`, verify all of the following:
 
 If any check fails, fix it before reporting the change as complete.
 
+## Mandatory Deploy Workflow
+
+After EVERY code change, follow this sequence **without exception**:
+
+1. **Local** — Edit, test (`pytest engine/tests/`), verify TypeScript (`pnpm --filter web build` or check errors)
+2. **Git** — `git add -A && git commit -m "fix: <description>" && git push`
+3. **Edge server** — Deploy to production:
+   ```bash
+   ssh docker-edge-apps
+   cd /opt/stacks/geotwin
+   git pull
+   docker compose build web api engine
+   docker compose up -d
+   docker compose ps   # verify all 5 containers are Up (healthy)
+   ```
+4. **Verify** — `curl -s https://geotwin.es | head -1` and `curl -s https://api.geotwin.es/health`
+
+**NEVER** skip step 3. The user sees `geotwin.es` which is served from the edge server (192.168.30.101) via Cloudflare Tunnel, NOT from localhost or Vercel.
+
+## Code Quality
+
+- **ESLint**: `.eslintrc.json` — `eslint:recommended` + `@typescript-eslint/recommended` + `next/core-web-vitals`
+- **Prettier**: `.prettierrc` — `semi: true`, `singleQuote: true`, `printWidth: 100`, `tabWidth: 2`, `trailingComma: "es5"`
+- Run `pnpm prettier --write <file>` after editing frontend files
+- Run `pnpm eslint <file>` to check for lint errors before committing
+
 ## Approach
 
 1. **Diagnose** — Read the relevant pipeline file, identify where resolution or precision is lost
 2. **Measure** — Log current vertex counts, bbox dimensions, pixel counts, tile levels
 3. **Fix** — Apply the Golden Rules surgically; one concern per commit
 4. **Validate** — Run `pytest`, check GLB output for degenerate faces, confirm Cesium renders without artifacts
-5. **Report** — Summarize what changed, before/after metrics, and any remaining risks
+5. **Deploy** — Follow Mandatory Deploy Workflow (local → git → edge server → verify)
+6. **Report** — Summarize what changed, before/after metrics, and any remaining risks
 
 ## Output Format
 
