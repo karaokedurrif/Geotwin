@@ -278,6 +278,98 @@ def reproject_dem(
     }
 
 
+def upsample_dem_bicubic(
+    dem_data: dict[str, Any],
+    target_resolution_m: float = 2.0,
+) -> dict[str, Any]:
+    """Upsample a DEM grid using bicubic interpolation.
+
+    Takes a coarse DEM (e.g. 5m/px from IGN WCS) and resamples it to a
+    finer grid using scipy's bicubic interpolation (order=3).  This
+    creates a smoother surface for terrain meshing without requiring a
+    higher-resolution DEM source.
+
+    Args:
+        dem_data: dict from load_dem / crop_dem_by_aoi / get_dem_for_aoi.
+        target_resolution_m: Desired output resolution in meters.
+
+    Returns:
+        New dem_data dict with upsampled elevation grid and updated
+        transform/dimensions.
+    """
+    from scipy.ndimage import zoom
+
+    elevation = dem_data["elevation"]
+    transform = dem_data["transform"]
+    src_res_y = abs(transform.e) * 111_320  # approx m/px in latitude
+    src_res_x = abs(transform.a) * 111_320 * np.cos(
+        np.radians((dem_data["bounds"][1] + dem_data["bounds"][3]) / 2)
+    )
+    src_res = (src_res_y + src_res_x) / 2.0
+
+    if src_res <= target_resolution_m * 1.1:
+        logger.info(
+            "DEM already at %.1fm — skipping bicubic upsample (target=%.1fm)",
+            src_res, target_resolution_m,
+        )
+        return dem_data
+
+    factor = src_res / target_resolution_m
+    logger.info(
+        "Bicubic DEM upsample: %.1fm → %.1fm (factor=%.2fx, %dx%d → %dx%d)",
+        src_res, target_resolution_m, factor,
+        elevation.shape[1], elevation.shape[0],
+        int(elevation.shape[1] * factor), int(elevation.shape[0] * factor),
+    )
+
+    # Handle NaN: replace with nearest-neighbor fill before interpolation,
+    # then restore NaN positions at the upsampled resolution.
+    nan_mask = np.isnan(elevation)
+    has_nan = nan_mask.any()
+    if has_nan:
+        from scipy.ndimage import distance_transform_edt
+        ind = distance_transform_edt(nan_mask, return_distances=False, return_indices=True)
+        elevation_filled = elevation[tuple(ind)]
+    else:
+        elevation_filled = elevation
+
+    upsampled = zoom(elevation_filled, factor, order=3).astype(np.float32)
+
+    if has_nan:
+        nan_upsampled = zoom(nan_mask.astype(np.float32), factor, order=0) > 0.5
+        upsampled[nan_upsampled] = np.nan
+
+    # Update the affine transform to reflect the finer grid
+    new_a = transform.a / factor
+    new_e = transform.e / factor
+    new_transform = rasterio.transform.Affine(
+        new_a, transform.b, transform.c,
+        transform.d, new_e, transform.f,
+    )
+
+    new_h, new_w = upsampled.shape
+    profile = dem_data["profile"].copy()
+    profile.update(height=new_h, width=new_w, transform=new_transform)
+
+    logger.info(
+        "Bicubic upsample complete: %dx%d → %dx%d (%.0f%% more points)",
+        elevation.shape[1], elevation.shape[0], new_w, new_h,
+        100 * (new_w * new_h) / (elevation.shape[0] * elevation.shape[1]) - 100,
+    )
+
+    return {
+        "elevation": upsampled,
+        "transform": new_transform,
+        "crs": dem_data["crs"],
+        "bounds": dem_data["bounds"],
+        "resolution": (abs(new_e), abs(new_a)),
+        "nodata": dem_data["nodata"],
+        "width": new_w,
+        "height": new_h,
+        "profile": profile,
+    }
+
+
 def get_dem_for_aoi(
     aoi_feature: dict,
     bbox: tuple[float, float, float, float],

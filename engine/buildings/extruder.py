@@ -39,6 +39,10 @@ _USE_ROUGHNESS: dict[str, float] = {
     "publicService": 0.8,
 }
 
+# Building uses that get pitched (gabled) roofs
+_PITCHED_ROOF_USES = {"agricultural", "agriculture", "industrial"}
+_DEFAULT_PITCH_DEG = 15.0
+
 
 def _wgs84_to_local(
     coords_lonlat: list[tuple[float, float]],
@@ -63,6 +67,75 @@ def _wgs84_to_local(
         y = (lat - c_lat) * m_lat       # North (temporarily Y in 2D)
         local.append((x, y))
     return local
+
+
+def _add_pitched_roof(
+    mesh: trimesh.Trimesh,
+    pitch_deg: float = 15.0,
+) -> trimesh.Trimesh:
+    """Replace the flat roof of an extruded box with a gabled (pitched) roof.
+
+    Works in the Y-up local coordinate system:
+      X = East, Y = Up, -Z = North.
+
+    The ridge runs along the **longest** horizontal axis of the footprint
+    so that a rectangular nave gets a natural gable.  Top-face vertices
+    are lifted along the Y axis to form the slope.
+
+    Args:
+        mesh: Extruded building trimesh (Y-up, already axis-swapped).
+        pitch_deg: Roof pitch angle in degrees (measured from horizontal).
+
+    Returns:
+        New trimesh with the pitched roof.
+    """
+    verts = np.asarray(mesh.vertices, dtype=np.float64)
+    faces = np.asarray(mesh.faces)
+
+    y_max = verts[:, 1].max()
+    y_min = verts[:, 1].min()
+    roof_tol = 0.1  # vertices within 10cm of top are "roof"
+    roof_mask = verts[:, 1] > (y_max - roof_tol)
+
+    if roof_mask.sum() < 3:
+        return mesh
+
+    roof_verts = verts[roof_mask]
+
+    # Determine the longest horizontal axis (X or Z)
+    x_span = roof_verts[:, 0].max() - roof_verts[:, 0].min()
+    z_span = roof_verts[:, 2].max() - roof_verts[:, 2].min()
+
+    pitch_rad = np.radians(pitch_deg)
+
+    if x_span >= z_span:
+        # Ridge runs along X → slope along Z
+        z_center = (roof_verts[:, 2].max() + roof_verts[:, 2].min()) / 2.0
+        half_span = z_span / 2.0
+        ridge_rise = half_span * np.tan(pitch_rad)
+
+        for idx in np.where(roof_mask)[0]:
+            dz = abs(verts[idx, 2] - z_center)
+            # Linear slope from ridge (center) to eave (edge)
+            verts[idx, 1] = y_max + ridge_rise * (1.0 - dz / max(half_span, 0.1))
+    else:
+        # Ridge runs along Z → slope along X
+        x_center = (roof_verts[:, 0].max() + roof_verts[:, 0].min()) / 2.0
+        half_span = x_span / 2.0
+        ridge_rise = half_span * np.tan(pitch_rad)
+
+        for idx in np.where(roof_mask)[0]:
+            dx = abs(verts[idx, 0] - x_center)
+            verts[idx, 1] = y_max + ridge_rise * (1.0 - dx / max(half_span, 0.1))
+
+    result = trimesh.Trimesh(vertices=verts, faces=faces, process=False)
+    trimesh.repair.fix_normals(result)
+
+    logger.info(
+        "Pitched roof: pitch=%.0f°, ridge_rise=+%.1fm, span=%.1fm, %d roof verts",
+        pitch_deg, ridge_rise, max(x_span, z_span), int(roof_mask.sum()),
+    )
+    return result
 
 
 def extrude_building(
@@ -152,6 +225,15 @@ def extrude_building(
 
     # Reverse face winding to fix normals after axis swap
     mesh.faces = mesh.faces[:, ::-1]
+
+    # ── Pitched roof for industrial/agricultural naves ──
+    use_lower = use.lower() if use else ""
+    if use_lower in _PITCHED_ROOF_USES:
+        try:
+            mesh = _add_pitched_roof(mesh, pitch_deg=_DEFAULT_PITCH_DEG)
+            new_verts = np.asarray(mesh.vertices, dtype=np.float64)
+        except Exception as roof_err:
+            logger.warning("Pitched roof failed: %s", roof_err)
 
     # Apply material based on use
     color = _USE_COLORS.get(use, _DEFAULT_COLOR)

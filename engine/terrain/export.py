@@ -695,6 +695,102 @@ def _sample_terrain_y(terrain_verts: np.ndarray, x: float, z: float) -> float:
     return float(terrain_verts[dists.argmin(), 1])
 
 
+def _bake_contact_ao(
+    scene: trimesh.Scene,
+    ao_radius: float = 5.0,
+    ao_strength: float = 0.5,
+) -> None:
+    """Bake ambient occlusion at building-ground contact zones.
+
+    Darkens terrain vertices that are close to building walls, and
+    darkens the base vertices of buildings.  This creates realistic
+    contact shadows that make buildings appear grounded.
+
+    Modifies meshes in-place within the scene.
+
+    Args:
+        scene: trimesh.Scene containing terrain + building geometries.
+        ao_radius: Maximum distance in meters for AO influence.
+        ao_strength: 0.0 = no darkening, 1.0 = fully black.
+    """
+    # Separate terrain and building geometries
+    terrain_geom = None
+    building_geoms = []
+    for name, geom in scene.geometry.items():
+        if hasattr(geom, 'metadata') and geom.metadata.get("_isBuilding"):
+            building_geoms.append(geom)
+        elif terrain_geom is None or len(geom.vertices) > len(terrain_geom.vertices):
+            terrain_geom = geom
+
+    if terrain_geom is None or not building_geoms:
+        return
+
+    # Collect all building base positions (lowest Y vertices per building)
+    bldg_base_points = []
+    for bg in building_geoms:
+        bv = np.asarray(bg.vertices)
+        y_min = bv[:, 1].min()
+        base_mask = bv[:, 1] < y_min + 0.5  # within 0.5m of base
+        bldg_base_points.append(bv[base_mask])
+
+    if not bldg_base_points:
+        return
+
+    all_base = np.vstack(bldg_base_points)  # (K, 3)
+
+    # ── Darken terrain vertices near building bases ──
+    tv = np.asarray(terrain_geom.vertices)
+    # Use XZ distance (horizontal) to building base points
+    # For each terrain vertex, find min horizontal distance to any base point
+    from scipy.spatial import cKDTree
+    base_xz = all_base[:, [0, 2]]
+    tree = cKDTree(base_xz)
+    terrain_xz = tv[:, [0, 2]]
+    dists, _ = tree.query(terrain_xz, k=1)
+
+    # Compute AO factor: 1.0 at building base, 0.0 at ao_radius
+    ao_factor = np.clip(1.0 - dists / ao_radius, 0.0, 1.0) * ao_strength
+
+    # Apply vertex colors to terrain (darken by multiplying existing color)
+    # trimesh uses per-vertex colors in visual.vertex_colors
+    if hasattr(terrain_geom.visual, 'vertex_colors') and terrain_geom.visual.vertex_colors is not None:
+        vc = np.asarray(terrain_geom.visual.vertex_colors, dtype=np.float32)
+    else:
+        vc = np.full((len(tv), 4), 255.0, dtype=np.float32)
+
+    darkening = 1.0 - ao_factor
+    vc[:, 0] *= darkening
+    vc[:, 1] *= darkening
+    vc[:, 2] *= darkening
+    terrain_geom.visual.vertex_colors = np.clip(vc, 0, 255).astype(np.uint8)
+
+    # ── Darken building base vertices ──
+    for bg in building_geoms:
+        bv = np.asarray(bg.vertices)
+        y_min = bv[:, 1].min()
+        height_above_base = bv[:, 1] - y_min
+        # Gradient: base is darkened, top is untouched
+        bldg_ao = np.clip(1.0 - height_above_base / (ao_radius * 0.5), 0.0, 1.0) * ao_strength
+
+        if hasattr(bg.visual, 'vertex_colors') and bg.visual.vertex_colors is not None:
+            bvc = np.asarray(bg.visual.vertex_colors, dtype=np.float32)
+        else:
+            bvc = np.full((len(bv), 4), 255.0, dtype=np.float32)
+
+        bldg_darkening = 1.0 - bldg_ao
+        bvc[:, 0] *= bldg_darkening
+        bvc[:, 1] *= bldg_darkening
+        bvc[:, 2] *= bldg_darkening
+        bg.visual.vertex_colors = np.clip(bvc, 0, 255).astype(np.uint8)
+
+    n_affected = int((ao_factor > 0.01).sum())
+    logger.info(
+        "AO baked: %d terrain verts darkened (radius=%.1fm, strength=%.0f%%), "
+        "%d building base zones",
+        n_affected, ao_radius, ao_strength * 100, len(building_geoms),
+    )
+
+
 def merge_buildings_into_glb(
     terrain_glb_path: Path,
     building_glb_paths: list[Path],
@@ -802,6 +898,12 @@ def merge_buildings_into_glb(
                 logger.warning("Failed loading building GLB %s: %s", bp, be)
 
         if added > 0:
+            # ── Bake ambient occlusion at building-ground contact ──
+            try:
+                _bake_contact_ao(scene, ao_radius=5.0, ao_strength=0.5)
+            except Exception as ao_err:
+                logger.warning("AO baking failed (non-critical): %s", ao_err)
+
             merged_data = scene.export(file_type="glb")
             terrain_glb_path.write_bytes(merged_data)
             logger.info(

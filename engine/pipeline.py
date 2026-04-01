@@ -19,7 +19,7 @@ import numpy as np
 
 from .config import settings
 from .terrain.export import export_3d_tiles, export_single_glb, get_local_origin, set_texture
-from .terrain.ingest import crop_dem_by_aoi, download_dem_ign, get_dem_for_aoi, load_dem
+from .terrain.ingest import crop_dem_by_aoi, download_dem_ign, get_dem_for_aoi, load_dem, upsample_dem_bicubic
 from .terrain.lod import generate_lods
 from .terrain.mesh import clip_mesh_to_aoi, compute_uv_from_bbox, dem_to_mesh
 from .vector.aoi import (
@@ -173,6 +173,11 @@ def process_twin(
 
     _progress("DEM obtenido", 40)
 
+    # ─── 3b. Bicubic upsample DEM for higher mesh density ──────────────
+    # IGN WCS only provides 5m/px.  Bicubic interpolation gives a smooth
+    # 2m/px grid that yields 6× more triangles without a new DEM source.
+    dem_data = upsample_dem_bicubic(dem_data, target_resolution_m=2.0)
+
     # ─── 4. Generar malla ───────────────────────────────────────────────
     _progress("Generando malla", 50)
 
@@ -269,7 +274,45 @@ def process_twin(
         texture_path = extract_texture_image(ortho_tif, fmt=tex_fmt)
 
         # Cap texture size to avoid VRAM saturation (2K for large parcels, 4K for medium)
-        texture_path = cap_texture_size(texture_path, aoi_meta.area_ha)
+        texture_path = cap_texture_size(texture_path, aoi_meta.area_ha, force_max_px=8192)
+
+        # ── Hi-res 4K inset for the building zone (100m radius) ──
+        try:
+            from .raster.ortho import download_hires_crop, composite_hires_inset
+
+            hires_tif = output_dir / "ortho_hires_crop.tif"
+            hires_bbox_center_lon = aoi_meta.centroid_lon
+            hires_bbox_center_lat = aoi_meta.centroid_lat
+
+            # Download 4K crop at ~5cm/px around the centroid (building zone)
+            download_hires_crop(
+                hires_bbox_center_lon, hires_bbox_center_lat,
+                radius_m=100.0,
+                output_path=hires_tif,
+                target_px=4096,
+            )
+
+            # Compute the bbox of the hi-res crop
+            import math as _math
+            _m_lon = 111_320 * _math.cos(_math.radians(hires_bbox_center_lat))
+            _buf_lon = 100.0 / _m_lon
+            _buf_lat = 100.0 / 110_574.0
+            hires_bbox = (
+                hires_bbox_center_lon - _buf_lon,
+                hires_bbox_center_lat - _buf_lat,
+                hires_bbox_center_lon + _buf_lon,
+                hires_bbox_center_lat + _buf_lat,
+            )
+
+            composite_hires_inset(
+                texture_path,
+                tuple(ortho_result["bbox"]),
+                hires_tif,
+                hires_bbox,
+            )
+            logger.info("Hi-res 4K inset applied for building zone (100m radius)")
+        except Exception as hires_err:
+            logger.warning("Hi-res crop failed (non-critical): %s", hires_err)
 
         # Asignar UVs al mesh basados en el bbox de la textura
         mesh = compute_uv_from_bbox(mesh, tuple(ortho_result["bbox"]))

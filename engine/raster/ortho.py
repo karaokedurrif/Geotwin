@@ -352,3 +352,123 @@ def cap_texture_size(
         w, h, new_w, new_h, max_px, old_kb - new_kb,
     )
     return texture_path
+
+
+def download_hires_crop(
+    center_lon: float,
+    center_lat: float,
+    radius_m: float,
+    output_path: Path,
+    target_px: int = 4096,
+) -> Path:
+    """Download a high-resolution PNOA ortho crop for a small area.
+
+    Used to create a 4K texture inset around buildings where extra
+    sharpness is needed.  The crop is downloaded in a single WMS
+    request (small enough for the 4096 limit).
+
+    Args:
+        center_lon, center_lat: Center of the crop in EPSG:4326.
+        radius_m: Radius in meters around the center.
+        output_path: Where to save the GeoTIFF.
+        target_px: Target resolution in pixels per side.
+
+    Returns:
+        Path to the downloaded GeoTIFF crop.
+    """
+    m_per_deg_lon = 111_320 * np.cos(np.radians(center_lat))
+    m_per_deg_lat = 110_574
+
+    buf_lon = radius_m / m_per_deg_lon
+    buf_lat = radius_m / m_per_deg_lat
+
+    crop_bbox = (
+        center_lon - buf_lon,
+        center_lat - buf_lat,
+        center_lon + buf_lon,
+        center_lat + buf_lat,
+    )
+
+    # Resolution: 200m diameter at 4096px → ~5cm/px
+    effective_cm = (2 * radius_m * 100) / target_px
+    logger.info(
+        "Hi-res crop: center=(%.6f,%.6f) radius=%dm, %dpx → %.1f cm/px",
+        center_lon, center_lat, radius_m, target_px, effective_cm,
+    )
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    download_pnoa_ortho(crop_bbox, output_path, resolution_cm=max(5, int(effective_cm)), max_pixels=target_px)
+    return output_path
+
+
+def composite_hires_inset(
+    main_texture_path: Path,
+    main_bbox: tuple[float, float, float, float],
+    hires_path: Path,
+    hires_bbox: tuple[float, float, float, float],
+) -> Path:
+    """Paste a high-resolution inset onto the main texture.
+
+    Calculates the pixel region in the main texture that corresponds
+    to the hi-res crop's geographic extent and pastes the crop (resized
+    to match) over it.  This gives the building zone 4K detail without
+    needing a multi-material GLB.
+
+    Args:
+        main_texture_path: Path to the main texture image (PNG/JPEG).
+        main_bbox: Geographic bbox of the main texture (minlon,minlat,maxlon,maxlat).
+        hires_path: Path to the hi-res GeoTIFF crop.
+        hires_bbox: Geographic bbox of the crop.
+
+    Returns:
+        Path to the composited texture (overwrites main_texture_path).
+    """
+    from PIL import Image
+
+    main_img = Image.open(main_texture_path)
+    mw, mh = main_img.size
+
+    m_minlon, m_minlat, m_maxlon, m_maxlat = main_bbox
+    h_minlon, h_minlat, h_maxlon, h_maxlat = hires_bbox
+
+    # Pixel coordinates of the hires region within the main image
+    # Note: image Y=0 is top = max_lat
+    lon_range = m_maxlon - m_minlon
+    lat_range = m_maxlat - m_minlat
+
+    px_left = int(((h_minlon - m_minlon) / lon_range) * mw)
+    px_right = int(((h_maxlon - m_minlon) / lon_range) * mw)
+    px_top = int(((m_maxlat - h_maxlat) / lat_range) * mh)
+    px_bottom = int(((m_maxlat - h_minlat) / lat_range) * mh)
+
+    # Clamp to image bounds
+    px_left = max(0, px_left)
+    px_right = min(mw, px_right)
+    px_top = max(0, px_top)
+    px_bottom = min(mh, px_bottom)
+
+    paste_w = px_right - px_left
+    paste_h = px_bottom - px_top
+
+    if paste_w < 10 or paste_h < 10:
+        logger.warning("Hi-res inset too small to paste (%dx%d), skipping", paste_w, paste_h)
+        return main_texture_path
+
+    # Load hi-res crop
+    with rasterio.open(hires_path) as src:
+        r = src.read(1)
+        g = src.read(2)
+        b = src.read(3)
+    hires_img = Image.fromarray(np.stack([r, g, b], axis=-1), "RGB")
+
+    # Resize to match the paste region
+    hires_resized = hires_img.resize((paste_w, paste_h), Image.LANCZOS)
+    main_img.paste(hires_resized, (px_left, px_top))
+    main_img.save(main_texture_path)
+
+    logger.info(
+        "Hi-res inset composited: %dx%d crop → (%d,%d)-(%d,%d) in %dx%d main texture",
+        hires_img.size[0], hires_img.size[1],
+        px_left, px_top, px_right, px_bottom, mw, mh,
+    )
+    return main_texture_path
