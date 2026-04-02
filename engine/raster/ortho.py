@@ -426,6 +426,8 @@ def extract_sharp_texture(
     mesh_bbox: tuple[float, float, float, float],
     output_path: Path,
     target_max_px: int = 4096,
+    *,
+    disable_sharpening: bool = False,
 ) -> Path:
     """Download a fresh high-res texture from PNOA WMS at the mesh bbox.
 
@@ -438,10 +440,15 @@ def extract_sharp_texture(
     server returns the sharpest data it can for exactly this area — vastly
     better than upsampling from a 5 cm/px GeoTIFF.
 
+    Supports target_max_px > 4096 by tiling multiple WMS requests and
+    stitching the result (IGN WMS limit is 4096 per request).
+
     Falls back to GeoTIFF extraction if the WMS request fails.
     """
     import io
     from PIL import Image, ImageFilter, ImageEnhance
+
+    WMS_MAX = 4096  # IGN hard limit per single request
 
     min_lon, min_lat, max_lon, max_lat = mesh_bbox
 
@@ -455,12 +462,12 @@ def extract_sharp_texture(
         logger.warning("Invalid mesh bbox for texture extraction, skipping")
         return output_path
 
-    # Compute output dimensions — cap at 4096 (IGN WMS limit per request)
+    # Compute output dimensions — allow > 4096 (will tile if needed)
     if width_m >= height_m:
-        out_width = min(target_max_px, 4096)
+        out_width = target_max_px
         out_height = max(1, int(out_width * height_m / width_m))
     else:
-        out_height = min(target_max_px, 4096)
+        out_height = target_max_px
         out_width = max(1, int(out_height * width_m / height_m))
 
     effective_cm = width_m / out_width * 100
@@ -473,33 +480,73 @@ def extract_sharp_texture(
 
     img: Image.Image | None = None
 
-    # --- Strategy 1: Direct WMS download at mesh bbox ---
+    # --- Strategy 1: Direct WMS download (tiled if > 4096) ---
     try:
-        params = {
-            "SERVICE": "WMS",
-            "VERSION": "1.3.0",
-            "REQUEST": "GetMap",
-            "LAYERS": "OI.OrthoimageCoverage",
-            "CRS": "EPSG:4326",
-            "BBOX": f"{min_lat},{min_lon},{max_lat},{max_lon}",
-            "WIDTH": str(out_width),
-            "HEIGHT": str(out_height),
-            "FORMAT": "image/png",
-            "STYLES": "",
-        }
+        n_cols = max(1, -(-out_width // WMS_MAX))
+        n_rows = max(1, -(-out_height // WMS_MAX))
+        full_img = Image.new("RGB", (out_width, out_height))
+
+        lon_range = max_lon - min_lon
+        lat_range = max_lat - min_lat
+
         with httpx.Client(timeout=180.0) as client:
-            resp = client.get(IGN_WMS_PNOA, params=params, timeout=180.0)
-            resp.raise_for_status()
+            for row in range(n_rows):
+                for col in range(n_cols):
+                    x0 = col * (out_width // n_cols)
+                    x1 = (col + 1) * (out_width // n_cols) if col < n_cols - 1 else out_width
+                    y0 = row * (out_height // n_rows)
+                    y1 = (row + 1) * (out_height // n_rows) if row < n_rows - 1 else out_height
+                    tw, th = x1 - x0, y1 - y0
 
-            ct = resp.headers.get("content-type", "")
-            if "xml" in ct or "text" in ct:
-                raise RuntimeError(f"WMS error: {resp.text[:300]}")
+                    t_min_lon = min_lon + (x0 / out_width) * lon_range
+                    t_max_lon = min_lon + (x1 / out_width) * lon_range
+                    t_max_lat = max_lat - (y0 / out_height) * lat_range
+                    t_min_lat = max_lat - (y1 / out_height) * lat_range
 
-            img = Image.open(io.BytesIO(resp.content)).convert("RGB")
+                    params = {
+                        "SERVICE": "WMS",
+                        "VERSION": "1.3.0",
+                        "REQUEST": "GetMap",
+                        "LAYERS": "OI.OrthoimageCoverage",
+                        "CRS": "EPSG:4326",
+                        "BBOX": f"{t_min_lat},{t_min_lon},{t_max_lat},{t_max_lon}",
+                        "WIDTH": str(tw),
+                        "HEIGHT": str(th),
+                        "FORMAT": "image/png",
+                        "STYLES": "",
+                    }
 
+                    tile_ok = False
+                    for attempt in range(3):
+                        try:
+                            resp = client.get(IGN_WMS_PNOA, params=params, timeout=180.0)
+                            resp.raise_for_status()
+                            ct = resp.headers.get("content-type", "")
+                            if "xml" in ct or "text" in ct:
+                                raise RuntimeError(f"WMS error: {resp.text[:300]}")
+                            tile_img = Image.open(io.BytesIO(resp.content)).convert("RGB")
+                            full_img.paste(tile_img, (x0, y0))
+                            tile_ok = True
+                            break
+                        except Exception as tile_err:
+                            logger.warning(
+                                "  Sharp tile %d/%d attempt %d/3 failed: %s",
+                                row * n_cols + col + 1, n_rows * n_cols, attempt + 1, tile_err,
+                            )
+                            if attempt < 2:
+                                import time as _time
+                                _time.sleep(2 * (attempt + 1))
+                    if not tile_ok:
+                        raise RuntimeError(f"Sharp WMS tile ({row},{col}) failed after 3 attempts")
+
+                    if n_cols * n_rows > 1:
+                        logger.info("  Sharp tile %d/%d (%dx%d)",
+                                    row * n_cols + col + 1, n_rows * n_cols, tw, th)
+
+        img = full_img
         logger.info(
-            "Fresh WMS OK: %dx%d (%.2f cm/px), %d KB",
-            img.size[0], img.size[1], effective_cm, len(resp.content) // 1024,
+            "Fresh WMS OK: %dx%d (%.2f cm/px, %d tiles)",
+            img.size[0], img.size[1], effective_cm, n_rows * n_cols,
         )
     except Exception as exc:
         logger.warning("Fresh WMS failed (%s), falling back to GeoTIFF", exc)
@@ -524,10 +571,13 @@ def extract_sharp_texture(
         img = Image.fromarray(arr.astype(np.uint8), "RGB")
         logger.info("Fallback GeoTIFF extraction: %dx%d", img.size[0], img.size[1])
 
-    # --- Sharpening pipeline ---
-    img = img.filter(ImageFilter.UnsharpMask(radius=1.5, percent=100, threshold=2))
-    enhancer = ImageEnhance.Contrast(img)
-    img = enhancer.enhance(1.05)
+    # --- Sharpening pipeline (skip if raw grain is desired) ---
+    if not disable_sharpening:
+        img = img.filter(ImageFilter.UnsharpMask(radius=1.5, percent=100, threshold=2))
+        enhancer = ImageEnhance.Contrast(img)
+        img = enhancer.enhance(1.05)
+    else:
+        logger.info("Sharpening disabled — raw grain preserved")
 
     img.save(output_path, "PNG", optimize=True)
     final_kb = output_path.stat().st_size / 1024

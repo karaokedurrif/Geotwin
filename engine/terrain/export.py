@@ -794,19 +794,19 @@ def _bake_contact_ao(
 def build_perimeter_wall(
     aoi_geojson_path: Path,
     origin: dict,
-    wall_height: float = 1.5,
-    wall_thickness: float = 0.15,
+    wall_height: float = 1.8,
+    wall_thickness: float = 0.20,
 ) -> trimesh.Trimesh | None:
     """Build a perimeter wall mesh from parcel geometry.
 
-    Extrudes the parcel boundary into a thin wall suitable for small
+    Extrudes the parcel boundary into a wall suitable for small
     parcels (<1 ha) where a visual boundary aids drone flight planning.
 
     Args:
         aoi_geojson_path: Path to the aoi.geojson saved by the pipeline.
         origin: Local origin dict (centroid_lon, centroid_lat, min_elev, etc.).
-        wall_height: Height of the wall in meters (default 1.5m).
-        wall_thickness: Wall thickness in meters (default 0.15m).
+        wall_height: Height of the wall in meters (default 1.8m).
+        wall_thickness: Wall thickness in meters (default 0.20m).
 
     Returns:
         trimesh.Trimesh in local Y-up coords, or None on failure.
@@ -866,14 +866,14 @@ def build_perimeter_wall(
         wall_mesh.faces = wall_mesh.faces[:, ::-1]
         trimesh.repair.fix_normals(wall_mesh)
 
-        # Dark sandstone material (darker than buildings)
+        # Stone wall material — cool gray stone
         from PIL import Image
-        wall_color = Image.new("RGB", (4, 4), (140, 120, 90))  # dark sandstone
+        wall_color = Image.new("RGB", (4, 4), (155, 150, 140))  # gray stone
         wall_mat = trimesh.visual.material.PBRMaterial(
             baseColorTexture=wall_color,
-            baseColorFactor=[0.55, 0.47, 0.35, 1.0],
+            baseColorFactor=[0.61, 0.59, 0.55, 1.0],
             metallicFactor=0.0,
-            roughnessFactor=0.9,
+            roughnessFactor=0.95,
             doubleSided=True,
         )
         uv = np.zeros((len(wall_mesh.vertices), 2), dtype=np.float32)
@@ -887,6 +887,177 @@ def build_perimeter_wall(
         return wall_mesh
     except Exception as e:
         logger.warning("build_perimeter_wall failed: %s", e)
+        return None
+
+
+def _apply_micro_topography(
+    terrain_geom: trimesh.Trimesh,
+    noise_amplitude: float = 0.05,
+    seed: int = 42,
+) -> None:
+    """Add very soft Perlin-like noise to perfectly flat terrain.
+
+    For urban micro-parcels the DEM produces a nearly flat Y=0 surface.
+    Adding 5 cm of smooth noise prevents the grass from looking like a
+    mirror and helps the drone camera detect parallax.
+
+    Modifies vertices in-place.
+    """
+    rng = np.random.RandomState(seed)
+    verts = np.asarray(terrain_geom.vertices, dtype=np.float64)
+
+    # Smooth 2D noise: generate low-freq noise on XZ grid then interpolate
+    # Use a simple sum-of-sinusoids for smoothness (no Perlin dependency)
+    xz = verts[:, [0, 2]]
+    noise = np.zeros(len(verts), dtype=np.float64)
+
+    # 3 octaves of sinusoidal noise for organic look
+    for freq, amp in [(0.5, 0.6), (1.2, 0.25), (3.0, 0.15)]:
+        phase_x = rng.uniform(0, 2 * np.pi)
+        phase_z = rng.uniform(0, 2 * np.pi)
+        noise += amp * np.sin(freq * xz[:, 0] + phase_x) * np.cos(freq * xz[:, 1] + phase_z)
+
+    # Normalize to [-1, 1] then scale to amplitude
+    noise_range = noise.max() - noise.min()
+    if noise_range > 0:
+        noise = (noise - noise.min()) / noise_range * 2 - 1
+
+    verts[:, 1] += noise * noise_amplitude
+    # Keep Y >= 0
+    verts[:, 1] = np.maximum(verts[:, 1], 0.0)
+    terrain_geom.vertices = verts
+
+    logger.info(
+        "Micro-topography applied: amplitude=±%.0fmm, %d vertices",
+        noise_amplitude * 1000, len(verts),
+    )
+
+
+def _build_gcp_anchors(
+    aoi_geojson_path: Path,
+    origin: dict,
+) -> trimesh.Trimesh | None:
+    """Create 4 red cylinder GCP markers at parcel corners.
+
+    Each anchor is a 10 cm radius, 0.5 m tall cylinder placed at
+    the cadastral corner. These serve as Ground Control Points for
+    drone flight alignment.
+
+    Returns a single merged trimesh with all anchors.
+    """
+    import json as _json
+    from shapely.geometry import shape as _shape
+
+    try:
+        geojson = _json.loads(aoi_geojson_path.read_text())
+        geom = _shape(geojson["geometry"])
+        if geom.geom_type == "MultiPolygon":
+            geom = max(geom.geoms, key=lambda g: g.area)
+
+        # Get the original cadastral CORNERS (not densified points)
+        # Select the most spread-out points as corners
+        exterior = list(geom.exterior.coords)
+        if len(exterior) < 4:
+            logger.warning("GCP anchors: polygon has < 4 vertices, skipping")
+            return None
+
+        # For densified polygons, find the 4 most extreme points
+        # (min/max lon and min/max lat)
+        lons = [c[0] for c in exterior]
+        lats = [c[1] for c in exterior]
+
+        corner_indices: list[int] = []
+        # Top-left (min lon, max lat)
+        corner_indices.append(int(np.argmin([
+            (c[0] - min(lons))**2 + (c[1] - max(lats))**2 for c in exterior
+        ])))
+        # Top-right (max lon, max lat)
+        corner_indices.append(int(np.argmin([
+            (c[0] - max(lons))**2 + (c[1] - max(lats))**2 for c in exterior
+        ])))
+        # Bottom-right (max lon, min lat)
+        corner_indices.append(int(np.argmin([
+            (c[0] - max(lons))**2 + (c[1] - min(lats))**2 for c in exterior
+        ])))
+        # Bottom-left (min lon, min lat)
+        corner_indices.append(int(np.argmin([
+            (c[0] - min(lons))**2 + (c[1] - min(lats))**2 for c in exterior
+        ])))
+
+        # Deduplicate
+        corners = []
+        seen = set()
+        for idx in corner_indices:
+            if idx not in seen:
+                corners.append(exterior[idx])
+                seen.add(idx)
+
+        if len(corners) < 3:
+            logger.warning("GCP anchors: only %d unique corners, skipping", len(corners))
+            return None
+
+        m_lon = origin["m_per_deg_lon"]
+        m_lat = origin["m_per_deg_lat"]
+        c_lon = origin["centroid_lon"]
+        c_lat = origin["centroid_lat"]
+
+        from PIL import Image
+
+        gcp_color = Image.new("RGB", (4, 4), (220, 30, 30))  # bright red
+        gcp_mat = trimesh.visual.material.PBRMaterial(
+            baseColorTexture=gcp_color,
+            baseColorFactor=[0.86, 0.12, 0.12, 1.0],
+            metallicFactor=0.1,
+            roughnessFactor=0.4,
+            doubleSided=True,
+        )
+
+        anchors = []
+        for i, (lon, lat) in enumerate(corners):
+            # WGS84 → local meters
+            lx = (lon - c_lon) * m_lon
+            lz = -(lat - c_lat) * m_lat  # -Z = North
+
+            # Create cylinder: 10cm radius, 50cm tall
+            cyl = trimesh.creation.cylinder(radius=0.10, height=0.50, sections=16)
+            # Cylinder is centered at origin along Z → shift up so base sits at Y=0
+            cyl.vertices[:, 1] = cyl.vertices[:, 2] + 0.25  # base at Y=0
+            cyl.vertices[:, 2] = cyl.vertices[:, 2] * 0  # flatten to disc then restore
+            # Actually re-create properly: cylinder in Y-up
+            cyl = trimesh.creation.cylinder(radius=0.10, height=0.50, sections=16)
+            # Default trimesh cylinder: Z-axis aligned. Rotate to Y-up.
+            rot = trimesh.transformations.rotation_matrix(np.pi / 2, [1, 0, 0])
+            cyl.apply_transform(rot)
+            # Shift so base is at Y=0
+            v = np.asarray(cyl.vertices, dtype=np.float64)
+            v[:, 1] -= v[:, 1].min()
+            # Place at corner position
+            v[:, 0] += lx
+            v[:, 2] += lz
+            cyl.vertices = v
+
+            # Apply red material
+            uv = np.zeros((len(cyl.vertices), 2), dtype=np.float32)
+            cyl.visual = trimesh.visual.TextureVisuals(uv=uv, material=gcp_mat)
+
+            anchors.append(cyl)
+            logger.info(
+                "  GCP anchor %d: (%.6f, %.6f) → local (%.2f, %.2f)",
+                i, lon, lat, lx, lz,
+            )
+
+        # Merge all cylinders into one mesh
+        merged = trimesh.util.concatenate(anchors)
+        merged.metadata["_isGCP"] = True
+
+        logger.info(
+            "GCP anchors built: %d corners, %d verts total",
+            len(corners), len(merged.vertices),
+        )
+        return merged
+
+    except Exception as e:
+        logger.warning("GCP anchors failed: %s", e)
         return None
 
 
@@ -904,8 +1075,9 @@ def merge_buildings_into_glb(
     - Samples terrain mesh to find correct Y at each building's XZ position.
     - Shifts building base to terrain surface + debug_y_offset.
     - Calls trimesh.repair.fix_normals to prevent transparency.
-    - Sandstone material for stone/concrete appearance.
-    - For parcels <1ha: adds perimeter wall, recenters on house, stronger AO.
+    - For parcels <1ha: white/bone walls, separate roof, perimeter wall 1.8m,
+      micro-topography noise, GCP anchors, aggressive AO.
+    - For parcels ≥1ha: sandstone material, standard AO.
     """
     if not building_glb_paths:
         return
@@ -931,17 +1103,48 @@ def merge_buildings_into_glb(
             terrain_verts[:, 2].min(), terrain_verts[:, 2].max(),
         )
 
-        # ── Sandstone material ──
+        is_small = area_ha < 1.0
+
+        # ── Micro-topography for small parcels (5cm noise) ──
+        if is_small:
+            try:
+                _apply_micro_topography(terrain_mesh, noise_amplitude=0.05)
+                terrain_verts = np.asarray(terrain_mesh.vertices)  # refresh
+            except Exception as topo_err:
+                logger.warning("Micro-topography failed (non-critical): %s", topo_err)
+
+        # ── Material selection based on parcel size ──
         from PIL import Image
 
-        bldg_color = Image.new("RGB", (16, 16), (184, 160, 122))  # warm sandstone
-        bldg_mat = trimesh.visual.material.PBRMaterial(
-            baseColorTexture=bldg_color,
-            baseColorFactor=[0.72, 0.63, 0.48, 1.0],
-            metallicFactor=0.0,
-            roughnessFactor=0.85,
-            doubleSided=True,
-        )
+        if is_small:
+            # White bone / ivory walls for small urban parcels
+            wall_tex = Image.new("RGB", (16, 16), (242, 235, 220))  # bone white
+            wall_mat = trimesh.visual.material.PBRMaterial(
+                baseColorTexture=wall_tex,
+                baseColorFactor=[0.95, 0.92, 0.86, 1.0],
+                metallicFactor=0.0,
+                roughnessFactor=0.9,
+                doubleSided=True,
+            )
+            # Roof material — terracotta-ish for contrast
+            roof_tex = Image.new("RGB", (16, 16), (165, 120, 90))
+            roof_mat = trimesh.visual.material.PBRMaterial(
+                baseColorTexture=roof_tex,
+                baseColorFactor=[0.65, 0.47, 0.35, 1.0],
+                metallicFactor=0.0,
+                roughnessFactor=0.8,
+                doubleSided=True,
+            )
+        else:
+            wall_tex = Image.new("RGB", (16, 16), (184, 160, 122))  # warm sandstone
+            wall_mat = trimesh.visual.material.PBRMaterial(
+                baseColorTexture=wall_tex,
+                baseColorFactor=[0.72, 0.63, 0.48, 1.0],
+                metallicFactor=0.0,
+                roughnessFactor=0.85,
+                doubleSided=True,
+            )
+            roof_mat = wall_mat  # same as walls for large parcels
 
         added = 0
         bldg_centers_xz = []  # track building centers for recentering
@@ -993,9 +1196,76 @@ def merge_buildings_into_glb(
                 # ── Fix normals (prevents invisible/transparent faces) ──
                 trimesh.repair.fix_normals(bm)
 
-                # ── Apply sandstone material + UVs ──
+                # ── Split roof from walls for small parcels ──
+                if is_small:
+                    y_max = bv[:, 1].max()
+                    y_min_bldg = bv[:, 1].min()
+                    bldg_height = y_max - y_min_bldg
+                    # Roof = top 15% of building height (roof plane + eave zone)
+                    roof_threshold = y_max - bldg_height * 0.15
+
+                    roof_mask = bv[:, 1] > roof_threshold
+                    # Apply roof material to roof faces, wall material to walls
+                    # We achieve this by splitting into two meshes
+                    faces = np.asarray(bm.faces)
+                    face_max_y = bv[faces].max(axis=1)[:, 1]
+                    roof_faces_mask = face_max_y > roof_threshold
+
+                    if roof_faces_mask.any() and (~roof_faces_mask).any():
+                        # Split into wall mesh and roof mesh
+                        wall_faces = faces[~roof_faces_mask]
+                        r_faces = faces[roof_faces_mask]
+
+                        # Wall mesh
+                        wall_used = np.unique(wall_faces)
+                        w_remap = np.full(len(bv), -1, dtype=int)
+                        w_remap[wall_used] = np.arange(len(wall_used))
+                        wall_m = trimesh.Trimesh(
+                            vertices=bv[wall_used],
+                            faces=w_remap[wall_faces],
+                            process=False,
+                        )
+                        uv_w = np.zeros((len(wall_m.vertices), 2), dtype=np.float32)
+                        wall_m.visual = trimesh.visual.TextureVisuals(uv=uv_w, material=wall_mat)
+                        wall_m.metadata["_isBuilding"] = True
+                        scene.add_geometry(wall_m, node_name=f"building_{added}_walls")
+
+                        # Roof mesh with eave offset
+                        r_used = np.unique(r_faces)
+                        r_remap = np.full(len(bv), -1, dtype=int)
+                        r_remap[r_used] = np.arange(len(r_used))
+                        roof_verts = bv[r_used].copy()
+                        # Add 0.2m eave overhang — expand roof XZ by 0.2m outward
+                        r_cx = roof_verts[:, 0].mean()
+                        r_cz = roof_verts[:, 2].mean()
+                        dx = roof_verts[:, 0] - r_cx
+                        dz = roof_verts[:, 2] - r_cz
+                        dist = np.sqrt(dx**2 + dz**2)
+                        dist = np.maximum(dist, 0.01)
+                        roof_verts[:, 0] += dx / dist * 0.2
+                        roof_verts[:, 2] += dz / dist * 0.2
+
+                        roof_m = trimesh.Trimesh(
+                            vertices=roof_verts,
+                            faces=r_remap[r_faces],
+                            process=False,
+                        )
+                        uv_r = np.zeros((len(roof_m.vertices), 2), dtype=np.float32)
+                        roof_m.visual = trimesh.visual.TextureVisuals(uv=uv_r, material=roof_mat)
+                        roof_m.metadata["_isBuilding"] = True
+                        scene.add_geometry(roof_m, node_name=f"building_{added}_roof")
+
+                        logger.info(
+                            "Building %s split: %d wall faces + %d roof faces, eave +0.2m",
+                            bp.name, len(wall_faces), len(r_faces),
+                        )
+                        added += 1
+                        continue  # skip default material path
+                    # If split fails, fall through to unified material
+
+                # ── Apply material + UVs (unified path) ──
                 uv = np.zeros((len(bm.vertices), 2), dtype=np.float32)
-                bm.visual = trimesh.visual.TextureVisuals(uv=uv, material=bldg_mat)
+                bm.visual = trimesh.visual.TextureVisuals(uv=uv, material=wall_mat)
                 bm.metadata["_isBuilding"] = True
 
                 scene.add_geometry(bm, node_name=f"building_{added}")
@@ -1004,29 +1274,39 @@ def merge_buildings_into_glb(
                 logger.warning("Failed loading building GLB %s: %s", bp, be)
 
         # ── Perimeter wall for small parcels (<1 ha) ──
-        if area_ha < 1.0 and aoi_geojson_path and local_origin:
+        if is_small and aoi_geojson_path and local_origin:
             try:
                 wall_mesh = build_perimeter_wall(
                     aoi_geojson_path, local_origin,
-                    wall_height=1.5, wall_thickness=0.15,
+                    wall_height=1.8, wall_thickness=0.20,
                 )
                 if wall_mesh is not None:
                     scene.add_geometry(wall_mesh, node_name="perimeter_wall")
-                    logger.info("Perimeter wall added to scene")
+                    logger.info("Perimeter wall 1.8m added to scene")
             except Exception as wall_err:
                 logger.warning("Perimeter wall failed (non-critical): %s", wall_err)
 
+        # ── GCP anchor cylinders at corners (<1 ha) ──
+        if is_small and aoi_geojson_path and local_origin:
+            try:
+                gcp_mesh = _build_gcp_anchors(aoi_geojson_path, local_origin)
+                if gcp_mesh is not None:
+                    scene.add_geometry(gcp_mesh, node_name="gcp_anchors")
+                    logger.info("GCP anchor cylinders added to scene")
+            except Exception as gcp_err:
+                logger.warning("GCP anchors failed (non-critical): %s", gcp_err)
+
         if added > 0:
-            # ── Bake ambient occlusion — stronger for small parcels ──
-            ao_radius = 3.0 if area_ha < 1.0 else 5.0
-            ao_strength = 0.75 if area_ha < 1.0 else 0.5
+            # ── Bake ambient occlusion — much stronger for small parcels ──
+            ao_radius = 4.0 if is_small else 5.0
+            ao_strength = 0.90 if is_small else 0.5
             try:
                 _bake_contact_ao(scene, ao_radius=ao_radius, ao_strength=ao_strength)
             except Exception as ao_err:
                 logger.warning("AO baking failed (non-critical): %s", ao_err)
 
             # ── Recenter on house for small parcels (<1 ha) ──
-            if area_ha < 1.0 and bldg_centers_xz:
+            if is_small and bldg_centers_xz:
                 avg_x = np.mean([c[0] for c in bldg_centers_xz])
                 avg_z = np.mean([c[1] for c in bldg_centers_xz])
                 logger.info(
@@ -1043,9 +1323,11 @@ def merge_buildings_into_glb(
             terrain_glb_path.write_bytes(merged_data)
             logger.info(
                 "Merged %d buildings into %s (%.1f KB) "
-                "[y_offset=+%.1fm, material=sandstone, ao=%.0f%%]",
+                "[y_offset=+%.1fm, material=%s, ao=%.0f%%]",
                 added, terrain_glb_path, len(merged_data) / 1024,
-                debug_y_offset, ao_strength * 100,
+                debug_y_offset,
+                "bone-white" if is_small else "sandstone",
+                ao_strength * 100,
             )
         else:
             logger.warning("merge_buildings_into_glb: no buildings merged")

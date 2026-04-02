@@ -280,8 +280,10 @@ def process_twin(
         mesh_geo_bbox = (mb["min_lon"], mb["min_lat"], mb["max_lon"], mb["max_lat"])
 
         # Target texture size based on parcel area
-        if aoi_meta.area_ha < 1.0:
-            sharp_target_px = 4096
+        if aoi_meta.area_ha < 0.5:
+            sharp_target_px = 8192  # 8K for drone-ready micro parcels (~2 cm/px)
+        elif aoi_meta.area_ha < 1.0:
+            sharp_target_px = 8192  # 8K for small urban parcels
         elif aoi_meta.area_ha < 10.0:
             sharp_target_px = 4096
         else:
@@ -289,7 +291,12 @@ def process_twin(
 
         tex_ext = ".png"  # PNG lossless for max quality in GLB
         texture_path = ortho_tif.with_suffix(tex_ext)
-        extract_sharp_texture(ortho_tif, mesh_geo_bbox, texture_path, target_max_px=sharp_target_px)
+        # Disable sharpening for small parcels — preserve raw grain for drone
+        extract_sharp_texture(
+            ortho_tif, mesh_geo_bbox, texture_path,
+            target_max_px=sharp_target_px,
+            disable_sharpening=(aoi_meta.area_ha < 1.0),
+        )
 
         # ── Hi-res 4K inset composite — only for large parcels ──
         # For small parcels (<1 ha), extract_sharp_texture already downloads
