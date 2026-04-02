@@ -621,11 +621,13 @@ async function flyToSavedCamera(viewer: any, snapshot: TwinSnapshot): Promise<vo
 
   // Use saved camera or default isometric view
   const camera = snapshot.camera || {};
+  const areaHa = snapshot.parcel?.area_ha ?? 100;
   const heading = camera.headingDeg !== undefined ? camera.headingDeg : 315; // NW
-  const pitch = camera.pitchDeg !== undefined ? camera.pitchDeg : -50; // MÁS INCLINADO (era -38)
+  const savedPitch = camera.pitchDeg !== undefined ? camera.pitchDeg : -50;
+  // Override shallow pitch for small parcels — need to look down to see the ground
+  const pitch = (areaHa < 1 && savedPitch > -25) ? -40 : savedPitch;
 
   // Compute ideal range based on parcel area, then sanity-check saved value
-  const areaHa = snapshot.parcel?.area_ha ?? 100;
   let idealRange: number;
   if (areaHa < 0.5)       idealRange = Math.max(Math.sqrt(areaHa * 10000) * 5, 80);
   else if (areaHa < 5)    idealRange = Math.max(Math.sqrt(areaHa * 10000) * 3, 300);
@@ -633,8 +635,8 @@ async function flyToSavedCamera(viewer: any, snapshot: TwinSnapshot): Promise<vo
   else                    idealRange = Math.max(Math.sqrt(areaHa * 10000) * 1.5, 2000);
 
   const savedRange = camera.range_m ?? 0;
-  // If saved range is absurd (>10x ideal), use ideal instead
-  const range = (savedRange > 0 && savedRange < idealRange * 10) ? savedRange : idealRange;
+  // If saved range is absurd (>3x ideal), use ideal instead
+  const range = (savedRange > 0 && savedRange < idealRange * 3) ? savedRange : idealRange;
 
   const targetHeight = groundHeight + range;
 

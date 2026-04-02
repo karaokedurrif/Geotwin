@@ -243,12 +243,17 @@ def _compute_face_normals(vertices: np.ndarray, faces: np.ndarray) -> np.ndarray
 
 
 def clip_mesh_to_aoi(mesh: TerrainMesh, aoi_geojson: dict) -> TerrainMesh:
-    """Recorta la malla a la geometría del AOI.
+    """Recorta la malla a la geometría del AOI con bordes suaves.
 
-    Elimina triángulos cuyo centroide está fuera del polígono.
+    1. Extrae las coordenadas densificadas del polígono AOI.
+    2. Interpola sus elevaciones desde la malla existente.
+    3. Inyecta esos vértices frontera en la nube de puntos.
+    4. Re-triangula con Delaunay.
+    5. Descarta triángulos cuyo centroide queda fuera del polígono.
+
+    Esto elimina el patrón "escalera" del grid DEM en los bordes.
     """
     from shapely.geometry import Point, shape
-
     from shapely.geometry.polygon import orient
     from shapely.validation import make_valid
 
@@ -259,10 +264,94 @@ def clip_mesh_to_aoi(mesh: TerrainMesh, aoi_geojson: dict) -> TerrainMesh:
     if not polygon.is_valid:
         polygon = make_valid(polygon)
 
-    # Centroide de cada triángulo
-    centroids = mesh.vertices[mesh.faces].mean(axis=1)  # (M, 3)
+    # ── Step 1: Get polygon boundary coordinates ──
+    if polygon.geom_type == "Polygon":
+        boundary_coords = list(polygon.exterior.coords)
+    elif polygon.geom_type == "MultiPolygon":
+        boundary_coords = []
+        for p in polygon.geoms:
+            boundary_coords.extend(list(p.exterior.coords))
+    else:
+        boundary_coords = []
 
-    # Filtrar por polígono (solo X, Y)
+    # ── Step 2: Interpolate elevation for boundary points ──
+    # Use scipy griddata to interpolate from existing mesh vertices
+    if len(boundary_coords) > 0 and mesh.vertex_count > 10:
+        from scipy.interpolate import LinearNDInterpolator
+
+        interp = LinearNDInterpolator(
+            mesh.vertices[:, :2],  # (lon, lat)
+            mesh.vertices[:, 2],   # elevation
+        )
+
+        bnd_lons = np.array([c[0] for c in boundary_coords])
+        bnd_lats = np.array([c[1] for c in boundary_coords])
+        bnd_elevs = interp(bnd_lons, bnd_lats)
+
+        # Only keep boundary points with valid (non-NaN) interpolated elevation
+        valid_mask = ~np.isnan(bnd_elevs)
+        bnd_pts = np.column_stack([bnd_lons[valid_mask], bnd_lats[valid_mask], bnd_elevs[valid_mask]])
+
+        if len(bnd_pts) > 0:
+            logger.info(
+                "Injecting %d boundary vertices into mesh (%d existing)",
+                len(bnd_pts), mesh.vertex_count,
+            )
+
+            # ── Step 3: Combine mesh vertices + boundary vertices ──
+            # Remove mesh vertices that are very close to a boundary vertex
+            # to avoid near-duplicate points that break Delaunay
+            from scipy.spatial import cKDTree
+
+            tree = cKDTree(bnd_pts[:, :2])
+            dists, _ = tree.query(mesh.vertices[:, :2])
+            # Threshold: half the minimum DEM grid spacing
+            edge_lengths = np.linalg.norm(
+                np.diff(mesh.vertices[:10, :2], axis=0), axis=1
+            )
+            min_spacing = np.min(edge_lengths) * 0.3 if len(edge_lengths) > 0 else 1e-6
+            keep_mask = dists > min_spacing
+
+            combined = np.vstack([mesh.vertices[keep_mask], bnd_pts])
+
+            # ── Step 4: Re-triangulate ──
+            points_2d = combined[:, :2]
+            tri = Delaunay(points_2d)
+            new_faces = tri.simplices
+
+            # ── Step 5: Clip by polygon ──
+            centroids = combined[new_faces].mean(axis=1)
+            inside = np.array([
+                polygon.contains(Point(c[0], c[1]))
+                for c in centroids
+            ])
+            new_faces = new_faces[inside]
+
+            # Re-index
+            used_verts = np.unique(new_faces)
+            remap = np.full(len(combined), -1, dtype=int)
+            remap[used_verts] = np.arange(len(used_verts))
+
+            final_verts = combined[used_verts]
+            final_faces = remap[new_faces]
+            final_normals = _compute_face_normals(final_verts, final_faces)
+
+            logger.info(
+                "Malla recortada (smooth): %d→%d vértices, %d→%d triángulos",
+                mesh.vertex_count, len(final_verts),
+                mesh.face_count, len(final_faces),
+            )
+
+            return TerrainMesh(
+                vertices=final_verts,
+                faces=final_faces,
+                normals=final_normals,
+            )
+
+    # ── Fallback: original centroid-based clipping ──
+    logger.info("Fallback: centroid-based clipping (no boundary injection)")
+
+    centroids = mesh.vertices[mesh.faces].mean(axis=1)
     inside = np.array([
         polygon.contains(Point(c[0], c[1]))
         for c in centroids
