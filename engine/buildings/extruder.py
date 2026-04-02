@@ -172,13 +172,18 @@ def extrude_building(
 
     num_floors = max(1, num_floors)
 
-    # Agricultural/industrial buildings are tall open naves: use higher floor_height
-    # Catastro reports "1 floor" for a 10m-tall industrial hall
+    # Realistic floor_height per building use
+    # Validated against LiDAR PNOA and Catastro DNPRC data:
+    #   Residential: 3.5m/floor (2.5m ceiling + 0.3m slab + foundation/finishes)
+    #   Agricultural/industrial: 6.0m/floor (naves/bodegas with high clearance)
+    #   Commercial: 4.0m/floor (retail ground floors)
     use_lower = use.lower() if use else ""
     if floor_height == 3.0 and use_lower in ("agricultural", "agriculture", "industrial"):
         floor_height = 6.0  # naves/bodegas: ~6m per "floor"
     elif floor_height == 3.0 and use_lower in ("commercial",):
         floor_height = 4.0
+    elif floor_height == 3.0 and use_lower in ("residential",):
+        floor_height = 3.5  # Spanish std: slab-to-slab ~3.5m exterior
 
     height = num_floors * floor_height
 

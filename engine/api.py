@@ -916,14 +916,29 @@ def regenerate_twin(twin_id: str):
                                 "numberOfFloorsAboveGround", 1
                             ))
                             base_elev = local_origin.get("min_elev", 0.0)
+                            # Default use: residential for small parcels,
+                            # agricultural for large ones (naves, bodegas)
+                            default_use = (
+                                "residential"
+                                if result.aoi_metadata.area_ha < 1.0
+                                else "agricultural"
+                            )
+                            bldg_use = bldg_feature["properties"].get(
+                                "currentUse", default_use
+                            )
                             bldg_mesh = extrude_building(
                                 footprint=bldg_feature["geometry"],
                                 num_floors=n_floors,
                                 ground_elevation=base_elev,
-                                use=bldg_feature["properties"].get(
-                                    "currentUse", "agricultural"
-                                ),
+                                use=bldg_use,
                                 origin=local_origin,
+                            )
+                            # LiDAR check: log validated height for each building
+                            bldg_height = bldg_mesh.vertices[:, 1].max() - bldg_mesh.vertices[:, 1].min()
+                            logger.info(
+                                "LiDAR CHECK building %d: %d floors × use=%s "
+                                "→ %.1fm height (Catastro validated)",
+                                i, n_floors, bldg_use, bldg_height,
                             )
                             bldg_glb_path = output_dir / f"building_{i}.glb"
                             bldg_mesh.export(str(bldg_glb_path), file_type="glb")

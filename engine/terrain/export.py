@@ -860,6 +860,11 @@ def build_perimeter_wall(
         new_verts[:, 0] = verts[:, 0]      # X = East
         new_verts[:, 1] = verts[:, 2]      # Y = elevation (was Z)
         new_verts[:, 2] = -verts[:, 1]     # -Z = North (was Y in 2D)
+
+        # Z-fighting fix: sink wall 10cm below terrain so it "grows" from
+        # underground — no visual gaps between wall base and terrain surface
+        new_verts[:, 1] -= 0.10
+
         wall_mesh.vertices = new_verts
 
         # Reverse face winding after axis swap
@@ -1057,6 +1062,14 @@ def _build_gcp_anchors(
             "GCP anchors built: %d corners, %d verts total",
             len(corners), len(merged.vertices),
         )
+
+        # ── Log WGS84 coordinates for drone waypoint upload ──
+        logger.info("═" * 60)
+        logger.info("DRONE GCP WAYPOINTS (WGS84 — copy to flight controller):")
+        for i, (lon, lat) in enumerate(corners):
+            logger.info("  GCP_%d: lat=%.10f  lon=%.10f", i, lat, lon)
+        logger.info("═" * 60)
+
         return merged
 
     except Exception as e:
@@ -1298,6 +1311,26 @@ def merge_buildings_into_glb(
                     logger.info("GCP anchor cylinders added to scene")
             except Exception as gcp_err:
                 logger.warning("GCP anchors failed (non-critical): %s", gcp_err)
+
+        # ── DRONE_ANCHOR invisible reference node at scene origin (0,0,0) ──
+        # Photogrammetry software uses this to identify North and model center
+        if is_small:
+            anchor_pt = trimesh.creation.icosphere(subdivisions=0, radius=0.001)
+            anchor_verts = np.asarray(anchor_pt.vertices, dtype=np.float64)
+            # Fully transparent material — invisible in viewer
+            from PIL import Image as _PILImage
+            _t_img = _PILImage.new("RGBA", (2, 2), (0, 0, 0, 0))
+            _anchor_mat = trimesh.visual.material.PBRMaterial(
+                baseColorTexture=_t_img,
+                baseColorFactor=[0.0, 0.0, 0.0, 0.0],
+                alphaMode="BLEND",
+                metallicFactor=0.0,
+                roughnessFactor=1.0,
+            )
+            _anc_uv = np.zeros((len(anchor_pt.vertices), 2), dtype=np.float32)
+            anchor_pt.visual = trimesh.visual.TextureVisuals(uv=_anc_uv, material=_anchor_mat)
+            scene.add_geometry(anchor_pt, node_name="DRONE_ANCHOR")
+            logger.info("DRONE_ANCHOR placed at (0, 0, 0) — photogrammetry north reference")
 
         if added > 0:
             # ── Bake ambient occlusion — much stronger for small parcels ──
