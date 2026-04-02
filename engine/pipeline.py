@@ -212,7 +212,7 @@ def process_twin(
         import trimesh as _trimesh
 
         t = _trimesh.Trimesh(vertices=mesh.vertices, faces=mesh.faces)
-        max_passes = 3  # 3 passes sufficient for 10K target
+        max_passes = 2  # 2 passes ≈ 7K verts — enough for flat maquette terrain
         for _pass in range(max_passes):
             if len(t.vertices) >= target_verts:
                 break
