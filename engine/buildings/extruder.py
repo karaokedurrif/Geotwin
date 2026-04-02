@@ -209,6 +209,17 @@ def extrude_building(
         # Adjust ground elevation relative to the terrain origin
         ground_elevation = ground_elevation - origin.get("min_elev", 0.0)
 
+    # ── Bevel: round corners for realism (no perfect 90° edges in real life) ──
+    # Buffer inward then outward by bevel_r to chamfer sharp corners.
+    bevel_r = 0.08  # 8cm bevel radius
+    try:
+        beveled = footprint.buffer(-bevel_r, join_style=1).buffer(bevel_r, join_style=1)
+        if beveled.is_valid and not beveled.is_empty and beveled.area > 0.5:
+            footprint = beveled
+            logger.info("Bevel applied: %.0fcm radius", bevel_r * 100)
+    except Exception:
+        pass  # keep original footprint if bevel fails
+
     # Extrude the 2D polygon into a 3D prism
     # trimesh extrudes along +Z in 2D space
     mesh = trimesh.creation.extrude_polygon(footprint, height)

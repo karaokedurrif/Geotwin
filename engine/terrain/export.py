@@ -1008,15 +1008,12 @@ def _build_gcp_anchors(
 
         from PIL import Image
 
-        gcp_color = Image.new("RGB", (4, 4), (255, 40, 40))  # fluorescent red
-        gcp_emissive = Image.new("RGB", (4, 4), (230, 15, 15))  # emissive glow
+        gcp_color = Image.new("RGB", (4, 4), (200, 35, 35))  # matte signal red
         gcp_mat = trimesh.visual.material.PBRMaterial(
             baseColorTexture=gcp_color,
-            baseColorFactor=[1.0, 0.16, 0.16, 1.0],
-            emissiveTexture=gcp_emissive,
-            emissiveFactor=[0.9, 0.05, 0.05],
+            baseColorFactor=[0.78, 0.14, 0.14, 1.0],
             metallicFactor=0.0,
-            roughnessFactor=0.3,
+            roughnessFactor=0.95,
             doubleSided=True,
         )
 
@@ -1121,34 +1118,31 @@ def merge_buildings_into_glb(
 
         is_small = area_ha < 1.0
 
-        # ── Micro-topography for small parcels (5cm noise) ──
-        if is_small:
-            try:
-                _apply_micro_topography(terrain_mesh, noise_amplitude=0.015)
-                terrain_verts = np.asarray(terrain_mesh.vertices)  # refresh
-            except Exception as topo_err:
-                logger.warning("Micro-topography failed (non-critical): %s", topo_err)
+        # ── Micro-topography DISABLED — flat terrain + sharp texture is cleaner ──
+        # _apply_micro_topography was creating visual noise on the ortho.
+        # A perfectly flat surface with a crisp 4K texture looks more real.
+        logger.info("Micro-topography skipped (polish pass — flat terrain preferred)")
 
         # ── Material selection based on parcel size ──
         from PIL import Image
 
         if is_small:
-            # White bone / ivory walls for small urban parcels
-            wall_tex = Image.new("RGB", (16, 16), (242, 235, 220))  # bone white
+            # Warm grey walls — #EAE3D2 (234, 227, 210) — subtle, realistic
+            wall_tex = Image.new("RGB", (16, 16), (234, 227, 210))
             wall_mat = trimesh.visual.material.PBRMaterial(
                 baseColorTexture=wall_tex,
-                baseColorFactor=[0.95, 0.92, 0.86, 1.0],
+                baseColorFactor=[0.92, 0.89, 0.82, 1.0],
                 metallicFactor=0.0,
-                roughnessFactor=0.9,
+                roughnessFactor=0.95,
                 doubleSided=True,
             )
-            # Roof material — terracotta-ish for contrast
-            roof_tex = Image.new("RGB", (16, 16), (165, 120, 90))
+            # Roof material — #8B4513 saddle brown earth tile
+            roof_tex = Image.new("RGB", (16, 16), (139, 69, 19))
             roof_mat = trimesh.visual.material.PBRMaterial(
                 baseColorTexture=roof_tex,
-                baseColorFactor=[0.65, 0.47, 0.35, 1.0],
+                baseColorFactor=[0.545, 0.271, 0.075, 1.0],
                 metallicFactor=0.0,
-                roughnessFactor=0.8,
+                roughnessFactor=0.92,
                 doubleSided=True,
             )
         else:
@@ -1333,9 +1327,9 @@ def merge_buildings_into_glb(
             logger.info("DRONE_ANCHOR placed at (0, 0, 0) — photogrammetry north reference")
 
         if added > 0:
-            # ── Bake ambient occlusion — much stronger for small parcels ──
-            ao_radius = 4.0 if is_small else 5.0
-            ao_strength = 0.90 if is_small else 0.5
+            # ── Bake contact AO — tight 20cm strip at 40% for grounded look ──
+            ao_radius = 0.20 if is_small else 5.0
+            ao_strength = 0.40 if is_small else 0.5
             try:
                 _bake_contact_ao(scene, ao_radius=ao_radius, ao_strength=ao_strength)
             except Exception as ao_err:
