@@ -1047,19 +1047,31 @@ def _build_gallinero_zone(
             y = (lat - c_lat) * m_lat
             local_2d.append((x, y))
 
-        # Find the longest segment of the parcel exterior
+        # Simplify the densified polygon to recover original wall corners
+        # Densification produces sub-meter segments; simplify back to ~1m tolerance
+        from shapely.geometry import Polygon as _Polygon
+        local_poly = _Polygon(local_2d)
+        simplified = local_poly.simplify(1.0, preserve_topology=True)
+        simp_coords = list(simplified.exterior.coords)
+        logger.info(
+            "Gallinero: simplified polygon from %d → %d vertices",
+            len(local_2d), len(simp_coords),
+        )
+
+        # Find the longest segment of the simplified parcel exterior
         best_len = 0.0
         best_i = 0
-        for i in range(len(local_2d) - 1):
-            x0, y0 = local_2d[i]
-            x1, y1 = local_2d[i + 1]
+        for i in range(len(simp_coords) - 1):
+            x0, y0 = simp_coords[i]
+            x1, y1 = simp_coords[i + 1]
             seg_len = np.hypot(x1 - x0, y1 - y0)
             if seg_len > best_len:
                 best_len = seg_len
                 best_i = i
 
-        x0, y0 = local_2d[best_i]
-        x1, y1 = local_2d[best_i + 1]
+        x0, y0 = simp_coords[best_i]
+        x1, y1 = simp_coords[best_i + 1]
+        logger.info("Gallinero: longest wall segment = %.1fm", best_len)
 
         # Clamp gallinero length to segment length - 1m margin
         actual_length = min(length, best_len - 1.0)
@@ -1102,7 +1114,6 @@ def _build_gallinero_zone(
 
         # Build flat rectangle mesh (2cm thick) in local Y-up coords
         # Extrude via trimesh: polygon in XY, extrude along Z, then axis-swap
-        from shapely.geometry import Polygon as _Polygon
         rect_poly = _Polygon([p0, p1, p2, p3, p0])
         if not rect_poly.is_valid or rect_poly.area < 1.0:
             logger.warning("Gallinero rectangle invalid (area=%.1f)", rect_poly.area)
