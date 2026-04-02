@@ -1436,21 +1436,21 @@ def merge_buildings_into_glb(
         from PIL import Image
 
         if is_small:
-            # ── Clay Mode: pure white matte for all building geometry ──
-            clay_tex = Image.new("RGB", (16, 16), (255, 255, 255))
+            # ── Bone/cream matte walls + darker cream roof ──
+            bone_tex = Image.new("RGB", (16, 16), (245, 245, 220))
             wall_mat = trimesh.visual.material.PBRMaterial(
-                baseColorTexture=clay_tex,
-                baseColorFactor=[1.0, 1.0, 1.0, 1.0],
+                baseColorTexture=bone_tex,
+                baseColorFactor=[0.96, 0.96, 0.86, 1.0],
                 metallicFactor=0.0,
-                roughnessFactor=1.0,
+                roughnessFactor=0.85,
                 doubleSided=True,
             )
-            # Roof = same white clay — unified maquette look
+            roof_tex = Image.new("RGB", (16, 16), (180, 120, 80))
             roof_mat = trimesh.visual.material.PBRMaterial(
-                baseColorTexture=clay_tex,
-                baseColorFactor=[1.0, 1.0, 1.0, 1.0],
+                baseColorTexture=roof_tex,
+                baseColorFactor=[0.71, 0.47, 0.31, 1.0],
                 metallicFactor=0.0,
-                roughnessFactor=1.0,
+                roughnessFactor=0.80,
                 doubleSided=True,
             )
         else:
@@ -1514,21 +1514,63 @@ def merge_buildings_into_glb(
                 # ── Fix normals (prevents invisible/transparent faces) ──
                 trimesh.repair.fix_normals(bm)
 
-                # ── Blueprint 2D mode for small parcels: flatten to thin slab ──
+                # ── Split roof from walls for small parcels ──
                 if is_small:
-                    # Squash entire building to a 2cm-high footprint slab at terrain level
-                    bldg_y_base = float(bv[:, 1].min())
-                    bv[:, 1] = np.where(
-                        bv[:, 1] > bldg_y_base + 0.02,
-                        bldg_y_base + 0.02,
-                        bv[:, 1],
-                    )
-                    bm.vertices = bv
-                    trimesh.repair.fix_normals(bm)
-                    logger.info(
-                        "Building %s flattened to 2D footprint slab (2cm height)",
-                        bp.name,
-                    )
+                    y_max = bv[:, 1].max()
+                    y_min_bldg = bv[:, 1].min()
+                    bldg_height = y_max - y_min_bldg
+                    roof_threshold = y_max - bldg_height * 0.15
+
+                    faces = np.asarray(bm.faces)
+                    face_max_y = bv[faces].max(axis=1)[:, 1]
+                    roof_faces_mask = face_max_y > roof_threshold
+
+                    if roof_faces_mask.any() and (~roof_faces_mask).any():
+                        wall_faces = faces[~roof_faces_mask]
+                        r_faces = faces[roof_faces_mask]
+
+                        wall_used = np.unique(wall_faces)
+                        w_remap = np.full(len(bv), -1, dtype=int)
+                        w_remap[wall_used] = np.arange(len(wall_used))
+                        wall_m = trimesh.Trimesh(
+                            vertices=bv[wall_used],
+                            faces=w_remap[wall_faces],
+                            process=False,
+                        )
+                        uv_w = np.zeros((len(wall_m.vertices), 2), dtype=np.float32)
+                        wall_m.visual = trimesh.visual.TextureVisuals(uv=uv_w, material=wall_mat)
+                        wall_m.metadata["_isBuilding"] = True
+                        scene.add_geometry(wall_m, node_name=f"building_{added}_walls")
+
+                        r_used = np.unique(r_faces)
+                        r_remap = np.full(len(bv), -1, dtype=int)
+                        r_remap[r_used] = np.arange(len(r_used))
+                        roof_verts = bv[r_used].copy()
+                        r_cx = roof_verts[:, 0].mean()
+                        r_cz = roof_verts[:, 2].mean()
+                        dx = roof_verts[:, 0] - r_cx
+                        dz = roof_verts[:, 2] - r_cz
+                        dist = np.sqrt(dx**2 + dz**2)
+                        dist = np.maximum(dist, 0.01)
+                        roof_verts[:, 0] += dx / dist * 0.2
+                        roof_verts[:, 2] += dz / dist * 0.2
+
+                        roof_m = trimesh.Trimesh(
+                            vertices=roof_verts,
+                            faces=r_remap[r_faces],
+                            process=False,
+                        )
+                        uv_r = np.zeros((len(roof_m.vertices), 2), dtype=np.float32)
+                        roof_m.visual = trimesh.visual.TextureVisuals(uv=uv_r, material=roof_mat)
+                        roof_m.metadata["_isBuilding"] = True
+                        scene.add_geometry(roof_m, node_name=f"building_{added}_roof")
+
+                        logger.info(
+                            "Building %s split: %d wall faces + %d roof faces, eave +0.2m",
+                            bp.name, len(wall_faces), len(r_faces),
+                        )
+                        added += 1
+                        continue
 
                 # ── Apply material + UVs (unified path) ──
                 uv = np.zeros((len(bm.vertices), 2), dtype=np.float32)
@@ -1540,53 +1582,23 @@ def merge_buildings_into_glb(
             except Exception as be:
                 logger.warning("Failed loading building GLB %s: %s", bp, be)
 
-        # ── Perimeter wall for small parcels (<1 ha) — thin 2D line (blueprint) ──
+        # ── Perimeter wall for small parcels (<1 ha) ──
         if is_small and aoi_geojson_path and local_origin:
             try:
                 wall_mesh = build_perimeter_wall(
                     aoi_geojson_path, local_origin,
-                    wall_height=0.05, wall_thickness=0.10,
+                    wall_height=1.8, wall_thickness=0.20,
                 )
                 if wall_mesh is not None:
-                    # Override wall material to white for blueprint aesthetic
-                    from PIL import Image as _wImg
-                    white_tex = _wImg.new("RGB", (4, 4), (255, 255, 255))
-                    white_mat = trimesh.visual.material.PBRMaterial(
-                        baseColorTexture=white_tex,
-                        baseColorFactor=[1.0, 1.0, 1.0, 1.0],
-                        emissiveFactor=[0.3, 0.3, 0.3],
-                        metallicFactor=0.0,
-                        roughnessFactor=1.0,
-                        doubleSided=True,
-                    )
-                    uv_w = np.zeros((len(wall_mesh.vertices), 2), dtype=np.float32)
-                    wall_mesh.visual = trimesh.visual.TextureVisuals(uv=uv_w, material=white_mat)
                     scene.add_geometry(wall_mesh, node_name="perimeter_wall")
-                    logger.info("Blueprint perimeter wall (5cm height, white) added")
+                    logger.info("Perimeter wall 1.8m added to scene")
             except Exception as wall_err:
                 logger.warning("Perimeter wall failed (non-critical): %s", wall_err)
 
-        # ── Gallinero zone (30×8m cyan rectangle) + GCPs at its corners ──
-        gallinero_corners = None
+        # ── GCP anchor cylinders at parcel corners (<1 ha) ──
         if is_small and aoi_geojson_path and local_origin:
             try:
-                gal_mesh, gallinero_corners = _build_gallinero_zone(
-                    aoi_geojson_path, local_origin,
-                    length=30.0, width=8.0,
-                )
-                if gal_mesh is not None:
-                    scene.add_geometry(gal_mesh, node_name="gallinero_zone")
-                    logger.info("Gallinero zone (30×8m cyan) added to scene")
-            except Exception as gal_err:
-                logger.warning("Gallinero zone failed (non-critical): %s", gal_err)
-
-        # ── GCP anchor cylinders at gallinero corners (or fallback to parcel) ──
-        if is_small and aoi_geojson_path and local_origin:
-            try:
-                if gallinero_corners and len(gallinero_corners) >= 4:
-                    gcp_mesh = _build_gcp_at_corners(gallinero_corners, local_origin)
-                else:
-                    gcp_mesh = _build_gcp_anchors(aoi_geojson_path, local_origin)
+                gcp_mesh = _build_gcp_anchors(aoi_geojson_path, local_origin)
                 if gcp_mesh is not None:
                     scene.add_geometry(gcp_mesh, node_name="gcp_anchors")
                     logger.info("GCP anchor cylinders added to scene")
