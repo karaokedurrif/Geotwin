@@ -71,28 +71,36 @@ export async function tilesRouter(fastify: FastifyInstance) {
 
     const filePath = join(TILES_DIR, twinId, filename);
 
-    try {
-      const data = await readFile(filePath);
+    const contentTypes: Record<string, string> = {
+      '.json': 'application/json',
+      '.b3dm': 'application/octet-stream',
+      '.glb': 'model/gltf-binary',
+      '.geojson': 'application/geo+json',
+      '.tif': 'image/tiff',
+      '.png': 'image/png',
+      '.jpg': 'image/jpeg',
+      '.jpeg': 'image/jpeg',
+      '.pgw': 'text/plain',
+    };
 
-      const contentTypes: Record<string, string> = {
-        '.json': 'application/json',
-        '.b3dm': 'application/octet-stream',
-        '.glb': 'model/gltf-binary',
-        '.geojson': 'application/geo+json',
-        '.tif': 'image/tiff',
-        '.png': 'image/png',
-        '.jpg': 'image/jpeg',
-        '.jpeg': 'image/jpeg',
-        '.pgw': 'text/plain',
-      };
-
-      return reply
-        .header('Content-Type', contentTypes[ext] || 'application/octet-stream')
-        .header('Access-Control-Allow-Origin', '*')
-        .send(data);
-    } catch {
-      return reply.code(404).send({ error: 'Tile file not found' });
+    // Try requested file; if .jpg not found, fallback to .png (engine always writes PNG)
+    const candidates = [filePath];
+    if (ext === '.jpg' || ext === '.jpeg') {
+      candidates.push(join(TILES_DIR, twinId, filename.replace(/\.jpe?g$/, '.png')));
     }
+
+    for (const candidate of candidates) {
+      try {
+        const data = await readFile(candidate);
+        const candExt = candidate.slice(candidate.lastIndexOf('.'));
+        return reply
+          .header('Content-Type', contentTypes[candExt] || 'application/octet-stream')
+          .header('Access-Control-Allow-Origin', '*')
+          .send(data);
+      } catch { /* try next candidate */ }
+    }
+
+    return reply.code(404).send({ error: 'Tile file not found' });
   });
 
   // Trigger terrain processing via engine service (async)

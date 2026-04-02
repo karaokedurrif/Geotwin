@@ -193,7 +193,11 @@ export async function importRouter(fastify: FastifyInstance) {
           twinId,
           area_ha: body.area_ha ?? 0,
           centroid: body.centroid ?? [0, 0],
-          parcel: { name: body.name ?? twinId },
+          parcel: {
+            name: body.name ?? twinId,
+            centroid: body.centroid ?? [0, 0],
+            area_ha: body.area_ha ?? 0,
+          },
           createdAt: new Date().toISOString(),
         };
         await fs.writeFile(scenePath, JSON.stringify(minimalRecipe, null, 2), 'utf-8');

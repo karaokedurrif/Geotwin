@@ -551,9 +551,7 @@ def process_twin(
             "bbox": result.ortho["bbox"],
             "width": result.ortho["width"],
             "height": result.ortho["height"],
-            "texture": str(Path(result.ortho["path"]).with_suffix(
-                ".png" if aoi_meta.area_ha < 1.0 else ".jpg"
-            ).name),
+            "texture": str(Path(result.ortho["path"]).with_suffix(".png").name),
         } if result.ortho else None,
         "local_origin": get_local_origin(),
         "split_assets": split_result if split_result else None,
