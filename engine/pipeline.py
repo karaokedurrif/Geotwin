@@ -198,7 +198,7 @@ def process_twin(
     # For small parcels (0.5-1 ha) → target 10K vertices
     # Standard parcels → only subdivide if below 2000 vertices
     if aoi_meta.area_ha < 0.5:
-        target_verts = 200_000  # Drone-grade density → 20+ MB GLB
+        target_verts = 100_000  # Clean drone-grade mesh (~10-12 MB GLB)
     elif aoi_meta.area_ha < 1.0:
         target_verts = 10_000
     else:
@@ -218,6 +218,20 @@ def process_twin(
                 break
             t = t.subdivide()
             logger.info("  Subdivision pass %d: %d verts", _pass + 1, len(t.vertices))
+
+        # Post-subdivision decimation: trim to exact target for clean geometry
+        if len(t.vertices) > target_verts * 1.05:
+            try:
+                target_faces = int(len(t.faces) * target_verts / len(t.vertices))
+                t_dec = t.simplify_quadric_decimation(target_faces)
+                logger.info(
+                    "  Decimation: %d → %d verts (target %d)",
+                    len(t.vertices), len(t_dec.vertices), target_verts,
+                )
+                t = t_dec
+            except Exception as dec_err:
+                logger.warning("  Decimation failed (non-critical): %s", dec_err)
+
         from .terrain.mesh import TerrainMesh, _compute_face_normals
 
         mesh = TerrainMesh(
@@ -293,9 +307,9 @@ def process_twin(
 
         # Target texture size based on parcel area
         if aoi_meta.area_ha < 0.5:
-            sharp_target_px = 8192  # 8K for drone-ready micro parcels (~2 cm/px)
+            sharp_target_px = 4096  # 4K clean for drone micro parcels
         elif aoi_meta.area_ha < 1.0:
-            sharp_target_px = 8192  # 8K for small urban parcels
+            sharp_target_px = 4096  # 4K balanced for small urban parcels
         elif aoi_meta.area_ha < 10.0:
             sharp_target_px = 4096
         else:

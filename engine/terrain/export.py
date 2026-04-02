@@ -1003,12 +1003,15 @@ def _build_gcp_anchors(
 
         from PIL import Image
 
-        gcp_color = Image.new("RGB", (4, 4), (220, 30, 30))  # bright red
+        gcp_color = Image.new("RGB", (4, 4), (255, 40, 40))  # fluorescent red
+        gcp_emissive = Image.new("RGB", (4, 4), (230, 15, 15))  # emissive glow
         gcp_mat = trimesh.visual.material.PBRMaterial(
             baseColorTexture=gcp_color,
-            baseColorFactor=[0.86, 0.12, 0.12, 1.0],
-            metallicFactor=0.1,
-            roughnessFactor=0.4,
+            baseColorFactor=[1.0, 0.16, 0.16, 1.0],
+            emissiveTexture=gcp_emissive,
+            emissiveFactor=[0.9, 0.05, 0.05],
+            metallicFactor=0.0,
+            roughnessFactor=0.3,
             doubleSided=True,
         )
 
@@ -1108,7 +1111,7 @@ def merge_buildings_into_glb(
         # ── Micro-topography for small parcels (5cm noise) ──
         if is_small:
             try:
-                _apply_micro_topography(terrain_mesh, noise_amplitude=0.05)
+                _apply_micro_topography(terrain_mesh, noise_amplitude=0.015)
                 terrain_verts = np.asarray(terrain_mesh.vertices)  # refresh
             except Exception as topo_err:
                 logger.warning("Micro-topography failed (non-critical): %s", topo_err)
