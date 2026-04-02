@@ -193,12 +193,12 @@ def process_twin(
     mesh = clip_mesh_to_aoi(mesh, aoi_feature)
 
     # ─── Subdivision for mesh density ──────────────────────────────────
-    # For micro parcels (<0.5 ha, ~1300m²) → target 50K+ vertices for
-    # drone-grade mesh density (GLB weight comes from geometry, not texture)
+    # For micro parcels (<0.5 ha, ~1300m²) → 10K verts is enough —
+    # flat terrain + maquette texture means geometry density is irrelevant.
     # For small parcels (0.5-1 ha) → target 10K vertices
     # Standard parcels → only subdivide if below 2000 vertices
     if aoi_meta.area_ha < 0.5:
-        target_verts = 100_000  # Clean drone-grade mesh (~10-12 MB GLB)
+        target_verts = 10_000  # Flat terrain: 10K clean mesh, texture does the work
     elif aoi_meta.area_ha < 1.0:
         target_verts = 10_000
     else:
@@ -212,7 +212,7 @@ def process_twin(
         import trimesh as _trimesh
 
         t = _trimesh.Trimesh(vertices=mesh.vertices, faces=mesh.faces)
-        max_passes = 6 if aoi_meta.area_ha < 0.5 else 3
+        max_passes = 3  # 3 passes sufficient for 10K target
         for _pass in range(max_passes):
             if len(t.vertices) >= target_verts:
                 break
@@ -369,6 +369,39 @@ def process_twin(
                 "(extract_sharp_texture already at max density)",
                 aoi_meta.area_ha,
             )
+
+        # ── Maquette ground texture: tiled grass base + ortho 20% blend ──
+        # For small parcels, the raw satellite texture looks stretched at
+        # close zoom. A tiled procedural grass/earth base with the ortho
+        # faintly blended on top gives the "architectural maquette" look.
+        if aoi_meta.area_ha < 1.0 and texture_path and texture_path.exists():
+            try:
+                from PIL import Image as _PILImage, ImageFilter as _PILFilter
+
+                ortho_img = _PILImage.open(texture_path).convert("RGB")
+                w, h = ortho_img.size
+
+                # Seamless grass/earth tile — 256×256 procedural noise
+                _tile_sz = 256
+                _rng = np.random.default_rng(42)
+                _tr = _rng.normal(115, 12, (_tile_sz, _tile_sz)).clip(85, 155).astype(np.uint8)
+                _tg = _rng.normal(135, 12, (_tile_sz, _tile_sz)).clip(105, 170).astype(np.uint8)
+                _tb = _rng.normal(85, 10, (_tile_sz, _tile_sz)).clip(60, 115).astype(np.uint8)
+                _tile = _PILImage.fromarray(np.stack([_tr, _tg, _tb], axis=-1))
+                _tile = _tile.filter(_PILFilter.GaussianBlur(radius=1.5))
+
+                # Tile across full texture dimensions
+                _grass = _PILImage.new("RGB", (w, h))
+                for _ty in range(0, h, _tile_sz):
+                    for _tx in range(0, w, _tile_sz):
+                        _grass.paste(_tile, (_tx, _ty))
+
+                # Blend: 80% grass base + 20% ortho aerial
+                _result = _PILImage.blend(_grass, ortho_img, alpha=0.20)
+                _result.save(texture_path, format="PNG")
+                logger.info("Maquette texture: %dx%d grass base + 20%% ortho blend → %s", w, h, texture_path.name)
+            except Exception as _maq_err:
+                logger.warning("Maquette texture blend failed (non-critical): %s", _maq_err)
 
         # Assign UVs against mesh geographic bounds → guaranteed [0, 1] full coverage
         mesh = compute_uv_from_bbox(mesh, mesh_geo_bbox)

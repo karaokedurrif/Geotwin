@@ -67,6 +67,7 @@ export default function TerrainCanvas({ glbUrl, geojson }: TerrainCanvasProps) {
       <Environment
         preset={lightPreset}
         background={false}
+        environmentIntensity={1.2}
         environmentRotation={[0, (lightRotation * Math.PI) / 180, 0]}
       />
 
@@ -80,18 +81,18 @@ export default function TerrainCanvas({ glbUrl, geojson }: TerrainCanvasProps) {
         />
       )}
 
-      <ambientLight intensity={0.3} />
+      <ambientLight intensity={0.35} />
       <directionalLight
         castShadow
-        position={[100, 150, 80]}
-        intensity={1.5}
+        position={[-60, 120, -100]}
+        intensity={1.8}
         shadow-mapSize-width={4096}
         shadow-mapSize-height={4096}
         shadow-camera-far={50}
-        shadow-camera-left={-5}
-        shadow-camera-right={5}
-        shadow-camera-top={5}
-        shadow-camera-bottom={-5}
+        shadow-camera-left={-10}
+        shadow-camera-right={10}
+        shadow-camera-top={10}
+        shadow-camera-bottom={-10}
         shadow-bias={-0.0005}
       />
 

@@ -26,6 +26,71 @@ logger = logging.getLogger(__name__)
 _shared_texture_path: Path | None = None
 
 
+def _generate_stucco_normal_map(size: int = 256) -> "Image":
+    """Generate a procedural stucco/plaster normal map for building walls."""
+    from PIL import Image, ImageFilter
+
+    rng = np.random.default_rng(17)
+    noise = rng.normal(0.5, 0.15, (size, size)).clip(0.0, 1.0)
+    height = Image.fromarray((noise * 255).astype(np.uint8))
+    height = height.filter(ImageFilter.GaussianBlur(radius=2.0))
+    h = np.array(height, dtype=np.float32) / 255.0
+
+    # Sobel-like derivatives → tangent-space normal map
+    dx = np.zeros_like(h)
+    dz = np.zeros_like(h)
+    dx[:, 1:-1] = h[:, 2:] - h[:, :-2]
+    dz[1:-1, :] = h[2:, :] - h[:-2, :]
+
+    strength = 2.0
+    r = np.clip(dx * strength + 0.5, 0.0, 1.0)
+    g = np.clip(dz * strength + 0.5, 0.0, 1.0)
+    b = np.ones_like(h)  # Z = 1.0 (flat-ish, perturbed by dx/dz)
+    length = np.sqrt(r ** 2 + g ** 2 + b ** 2)
+    r /= length
+    g /= length
+    b /= length
+    # Remap from [-1,1] normals to [0,1] texture encoding
+    r = r * 0.5 + 0.5
+    g = g * 0.5 + 0.5
+    b = b * 0.5 + 0.5
+
+    normal_img = np.stack([r, g, b], axis=-1)
+    return Image.fromarray((normal_img * 255).astype(np.uint8))
+
+
+def _generate_tile_normal_map(size: int = 256, rows: int = 12) -> "Image":
+    """Generate a procedural roof tile wave/ridge normal map."""
+    from PIL import Image
+
+    y = np.linspace(0, 1, size)
+    x = np.linspace(0, 1, size)
+    _xx, yy = np.meshgrid(x, y)
+
+    # Horizontal wave rows simulating barrel tiles
+    wave = np.sin(yy * rows * 2 * np.pi)
+    # Derivative for normal Z component
+    dz = np.cos(yy * rows * 2 * np.pi) * rows * 2 * np.pi / size
+
+    strength = 0.3
+    r_raw = np.zeros_like(wave)  # no X variation
+    g_raw = dz * strength
+    b_raw = np.ones_like(wave)
+
+    length = np.sqrt(r_raw ** 2 + g_raw ** 2 + b_raw ** 2)
+    r_raw /= length
+    g_raw /= length
+    b_raw /= length
+
+    # Remap to [0,1]
+    r = r_raw * 0.5 + 0.5
+    g = g_raw * 0.5 + 0.5
+    b = b_raw * 0.5 + 0.5
+
+    normal_img = np.stack([r, g, b], axis=-1)
+    return Image.fromarray((normal_img * 255).astype(np.uint8))
+
+
 def _compress_glb_draco(glb_bytes: bytes) -> bytes:
     """Apply Draco mesh compression to a GLB file.
 
@@ -355,7 +420,7 @@ def _mesh_to_glb(mesh: TerrainMesh, texture_path: Path | None = None, *, local_c
         material = trimesh.visual.material.PBRMaterial(
             baseColorTexture=image,
             metallicFactor=0.0,
-            roughnessFactor=0.85,
+            roughnessFactor=0.9,
             doubleSided=True,
         )
         t_mesh.visual = trimesh.visual.TextureVisuals(
@@ -1129,20 +1194,24 @@ def merge_buildings_into_glb(
         if is_small:
             # Warm grey walls — #EAE3D2 (234, 227, 210) — subtle, realistic
             wall_tex = Image.new("RGB", (16, 16), (234, 227, 210))
+            stucco_normal = _generate_stucco_normal_map(256)
             wall_mat = trimesh.visual.material.PBRMaterial(
                 baseColorTexture=wall_tex,
                 baseColorFactor=[0.92, 0.89, 0.82, 1.0],
                 metallicFactor=0.0,
                 roughnessFactor=0.95,
+                normalTexture=stucco_normal,
                 doubleSided=True,
             )
             # Roof material — #8B4513 saddle brown earth tile
             roof_tex = Image.new("RGB", (16, 16), (139, 69, 19))
+            tile_normal = _generate_tile_normal_map(256, rows=12)
             roof_mat = trimesh.visual.material.PBRMaterial(
                 baseColorTexture=roof_tex,
                 baseColorFactor=[0.545, 0.271, 0.075, 1.0],
                 metallicFactor=0.0,
                 roughnessFactor=0.92,
+                normalTexture=tile_normal,
                 doubleSided=True,
             )
         else:
