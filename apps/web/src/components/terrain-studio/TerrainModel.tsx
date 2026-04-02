@@ -23,17 +23,24 @@ function BuildingChild({ url, debug }: { url: string; debug?: boolean }) {
         mesh.receiveShadow = true;
         const mat = mesh.material as THREE.MeshStandardMaterial;
         if (mat) {
-          // Clay Mode — pure white matte for architectural maquette
-          mat.color = new THREE.Color(0xFFFFFF);
-          mat.roughness = 1.0;
+          // Technical wireframe — light gray solid
+          mat.color = new THREE.Color(0xE0E0E0);
+          mat.roughness = 0.95;
           mat.metalness = 0.0;
-          mat.envMapIntensity = 0.8;
+          mat.envMapIntensity = 0.6;
           mat.side = THREE.DoubleSide;
-          // Remove any normal maps or textures from buildings
           mat.normalMap = null;
           mat.map = null;
           mat.needsUpdate = true;
         }
+
+        // Add EdgesGeometry wireframe overlay for technical drawing look
+        const edges = new THREE.EdgesGeometry(mesh.geometry, 15);
+        const lineMat = new THREE.LineBasicMaterial({ color: 0x333333, linewidth: 1 });
+        const wireframe = new THREE.LineSegments(edges, lineMat);
+        wireframe.name = '_edge_overlay';
+        wireframe.raycast = () => {}; // non-interactive
+        mesh.add(wireframe);
       }
     });
 
@@ -62,10 +69,10 @@ function BuildingChild({ url, debug }: { url: string; debug?: boolean }) {
     invalidate();
 
     return () => {
-      // Clean up debug helpers on unmount
+      // Clean up debug helpers and edge overlays on unmount
       const toRemove: THREE.Object3D[] = [];
       scene.traverse((c) => {
-        if (c.name.startsWith('_bldg_debug_')) toRemove.push(c);
+        if (c.name.startsWith('_bldg_debug_') || c.name === '_edge_overlay') toRemove.push(c);
       });
       toRemove.forEach((c) => c.parent?.remove(c));
     };
@@ -201,20 +208,15 @@ export default function TerrainModel({ url }: TerrainModelProps) {
 
         originalMaterials.current.set(mesh.uuid, mesh.material as THREE.Material);
 
-        // Pro material settings for terrain ground
+        // Technical wireframe mode: dark gray neutral ground, no satellite
         const mat = mesh.material as THREE.MeshStandardMaterial;
         if (mat) {
-          mat.roughness = 0.9;   // Matte earth surface
-          mat.metalness = 0.0;   // No metallic shine on ground
-
-          // Max anisotropy + LinearFilter for 5cm/px sharpness at close zoom (RTX 5080)
-          if (mat.map) {
-            mat.map.anisotropy = 16;
-            mat.map.minFilter = THREE.LinearFilter;
-            mat.map.magFilter = THREE.LinearFilter;
-            mat.map.generateMipmaps = false;
-            mat.map.needsUpdate = true;
-          }
+          mat.color = new THREE.Color(0x2C2C2C);
+          mat.roughness = 0.95;
+          mat.metalness = 0.0;
+          mat.map = null;          // strip satellite ortho
+          mat.normalMap = null;
+          mat.needsUpdate = true;
         }
       }
     });

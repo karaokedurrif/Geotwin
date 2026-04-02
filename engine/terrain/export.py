@@ -1073,12 +1073,13 @@ def _build_gcp_anchors(
 
         from PIL import Image
 
-        gcp_color = Image.new("RGB", (4, 4), (200, 35, 35))  # matte signal red
+        gcp_color = Image.new("RGB", (4, 4), (220, 40, 40))  # signal red
         gcp_mat = trimesh.visual.material.PBRMaterial(
             baseColorTexture=gcp_color,
-            baseColorFactor=[0.78, 0.14, 0.14, 1.0],
+            baseColorFactor=[0.86, 0.16, 0.16, 1.0],
+            emissiveFactor=[0.4, 0.05, 0.05],
             metallicFactor=0.0,
-            roughnessFactor=0.95,
+            roughnessFactor=0.7,
             doubleSided=True,
         )
 

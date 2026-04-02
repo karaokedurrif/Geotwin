@@ -93,29 +93,28 @@ export default function TerrainCanvas({ glbUrl, geojson }: TerrainCanvasProps) {
         shadow-camera-right={10}
         shadow-camera-top={10}
         shadow-camera-bottom={-10}
-        shadow-bias={-0.0005}
+        shadow-bias={-0.001}
       />
 
-      {showGrid && (
-        <Grid
-          args={[20, 20]}
-          position={[0, -0.01, 0]}
-          cellSize={0.2}
-          cellThickness={0.5}
-          cellColor="#333"
-          sectionSize={1}
-          sectionThickness={1}
-          sectionColor="#555"
-          fadeDistance={15}
-          infiniteGrid
-        />
-      )}
+      {/* Technical grid — always visible, 1m cells */}
+      <Grid
+        args={[40, 40]}
+        position={[0, 0.001, 0]}
+        cellSize={0.05}
+        cellThickness={0.6}
+        cellColor="#555555"
+        sectionSize={0.5}
+        sectionThickness={1.2}
+        sectionColor="#888888"
+        fadeDistance={8}
+        infiniteGrid
+      />
 
       <ContactShadows
         position={[0, -0.1, 0]}
-        opacity={0.6}
+        opacity={0.4}
         scale={300}
-        blur={2}
+        blur={3}
         far={10}
         resolution={2048}
         color="#000"
