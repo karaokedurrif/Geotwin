@@ -2,6 +2,9 @@ import { useEffect, useRef, useMemo, useCallback, useState } from 'react';
 import { useThree, useFrame, ThreeEvent } from '@react-three/fiber';
 import { useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
+import { LineSegments2 } from 'three/addons/lines/LineSegments2.js';
+import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
+import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js';
 import { useStudioStore } from './store';
 
 /* ------------------------------------------------------------------ */
@@ -34,12 +37,20 @@ function BuildingChild({ url, debug }: { url: string; debug?: boolean }) {
           mat.needsUpdate = true;
         }
 
-        // Add EdgesGeometry wireframe overlay for technical drawing look
+        // Add thick EdgesGeometry overlay (Line2 for GPU-based wide lines)
         const edges = new THREE.EdgesGeometry(mesh.geometry, 15);
-        const lineMat = new THREE.LineBasicMaterial({ color: 0x333333, linewidth: 1 });
-        const wireframe = new THREE.LineSegments(edges, lineMat);
+        const positions = edges.attributes.position.array as Float32Array;
+        const lineGeo = new LineSegmentsGeometry();
+        lineGeo.setPositions(positions);
+        const lineMat = new LineMaterial({
+          color: 0x1a1a1a,
+          linewidth: 3,       // pixels — works via Line2 shader
+          worldUnits: false,
+          resolution: new THREE.Vector2(window.innerWidth, window.innerHeight),
+        });
+        const wireframe = new LineSegments2(lineGeo, lineMat);
         wireframe.name = '_edge_overlay';
-        wireframe.raycast = () => {}; // non-interactive
+        wireframe.raycast = () => {};
         mesh.add(wireframe);
       }
     });
@@ -162,6 +173,9 @@ export default function TerrainModel({ url }: TerrainModelProps) {
     box.getCenter(center);
     scene.position.sub(center);
 
+    // Rotate 180° around Y to fix mirrored orientation
+    scene.rotation.y = Math.PI;
+
     const size = new THREE.Vector3();
     box.getSize(size);
     // Y-up GLB: X=east, Y=elevation, Z=north
@@ -169,20 +183,8 @@ export default function TerrainModel({ url }: TerrainModelProps) {
     const scale = 2 / hzMax;
     scene.scale.set(scale, scale, scale);
 
-    // Exaggerate Y (elevation) if very flat — subtle exaggeration to reveal relief
-    // Ultra-flat parcels (ratio > 25, e.g. small gardens) get gentle exag
-    // to avoid mesh gaps/artefacts from amplified noise
-    const yRange = size.y || 0.001;
-    const flatRatio = hzMax / yRange;
-    if (flatRatio > 10) {
-      let yExag: number;
-      if (flatRatio > 25) {
-        yExag = Math.min(flatRatio / 25, 2.0);
-      } else {
-        yExag = Math.min(flatRatio / 15, 2.5);
-      }
-      scene.scale.y = scale * yExag;
-    }
+    // Y-exaggeration disabled — terrain is flattened in the pipeline.
+    // Any exaggeration would amplify floating-point noise on the flat plane.
 
     // Recalculate after scaling
     const finalBox = new THREE.Box3().setFromObject(scene);

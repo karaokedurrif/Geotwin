@@ -241,6 +241,14 @@ def process_twin(
         )
         logger.info("Subdividida: %d vértices, %d triángulos", mesh.vertex_count, mesh.face_count)
 
+    # ── Flatten terrain: force all elevations to minimum (tabla rasa) ──
+    # For small parcels the DEM noise creates visible waves when Y is
+    # exaggerated in the viewer.  A perfectly flat plane is required.
+    if aoi_meta.area_ha < 1.0:
+        min_elev = float(mesh.vertices[:, 2].min())
+        mesh.vertices[:, 2] = min_elev
+        logger.info("Terrain flattened: all Z forced to %.2f m (tabla rasa)", min_elev)
+
     # ─── 4b. Ortofoto PNOA (textura del terreno) ───────────────────────
     ortho_result = None
     texture_path = None
