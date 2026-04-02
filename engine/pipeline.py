@@ -192,20 +192,32 @@ def process_twin(
     _progress("Recortando malla al AOI", 60)
     mesh = clip_mesh_to_aoi(mesh, aoi_feature)
 
-    # Subdividir si la malla tiene pocos vértices (parcelas pequeñas → borrosas)
-    if mesh.vertex_count < 2000:
+    # ─── Subdivision for mesh density ──────────────────────────────────
+    # For micro parcels (<0.5 ha, ~1300m²) → target 50K+ vertices for
+    # drone-grade mesh density (GLB weight comes from geometry, not texture)
+    # For small parcels (0.5-1 ha) → target 10K vertices
+    # Standard parcels → only subdivide if below 2000 vertices
+    if aoi_meta.area_ha < 0.5:
+        target_verts = 50_000
+    elif aoi_meta.area_ha < 1.0:
+        target_verts = 10_000
+    else:
+        target_verts = 2_000
+
+    if mesh.vertex_count < target_verts:
         logger.info(
-            "Malla con solo %d vértices — subdividiendo para mayor detalle",
-            mesh.vertex_count,
+            "Malla con solo %d vértices (target %d) — subdividiendo",
+            mesh.vertex_count, target_verts,
         )
         import trimesh as _trimesh
 
         t = _trimesh.Trimesh(vertices=mesh.vertices, faces=mesh.faces)
-        # Subdividir iterativamente hasta alcanzar ≥2000 vértices (máx 3 pasadas)
-        for _pass in range(3):
-            if len(t.vertices) >= 2000:
+        max_passes = 6 if aoi_meta.area_ha < 0.5 else 3
+        for _pass in range(max_passes):
+            if len(t.vertices) >= target_verts:
                 break
             t = t.subdivide()
+            logger.info("  Subdivision pass %d: %d verts", _pass + 1, len(t.vertices))
         from .terrain.mesh import TerrainMesh, _compute_face_normals
 
         mesh = TerrainMesh(
