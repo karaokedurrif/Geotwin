@@ -210,9 +210,49 @@ export default function TerrainModel({ url }: TerrainModelProps) {
 
         originalMaterials.current.set(mesh.uuid, mesh.material as THREE.Material);
 
-        // Technical wireframe mode: dark gray neutral ground, no satellite
+        // Detect special scene elements by node name (from GLB node_name)
+        const n = (mesh.name || '').toLowerCase();
+        const pn = (mesh.parent?.name || '').toLowerCase();
+        const isGallinero = n.includes('gallinero') || pn.includes('gallinero');
+        const isGCP = n.includes('gcp') || pn.includes('gcp');
+        const isWall = n.includes('perimeter') || pn.includes('perimeter');
+
         const mat = mesh.material as THREE.MeshStandardMaterial;
-        if (mat) {
+        if (isGallinero && mat) {
+          // Gallinero zone: cyan emissive rectangle
+          mat.color = new THREE.Color(0x00CCCC);
+          mat.emissive = new THREE.Color(0x003333);
+          mat.roughness = 0.6;
+          mat.metalness = 0.0;
+          mat.transparent = true;
+          mat.opacity = 0.75;
+          mat.side = THREE.DoubleSide;
+          mat.map = null;
+          mat.normalMap = null;
+          mat.needsUpdate = true;
+          mesh.userData._isGallinero = true;
+        } else if (isGCP && mat) {
+          // GCP markers: bright red emissive
+          mat.color = new THREE.Color(0xDC2828);
+          mat.emissive = new THREE.Color(0x661010);
+          mat.roughness = 0.7;
+          mat.metalness = 0.0;
+          mat.map = null;
+          mat.normalMap = null;
+          mat.needsUpdate = true;
+          mesh.userData._isGCP = true;
+        } else if (isWall && mat) {
+          // Perimeter wall: white blueprint line
+          mat.color = new THREE.Color(0xFFFFFF);
+          mat.emissive = new THREE.Color(0x444444);
+          mat.roughness = 1.0;
+          mat.metalness = 0.0;
+          mat.map = null;
+          mat.normalMap = null;
+          mat.needsUpdate = true;
+          mesh.userData._isWall = true;
+        } else if (mat) {
+          // Default: Technical wireframe mode — dark gray neutral ground
           mat.color = new THREE.Color(0x2C2C2C);
           mat.roughness = 0.95;
           mat.metalness = 0.0;
@@ -306,6 +346,8 @@ export default function TerrainModel({ url }: TerrainModelProps) {
       if (!(child as THREE.Mesh).isMesh) return;
       // Skip building meshes — they keep their own material
       if (child.userData._isBuilding) return;
+      // Skip special blueprint elements (gallinero, GCPs, perimeter wall)
+      if (child.userData._isGallinero || child.userData._isGCP || child.userData._isWall) return;
       const mesh = child as THREE.Mesh;
       const orig = originalMaterials.current.get(mesh.uuid) as THREE.MeshStandardMaterial | undefined;
 

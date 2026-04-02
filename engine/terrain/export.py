@@ -1003,6 +1003,238 @@ def _apply_micro_topography(
     )
 
 
+def _build_gallinero_zone(
+    aoi_geojson_path: Path,
+    origin: dict,
+    length: float = 30.0,
+    width: float = 8.0,
+) -> tuple[trimesh.Trimesh | None, list[tuple[float, float]] | None]:
+    """Create a 30×8 m cyan reference rectangle along the longest parcel wall.
+
+    The rectangle is placed against (inside) the longest straight segment
+    of the parcel exterior.  It represents the gallinero zone for drone
+    flight planning.
+
+    Args:
+        aoi_geojson_path: Path to aoi.geojson.
+        origin: Local origin dict from the pipeline.
+        length: Length along the wall (default 30 m).
+        width: Depth inward from the wall (default 8 m).
+
+    Returns:
+        (mesh, corners_local) where corners_local is a list of 4 (x, z) tuples
+        in local Y-up coords, or (None, None) on failure.
+    """
+    import json as _json
+    from shapely.geometry import shape as _shape
+
+    try:
+        geojson = _json.loads(aoi_geojson_path.read_text())
+        geom = _shape(geojson["geometry"])
+        if geom.geom_type == "MultiPolygon":
+            geom = max(geom.geoms, key=lambda g: g.area)
+
+        m_lon = origin["m_per_deg_lon"]
+        m_lat = origin["m_per_deg_lat"]
+        c_lon = origin["centroid_lon"]
+        c_lat = origin["centroid_lat"]
+
+        # Convert exterior ring to local meters (X=East, Y_2d=North)
+        exterior_lonlat = list(geom.exterior.coords)
+        local_2d = []
+        for lon, lat in exterior_lonlat:
+            x = (lon - c_lon) * m_lon
+            y = (lat - c_lat) * m_lat
+            local_2d.append((x, y))
+
+        # Find the longest segment of the parcel exterior
+        best_len = 0.0
+        best_i = 0
+        for i in range(len(local_2d) - 1):
+            x0, y0 = local_2d[i]
+            x1, y1 = local_2d[i + 1]
+            seg_len = np.hypot(x1 - x0, y1 - y0)
+            if seg_len > best_len:
+                best_len = seg_len
+                best_i = i
+
+        x0, y0 = local_2d[best_i]
+        x1, y1 = local_2d[best_i + 1]
+
+        # Clamp gallinero length to segment length - 1m margin
+        actual_length = min(length, best_len - 1.0)
+        if actual_length < 2.0:
+            logger.warning("Gallinero: longest segment only %.1fm — too short", best_len)
+            return None, None
+
+        # Direction along the wall and inward normal
+        dx = x1 - x0
+        dy = y1 - y0
+        seg_len = np.hypot(dx, dy)
+        ux, uy = dx / seg_len, dy / seg_len  # unit along wall
+        # Normal pointing inward (toward parcel centroid)
+        # Test both normals, pick the one pointing toward centroid
+        nx0, ny0 = -uy, ux
+        nx1, ny1 = uy, -ux
+        cx_local = np.mean([p[0] for p in local_2d[:-1]])
+        cy_local = np.mean([p[1] for p in local_2d[:-1]])
+        mid_x = (x0 + x1) / 2.0
+        mid_y = (y0 + y1) / 2.0
+        dot0 = nx0 * (cx_local - mid_x) + ny0 * (cy_local - mid_y)
+        if dot0 > 0:
+            nx, ny = nx0, ny0
+        else:
+            nx, ny = nx1, ny1
+
+        # Center gallinero along the longest segment
+        seg_mid = best_len / 2.0
+        half = actual_length / 2.0
+        t_start = (seg_mid - half) / seg_len
+        t_end = (seg_mid + half) / seg_len
+
+        # 4 corners of the rectangle (2D local: X=East, Y_2d=North)
+        # Start from 0.3m inward to avoid coinciding with perimeter wall
+        inset = 0.3
+        p0 = (x0 + ux * t_start * seg_len + nx * inset, y0 + uy * t_start * seg_len + ny * inset)
+        p1 = (x0 + ux * t_end * seg_len + nx * inset, y0 + uy * t_end * seg_len + ny * inset)
+        p2 = (x0 + ux * t_end * seg_len + nx * width, y0 + uy * t_end * seg_len + ny * width)
+        p3 = (x0 + ux * t_start * seg_len + nx * width, y0 + uy * t_start * seg_len + ny * width)
+
+        # Build flat rectangle mesh (2cm thick) in local Y-up coords
+        # Extrude via trimesh: polygon in XY, extrude along Z, then axis-swap
+        from shapely.geometry import Polygon as _Polygon
+        rect_poly = _Polygon([p0, p1, p2, p3, p0])
+        if not rect_poly.is_valid or rect_poly.area < 1.0:
+            logger.warning("Gallinero rectangle invalid (area=%.1f)", rect_poly.area)
+            return None, None
+
+        rect_mesh = trimesh.creation.extrude_polygon(rect_poly, 0.02)
+
+        # Axis swap: trimesh extrudes along +Z → Y=up, -Z=north
+        verts = np.asarray(rect_mesh.vertices, dtype=np.float64)
+        new_verts = np.empty_like(verts)
+        new_verts[:, 0] = verts[:, 0]      # X = East
+        new_verts[:, 1] = verts[:, 2]      # Y = elevation (was Z)
+        new_verts[:, 2] = -verts[:, 1]     # -Z = North (was Y in 2D)
+        # Lift 5cm above terrain to prevent Z-fighting
+        new_verts[:, 1] += 0.05
+        rect_mesh.vertices = new_verts
+
+        rect_mesh.faces = rect_mesh.faces[:, ::-1]
+        trimesh.repair.fix_normals(rect_mesh)
+
+        # Cyan PBR material
+        from PIL import Image
+        cyan_tex = Image.new("RGB", (4, 4), (0, 200, 200))
+        cyan_mat = trimesh.visual.material.PBRMaterial(
+            baseColorTexture=cyan_tex,
+            baseColorFactor=[0.0, 0.78, 0.78, 0.8],
+            emissiveFactor=[0.0, 0.15, 0.15],
+            metallicFactor=0.0,
+            roughnessFactor=0.6,
+            alphaMode="BLEND",
+            doubleSided=True,
+        )
+        uv = np.zeros((len(rect_mesh.vertices), 2), dtype=np.float32)
+        rect_mesh.visual = trimesh.visual.TextureVisuals(uv=uv, material=cyan_mat)
+        rect_mesh.metadata["_isGallinero"] = True
+
+        # Return corners in Y-up local coords (x, z) for GCP placement
+        corners_local = [
+            (p0[0], -p0[1]),  # axis swap: 2D Y → -Z
+            (p1[0], -p1[1]),
+            (p2[0], -p2[1]),
+            (p3[0], -p3[1]),
+        ]
+
+        # Log corners in WGS84 for drone waypoints
+        logger.info("═" * 60)
+        logger.info("GALLINERO ZONE (%.0f × %.0f m) — corners (WGS84):", actual_length, width)
+        for i, (lx_2d, ly_2d) in enumerate([p0, p1, p2, p3]):
+            glon = lx_2d / m_lon + c_lon
+            glat = ly_2d / m_lat + c_lat
+            logger.info("  GAL_%d: lat=%.10f  lon=%.10f", i, glat, glon)
+        logger.info("═" * 60)
+
+        logger.info(
+            "Gallinero zone built: %.0f × %.0f m, %d verts, %d faces",
+            actual_length, width, len(rect_mesh.vertices), len(rect_mesh.faces),
+        )
+        return rect_mesh, corners_local
+
+    except Exception as e:
+        logger.warning("_build_gallinero_zone failed: %s", e)
+        return None, None
+
+
+def _build_gcp_at_corners(
+    corners_xz: list[tuple[float, float]],
+    origin: dict,
+) -> trimesh.Trimesh | None:
+    """Create 4 red GCP cylinder markers at specified local-coords corners.
+
+    Unlike _build_gcp_anchors (which picks parcel extremes), this places
+    GCPs at the exact (x, z) positions provided — typically the gallinero
+    zone corners.
+
+    Args:
+        corners_xz: List of 4 (x, z) tuples in local Y-up meters.
+        origin: Local origin dict (for WGS84 back-conversion in logs).
+
+    Returns:
+        Merged trimesh with all GCP cylinders, or None.
+    """
+    from PIL import Image
+
+    try:
+        m_lon = origin["m_per_deg_lon"]
+        m_lat = origin["m_per_deg_lat"]
+        c_lon = origin["centroid_lon"]
+        c_lat = origin["centroid_lat"]
+
+        gcp_color = Image.new("RGB", (4, 4), (220, 40, 40))
+        gcp_mat = trimesh.visual.material.PBRMaterial(
+            baseColorTexture=gcp_color,
+            baseColorFactor=[0.86, 0.16, 0.16, 1.0],
+            emissiveFactor=[0.4, 0.05, 0.05],
+            metallicFactor=0.0,
+            roughnessFactor=0.7,
+            doubleSided=True,
+        )
+
+        anchors = []
+        logger.info("═" * 60)
+        logger.info("DRONE GCP WAYPOINTS — gallinero corners (WGS84):")
+        for i, (lx, lz) in enumerate(corners_xz):
+            cyl = trimesh.creation.cylinder(radius=0.10, height=0.50, sections=16)
+            rot = trimesh.transformations.rotation_matrix(np.pi / 2, [1, 0, 0])
+            cyl.apply_transform(rot)
+            v = np.asarray(cyl.vertices, dtype=np.float64)
+            v[:, 1] -= v[:, 1].min()
+            v[:, 0] += lx
+            v[:, 2] += lz
+            cyl.vertices = v
+
+            uv = np.zeros((len(cyl.vertices), 2), dtype=np.float32)
+            cyl.visual = trimesh.visual.TextureVisuals(uv=uv, material=gcp_mat)
+            anchors.append(cyl)
+
+            # Back-convert to WGS84 for logging
+            glon = lx / m_lon + c_lon
+            glat = -lz / m_lat + c_lat  # -Z = North → lat
+            logger.info("  GCP_%d: lat=%.10f  lon=%.10f  (local x=%.2f z=%.2f)", i, glat, glon, lx, lz)
+        logger.info("═" * 60)
+
+        merged = trimesh.util.concatenate(anchors)
+        merged.metadata["_isGCP"] = True
+        logger.info("GCP anchors built at %d gallinero corners", len(corners_xz))
+        return merged
+
+    except Exception as e:
+        logger.warning("_build_gcp_at_corners failed: %s", e)
+        return None
+
+
 def _build_gcp_anchors(
     aoi_geojson_path: Path,
     origin: dict,
@@ -1271,72 +1503,21 @@ def merge_buildings_into_glb(
                 # ── Fix normals (prevents invisible/transparent faces) ──
                 trimesh.repair.fix_normals(bm)
 
-                # ── Split roof from walls for small parcels ──
+                # ── Blueprint 2D mode for small parcels: flatten to thin slab ──
                 if is_small:
-                    y_max = bv[:, 1].max()
-                    y_min_bldg = bv[:, 1].min()
-                    bldg_height = y_max - y_min_bldg
-                    # Roof = top 15% of building height (roof plane + eave zone)
-                    roof_threshold = y_max - bldg_height * 0.15
-
-                    roof_mask = bv[:, 1] > roof_threshold
-                    # Apply roof material to roof faces, wall material to walls
-                    # We achieve this by splitting into two meshes
-                    faces = np.asarray(bm.faces)
-                    face_max_y = bv[faces].max(axis=1)[:, 1]
-                    roof_faces_mask = face_max_y > roof_threshold
-
-                    if roof_faces_mask.any() and (~roof_faces_mask).any():
-                        # Split into wall mesh and roof mesh
-                        wall_faces = faces[~roof_faces_mask]
-                        r_faces = faces[roof_faces_mask]
-
-                        # Wall mesh
-                        wall_used = np.unique(wall_faces)
-                        w_remap = np.full(len(bv), -1, dtype=int)
-                        w_remap[wall_used] = np.arange(len(wall_used))
-                        wall_m = trimesh.Trimesh(
-                            vertices=bv[wall_used],
-                            faces=w_remap[wall_faces],
-                            process=False,
-                        )
-                        uv_w = np.zeros((len(wall_m.vertices), 2), dtype=np.float32)
-                        wall_m.visual = trimesh.visual.TextureVisuals(uv=uv_w, material=wall_mat)
-                        wall_m.metadata["_isBuilding"] = True
-                        scene.add_geometry(wall_m, node_name=f"building_{added}_walls")
-
-                        # Roof mesh with eave offset
-                        r_used = np.unique(r_faces)
-                        r_remap = np.full(len(bv), -1, dtype=int)
-                        r_remap[r_used] = np.arange(len(r_used))
-                        roof_verts = bv[r_used].copy()
-                        # Add 0.2m eave overhang — expand roof XZ by 0.2m outward
-                        r_cx = roof_verts[:, 0].mean()
-                        r_cz = roof_verts[:, 2].mean()
-                        dx = roof_verts[:, 0] - r_cx
-                        dz = roof_verts[:, 2] - r_cz
-                        dist = np.sqrt(dx**2 + dz**2)
-                        dist = np.maximum(dist, 0.01)
-                        roof_verts[:, 0] += dx / dist * 0.2
-                        roof_verts[:, 2] += dz / dist * 0.2
-
-                        roof_m = trimesh.Trimesh(
-                            vertices=roof_verts,
-                            faces=r_remap[r_faces],
-                            process=False,
-                        )
-                        uv_r = np.zeros((len(roof_m.vertices), 2), dtype=np.float32)
-                        roof_m.visual = trimesh.visual.TextureVisuals(uv=uv_r, material=roof_mat)
-                        roof_m.metadata["_isBuilding"] = True
-                        scene.add_geometry(roof_m, node_name=f"building_{added}_roof")
-
-                        logger.info(
-                            "Building %s split: %d wall faces + %d roof faces, eave +0.2m",
-                            bp.name, len(wall_faces), len(r_faces),
-                        )
-                        added += 1
-                        continue  # skip default material path
-                    # If split fails, fall through to unified material
+                    # Squash entire building to a 2cm-high footprint slab at terrain level
+                    bldg_y_base = float(bv[:, 1].min())
+                    bv[:, 1] = np.where(
+                        bv[:, 1] > bldg_y_base + 0.02,
+                        bldg_y_base + 0.02,
+                        bv[:, 1],
+                    )
+                    bm.vertices = bv
+                    trimesh.repair.fix_normals(bm)
+                    logger.info(
+                        "Building %s flattened to 2D footprint slab (2cm height)",
+                        bp.name,
+                    )
 
                 # ── Apply material + UVs (unified path) ──
                 uv = np.zeros((len(bm.vertices), 2), dtype=np.float32)
@@ -1348,23 +1529,53 @@ def merge_buildings_into_glb(
             except Exception as be:
                 logger.warning("Failed loading building GLB %s: %s", bp, be)
 
-        # ── Perimeter wall for small parcels (<1 ha) ──
+        # ── Perimeter wall for small parcels (<1 ha) — thin 2D line (blueprint) ──
         if is_small and aoi_geojson_path and local_origin:
             try:
                 wall_mesh = build_perimeter_wall(
                     aoi_geojson_path, local_origin,
-                    wall_height=1.8, wall_thickness=0.20,
+                    wall_height=0.05, wall_thickness=0.10,
                 )
                 if wall_mesh is not None:
+                    # Override wall material to white for blueprint aesthetic
+                    from PIL import Image as _wImg
+                    white_tex = _wImg.new("RGB", (4, 4), (255, 255, 255))
+                    white_mat = trimesh.visual.material.PBRMaterial(
+                        baseColorTexture=white_tex,
+                        baseColorFactor=[1.0, 1.0, 1.0, 1.0],
+                        emissiveFactor=[0.3, 0.3, 0.3],
+                        metallicFactor=0.0,
+                        roughnessFactor=1.0,
+                        doubleSided=True,
+                    )
+                    uv_w = np.zeros((len(wall_mesh.vertices), 2), dtype=np.float32)
+                    wall_mesh.visual = trimesh.visual.TextureVisuals(uv=uv_w, material=white_mat)
                     scene.add_geometry(wall_mesh, node_name="perimeter_wall")
-                    logger.info("Perimeter wall 1.8m added to scene")
+                    logger.info("Blueprint perimeter wall (5cm height, white) added")
             except Exception as wall_err:
                 logger.warning("Perimeter wall failed (non-critical): %s", wall_err)
 
-        # ── GCP anchor cylinders at corners (<1 ha) ──
+        # ── Gallinero zone (30×8m cyan rectangle) + GCPs at its corners ──
+        gallinero_corners = None
         if is_small and aoi_geojson_path and local_origin:
             try:
-                gcp_mesh = _build_gcp_anchors(aoi_geojson_path, local_origin)
+                gal_mesh, gallinero_corners = _build_gallinero_zone(
+                    aoi_geojson_path, local_origin,
+                    length=30.0, width=8.0,
+                )
+                if gal_mesh is not None:
+                    scene.add_geometry(gal_mesh, node_name="gallinero_zone")
+                    logger.info("Gallinero zone (30×8m cyan) added to scene")
+            except Exception as gal_err:
+                logger.warning("Gallinero zone failed (non-critical): %s", gal_err)
+
+        # ── GCP anchor cylinders at gallinero corners (or fallback to parcel) ──
+        if is_small and aoi_geojson_path and local_origin:
+            try:
+                if gallinero_corners and len(gallinero_corners) >= 4:
+                    gcp_mesh = _build_gcp_at_corners(gallinero_corners, local_origin)
+                else:
+                    gcp_mesh = _build_gcp_anchors(aoi_geojson_path, local_origin)
                 if gcp_mesh is not None:
                     scene.add_geometry(gcp_mesh, node_name="gcp_anchors")
                     logger.info("GCP anchor cylinders added to scene")
