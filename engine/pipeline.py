@@ -198,7 +198,7 @@ def process_twin(
     # For small parcels (0.5-1 ha) → target 10K vertices
     # Standard parcels → only subdivide if below 2000 vertices
     if aoi_meta.area_ha < 0.5:
-        target_verts = 50_000
+        target_verts = 200_000  # Drone-grade density → 20+ MB GLB
     elif aoi_meta.area_ha < 1.0:
         target_verts = 10_000
     else:
