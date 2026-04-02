@@ -1192,26 +1192,21 @@ def merge_buildings_into_glb(
         from PIL import Image
 
         if is_small:
-            # Warm grey walls — #EAE3D2 (234, 227, 210) — subtle, realistic
-            wall_tex = Image.new("RGB", (16, 16), (234, 227, 210))
-            stucco_normal = _generate_stucco_normal_map(256)
+            # ── Clay Mode: pure white matte for all building geometry ──
+            clay_tex = Image.new("RGB", (16, 16), (255, 255, 255))
             wall_mat = trimesh.visual.material.PBRMaterial(
-                baseColorTexture=wall_tex,
-                baseColorFactor=[0.92, 0.89, 0.82, 1.0],
+                baseColorTexture=clay_tex,
+                baseColorFactor=[1.0, 1.0, 1.0, 1.0],
                 metallicFactor=0.0,
-                roughnessFactor=0.95,
-                normalTexture=stucco_normal,
+                roughnessFactor=1.0,
                 doubleSided=True,
             )
-            # Roof material — #8B4513 saddle brown earth tile
-            roof_tex = Image.new("RGB", (16, 16), (139, 69, 19))
-            tile_normal = _generate_tile_normal_map(256, rows=12)
+            # Roof = same white clay — unified maquette look
             roof_mat = trimesh.visual.material.PBRMaterial(
-                baseColorTexture=roof_tex,
-                baseColorFactor=[0.545, 0.271, 0.075, 1.0],
+                baseColorTexture=clay_tex,
+                baseColorFactor=[1.0, 1.0, 1.0, 1.0],
                 metallicFactor=0.0,
-                roughnessFactor=0.92,
-                normalTexture=tile_normal,
+                roughnessFactor=1.0,
                 doubleSided=True,
             )
         else:

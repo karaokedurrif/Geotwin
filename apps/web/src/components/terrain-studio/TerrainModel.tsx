@@ -23,17 +23,15 @@ function BuildingChild({ url, debug }: { url: string; debug?: boolean }) {
         mesh.receiveShadow = true;
         const mat = mesh.material as THREE.MeshStandardMaterial;
         if (mat) {
-          // Warm sandstone — blends with Castilla rural landscape
-          mat.color = new THREE.Color(0xB8A07A);
-          mat.roughness = 0.85;
-          mat.metalness = 0.02;
-          mat.envMapIntensity = 0.6;
+          // Clay Mode — pure white matte for architectural maquette
+          mat.color = new THREE.Color(0xFFFFFF);
+          mat.roughness = 1.0;
+          mat.metalness = 0.0;
+          mat.envMapIntensity = 0.8;
           mat.side = THREE.DoubleSide;
-          // Anisotropy on any building texture
-          if (mat.map) {
-            mat.map.anisotropy = 16;
-            mat.map.needsUpdate = true;
-          }
+          // Remove any normal maps or textures from buildings
+          mat.normalMap = null;
+          mat.map = null;
           mat.needsUpdate = true;
         }
       }
@@ -203,11 +201,11 @@ export default function TerrainModel({ url }: TerrainModelProps) {
 
         originalMaterials.current.set(mesh.uuid, mesh.material as THREE.Material);
 
-        // Pro material settings for agronomic terrain
+        // Pro material settings for terrain ground
         const mat = mesh.material as THREE.MeshStandardMaterial;
         if (mat) {
-          mat.roughness = 0.8;   // Matte finish for terrain
-          mat.metalness = 0.1;   // Avoid metallic shine on crops/soil
+          mat.roughness = 0.9;   // Matte earth surface
+          mat.metalness = 0.0;   // No metallic shine on ground
 
           // Max anisotropy + LinearFilter for 5cm/px sharpness at close zoom (RTX 5080)
           if (mat.map) {
