@@ -58,6 +58,10 @@ function TerrainMesh({ url, viewMode, onStats, controlsRef, resetCameraRef, topV
     const yRange = size.y || 0.001;
     const flatRatio = hzMax / yRange;
 
+    // GLB is Y-up: X=east, Y=elevation, -Z=North (glTF convention).
+    // Rotate 180° around Y so North faces camera (geographic orientation).
+    scene.rotation.y = Math.PI;
+
     const baseScale = 2 / hzMax;
     scene.scale.set(baseScale, baseScale, baseScale);
 
