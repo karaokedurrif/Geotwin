@@ -219,6 +219,10 @@ services:
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
 
+    ports:
+      - "8003:8003"  # API — accessible from browser for geotwin.es
+      - "8188:8188"  # ComfyUI dev UI (optional)
+
     volumes:
       - hyperreal-models:/app/comfyui/models    # Checkpoints, ControlNets, LoRAs
       - hyperreal-output:/app/output             # Generated renders
