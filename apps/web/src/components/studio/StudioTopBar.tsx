@@ -208,6 +208,21 @@ export default function StudioTopBar({
           {meshRunning ? 'Generando...' : meshDone ? 'Mallado 3D \u2713' : 'Mallado 3D'}
         </button>
 
+        {/* Abrir Visor 3D standalone */}
+        {meshDone && twinId && (
+          <a
+            href={`/visor/${twinId}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={styles.actionBtn}
+            style={{ borderColor: '#10B98160', color: '#10B981', textDecoration: 'none' }}
+            title="Abrir visor 3D en nueva pestaña"
+          >
+            <Box size={10} />
+            Visor 3D
+          </a>
+        )}
+
         {/* Export dropdown */}
         <div ref={menuRef} style={{ position: 'relative' }}>
           <button

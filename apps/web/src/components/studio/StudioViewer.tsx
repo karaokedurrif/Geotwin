@@ -508,8 +508,8 @@ async function flyToParcelWithTerrain(
     if (ha < 0.5) return 100;         // Jardín/casa
     if (ha < 5) return 300;           // Parcela pequeña
     if (ha < 50) return 1200;         // Finca media
-    if (ha < 200) return 2500;        // Finca grande
-    return 4000;                       // Comarca
+    if (ha < 200) return 1800;        // Finca grande (~50ha → 1800m)
+    return 3000;                       // Comarca
   }
   const distanceM = computeIdealRange(areaHa);
   

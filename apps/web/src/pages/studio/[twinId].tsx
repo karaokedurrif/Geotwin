@@ -130,8 +130,8 @@ export default function TwinStudioPage() {
           else if (areaHa < 0.5) dist = 100;
           else if (areaHa < 5) dist = 300;
           else if (areaHa < 50) dist = 1200;
-          else if (areaHa < 200) dist = 2500;
-          else dist = 4000;
+          else if (areaHa < 200) dist = 1800;
+          else dist = 3000;
 
           const center = Cesium.Cartesian3.fromDegrees(lon, lat, 0);
           viewerRef.camera.lookAt(

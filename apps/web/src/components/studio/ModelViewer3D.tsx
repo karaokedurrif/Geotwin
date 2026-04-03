@@ -111,9 +111,9 @@ function TerrainMesh({ url, viewMode, onStats, controlsRef, resetCameraRef, topV
         const mat = child.material as THREE.MeshStandardMaterial;
         if (mat?.map) {
           mat.map.anisotropy = 16;
-          mat.map.minFilter = THREE.LinearFilter;
+          mat.map.minFilter = THREE.LinearMipmapLinearFilter;
           mat.map.magFilter = THREE.LinearFilter;
-          mat.map.generateMipmaps = false;
+          mat.map.generateMipmaps = true;
           mat.map.needsUpdate = true;
         }
       }
@@ -335,7 +335,8 @@ export default function ModelViewer3D({ twinId, visible, onClose, onOpenStudio }
           <Canvas
             style={{ width: '100%', height: '100%' }}
             camera={{ position: [3, 2, 3], fov: 50 }}
-            gl={{ antialias: true, alpha: false }}
+            gl={{ antialias: true, alpha: false, powerPreference: 'high-performance' }}
+            dpr={[1, 2]}
           >
             <color attach="background" args={['#0a0a0e']} />
             <ambientLight intensity={0.5} />
