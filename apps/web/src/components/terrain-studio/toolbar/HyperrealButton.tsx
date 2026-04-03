@@ -5,12 +5,12 @@
  * This is a STANDALONE component. It does NOT modify any existing code.
  * It is imported into StudioToolbar.tsx via a single import + JSX line.
  */
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import * as THREE from 'three';
 import HyperrealResult from './HyperrealResult';
 
-const HYPERREAL_API =
-  process.env.NEXT_PUBLIC_HYPERREAL_URL || 'http://192.168.30.101:8003';
+// Always try localhost:8003 — works from any origin if service is running locally
+const HYPERREAL_API = 'http://localhost:8003';
 
 const STYLE_OPTIONS = [
   { value: 'extensivo', label: 'Dehesa' },
@@ -124,6 +124,19 @@ export default function HyperrealButton({ twinId }: HyperrealButtonProps) {
   const [originalUrl, setOriginalUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showResult, setShowResult] = useState(false);
+  const [serviceAvailable, setServiceAvailable] = useState<boolean | null>(null);
+
+  // Check if hyperreal service is running on user's machine
+  useEffect(() => {
+    fetch(`${HYPERREAL_API}/health`, { method: 'GET' })
+      .then((r) => r.ok && setServiceAvailable(true))
+      .catch(() => setServiceAvailable(false));
+  }, []);
+
+  // Don't render if service is not available
+  if (serviceAvailable === false) return null;
+  // Show loading while checking
+  if (serviceAvailable === null) return null;
 
   const handleClick = async () => {
     const state = getThreeState();
