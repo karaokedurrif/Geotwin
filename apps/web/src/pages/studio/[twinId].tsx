@@ -125,20 +125,20 @@ export default function TwinStudioPage() {
         if (parcel?.centroid) {
           const [lon, lat] = parcel.centroid;
           const areaHa = parcel.area_ha ?? 100;
+          const radiusM = Math.sqrt(areaHa * 10000 / Math.PI);
           let dist = 400;
-          if (areaHa < 0.1) dist = 60;
-          else if (areaHa < 0.5) dist = 100;
-          else if (areaHa < 5) dist = 300;
-          else if (areaHa < 50) dist = 1200;
-          else if (areaHa < 200) dist = 1800;
-          else dist = 3000;
+          if (areaHa < 0.5) dist = Math.max(radiusM * 5, 80);
+          else if (areaHa < 10) dist = Math.max(radiusM * 4, 300);
+          else if (areaHa < 100) dist = Math.max(radiusM * 3, 1000);
+          else dist = Math.max(radiusM * 2.5, 2000);
+          const pitchDeg = areaHa < 0.5 ? -40 : areaHa < 10 ? -35 : areaHa < 100 ? -32 : -30;
 
           const center = Cesium.Cartesian3.fromDegrees(lon, lat, 0);
           viewerRef.camera.lookAt(
             center,
             new Cesium.HeadingPitchRange(
               Cesium.Math.toRadians(225),
-              Cesium.Math.toRadians(-35),
+              Cesium.Math.toRadians(pitchDeg),
               dist * 1.3,
             )
           );

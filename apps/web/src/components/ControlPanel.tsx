@@ -89,6 +89,9 @@ export default function ControlPanel({
   const [isLoadingSample, setIsLoadingSample] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [refcatInput, setRefcatInput] = useState('');
+  const [refcat2Input, setRefcat2Input] = useState('');
+  const [refcat3Input, setRefcat3Input] = useState('');
+  const [mergeEnabled, setMergeEnabled] = useState(false);
   const [isRefcatLoading, setIsRefcatLoading] = useState(false);
   const [refcatStatus, setRefcatStatus] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -150,22 +153,40 @@ export default function ControlPanel({
     fileInputRef.current?.click();
   };
 
-  // Handle refcat submission
+  // Handle refcat submission (single or multi-parcel)
   const handleRefcatSubmit = async () => {
     const trimmed = refcatInput.trim().toUpperCase();
     if (!/^[A-Z0-9]{14}([A-Z0-9]{6})?$/.test(trimmed)) {
       setUploadError('Ref. catastral inválida (14 o 20 caracteres alfanuméricos)');
       return;
     }
+
+    // Collect extra refcats if merge is enabled
+    const refcats: string[] = [trimmed];
+    if (mergeEnabled) {
+      for (const extra of [refcat2Input, refcat3Input]) {
+        const t = extra.trim().toUpperCase();
+        if (t && /^[A-Z0-9]{14}([A-Z0-9]{6})?$/.test(t)) {
+          refcats.push(t);
+        } else if (t) {
+          setUploadError(`Ref. catastral inválida: "${t}"`);
+          return;
+        }
+      }
+    }
+
+    const isMulti = refcats.length > 1;
     setIsRefcatLoading(true);
     setUploadError(null);
-    setRefcatStatus('Enviando al Catastro...');
+    setRefcatStatus(isMulti ? `Uniendo ${refcats.length} parcelas...` : 'Enviando al Catastro...');
     try {
       const API_BASE = process.env.NEXT_PUBLIC_API_URL || '';
-      const resp = await fetch(`${API_BASE}/api/twin/from-refcat`, {
+      const endpoint = isMulti ? `${API_BASE}/api/twin/from-refcat/multi` : `${API_BASE}/api/twin/from-refcat`;
+      const body = isMulti ? JSON.stringify({ refcats }) : JSON.stringify({ refcat: trimmed });
+      const resp = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ refcat: trimmed }),
+        body,
       });
       if (!resp.ok) {
         const err = await resp.json().catch(() => ({ error: resp.statusText }));
@@ -245,15 +266,15 @@ export default function ControlPanel({
 
       {/* Main Controls Card */}
       <div className={styles.card}>
-        <h2 className={styles.cardTitle}>Referencia Catastral</h2>
+        <h2 className={styles.cardTitle}>Referencias Catastrales</h2>
         
-        {/* Referencia Catastral Input — PRIMARY method */}
+        {/* Referencia Catastral 1 — PRIMARY */}
         <div style={{ display: 'flex', gap: '4px' }}>
           <input
             type="text"
             value={refcatInput}
             onChange={(e) => setRefcatInput(e.target.value)}
-            placeholder="40167A00100001"
+            placeholder="RC 1 (obligatoria)"
             maxLength={20}
             disabled={isRefcatLoading}
             style={{
@@ -267,17 +288,84 @@ export default function ControlPanel({
               fontFamily: 'monospace',
               letterSpacing: '0.5px',
             }}
-            onKeyDown={(e) => e.key === 'Enter' && handleRefcatSubmit()}
+            onKeyDown={(e) => e.key === 'Enter' && !mergeEnabled && handleRefcatSubmit()}
           />
-          <button
-            className={styles.primaryButton}
-            onClick={handleRefcatSubmit}
-            disabled={isRefcatLoading || !refcatInput.trim()}
-            style={{ padding: '8px 14px', minWidth: 'auto', marginTop: 0 }}
-          >
-            {isRefcatLoading ? '...' : 'Crear'}
-          </button>
+          {!mergeEnabled && (
+            <button
+              className={styles.primaryButton}
+              onClick={handleRefcatSubmit}
+              disabled={isRefcatLoading || !refcatInput.trim()}
+              style={{ padding: '8px 14px', minWidth: 'auto', marginTop: 0 }}
+            >
+              {isRefcatLoading ? '...' : 'Crear'}
+            </button>
+          )}
         </div>
+
+        {/* Multi-parcel toggle */}
+        <label style={{
+          display: 'flex', alignItems: 'center', gap: '6px',
+          margin: '8px 0 4px', cursor: 'pointer', fontSize: '12px', color: '#b0b0b0',
+        }}>
+          <input
+            type="checkbox"
+            checked={mergeEnabled}
+            onChange={(e) => setMergeEnabled(e.target.checked)}
+            disabled={isRefcatLoading}
+            style={{ accentColor: '#4ecdc4' }}
+          />
+          Unir parcelas colindantes (hasta 3)
+        </label>
+
+        {/* Extra refcat fields when merge is enabled */}
+        {mergeEnabled && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '4px' }}>
+            <input
+              type="text"
+              value={refcat2Input}
+              onChange={(e) => setRefcat2Input(e.target.value)}
+              placeholder="RC 2 (opcional)"
+              maxLength={20}
+              disabled={isRefcatLoading}
+              style={{
+                padding: '8px 10px',
+                background: 'rgba(255,255,255,0.06)',
+                border: '1px solid rgba(255,255,255,0.15)',
+                borderRadius: '6px',
+                color: '#e0e0e0',
+                fontSize: '13px',
+                fontFamily: 'monospace',
+                letterSpacing: '0.5px',
+              }}
+            />
+            <input
+              type="text"
+              value={refcat3Input}
+              onChange={(e) => setRefcat3Input(e.target.value)}
+              placeholder="RC 3 (opcional)"
+              maxLength={20}
+              disabled={isRefcatLoading}
+              style={{
+                padding: '8px 10px',
+                background: 'rgba(255,255,255,0.06)',
+                border: '1px solid rgba(255,255,255,0.15)',
+                borderRadius: '6px',
+                color: '#e0e0e0',
+                fontSize: '13px',
+                fontFamily: 'monospace',
+                letterSpacing: '0.5px',
+              }}
+            />
+            <button
+              className={styles.primaryButton}
+              onClick={handleRefcatSubmit}
+              disabled={isRefcatLoading || !refcatInput.trim()}
+              style={{ padding: '8px 14px', marginTop: '4px' }}
+            >
+              {isRefcatLoading ? '...' : 'Crear Gemelo Unificado'}
+            </button>
+          </div>
+        )}
         {refcatStatus && (
           <p style={{
             color: '#4ecdc4',

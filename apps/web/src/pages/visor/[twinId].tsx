@@ -110,11 +110,12 @@ function TerrainMesh({
     const baseScale = 2 / hzMax;
     scene.scale.set(baseScale, baseScale, baseScale);
 
-    if (flatRatio > 10) {
-      const yExag = flatRatio > 25
-        ? Math.min(flatRatio / 25, 2.0)
-        : Math.min(flatRatio / 15, 2.5);
-      scene.scale.y = baseScale * yExag;
+    if (flatRatio > 30) {
+      // Ultra-flat: no exag — avoids mesh explosion on gardens/parking lots
+    } else if (flatRatio > 15) {
+      scene.scale.y = baseScale * Math.min(flatRatio / 20, 2.5);
+    } else if (flatRatio > 10) {
+      scene.scale.y = baseScale * Math.min(flatRatio / 8, 5.0);
     }
 
     const fb = new THREE.Box3().setFromObject(scene);

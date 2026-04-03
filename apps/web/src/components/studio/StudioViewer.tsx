@@ -502,16 +502,22 @@ async function flyToParcelWithTerrain(
   const [lon, lat] = centroid;
   const areaHa = parcel?.area_ha ?? 100;
   
-  // Distancia adaptativa por tamaño de parcela
+  // Radius-based camera distance — proportional to actual parcel size
   function computeIdealRange(ha: number): number {
-    if (ha < 0.1) return 60;          // Jardín muy pequeño
-    if (ha < 0.5) return 100;         // Jardín/casa
-    if (ha < 5) return 300;           // Parcela pequeña
-    if (ha < 50) return 1200;         // Finca media
-    if (ha < 200) return 1800;        // Finca grande (~50ha → 1800m)
-    return 3000;                       // Comarca
+    const radiusM = Math.sqrt(ha * 10000 / Math.PI);
+    if (ha < 0.5) return Math.max(radiusM * 5, 80);
+    if (ha < 10)  return Math.max(radiusM * 4, 300);
+    if (ha < 100) return Math.max(radiusM * 3, 1000);
+    return Math.max(radiusM * 2.5, 2000);
+  }
+  function computeIdealPitch(ha: number): number {
+    if (ha < 0.5) return -40;  // More vertical for gardens
+    if (ha < 10)  return -35;
+    if (ha < 100) return -32;
+    return -30;                 // Wider for large estates
   }
   const distanceM = computeIdealRange(areaHa);
+  const pitchDeg = computeIdealPitch(areaHa);
   
   console.log(`[StudioViewer] 🎯 lookAt centroid [${lon.toFixed(4)}, ${lat.toFixed(4)}] dist=${distanceM.toFixed(0)}m`);
   
@@ -525,8 +531,8 @@ async function flyToParcelWithTerrain(
     center,
     new Cesium.HeadingPitchRange(
       Cesium.Math.toRadians(225),  // desde SW mirando NE (diagonal perfecta)
-      Cesium.Math.toRadians(-35),  // 35° abajo — vista más aérea para ver la parcela completa
-      distanceM * 1.3,  // más amplio para ver bien la parcela en el encuadre inicial
+      Cesium.Math.toRadians(pitchDeg),  // adaptive: -40° gardens → -30° estates
+      distanceM * 1.3,  // buffer for initial framing
     )
   );
   
@@ -624,8 +630,9 @@ async function flyToSavedCamera(viewer: any, snapshot: TwinSnapshot): Promise<vo
   const areaHa = snapshot.parcel?.area_ha ?? 100;
   const heading = camera.headingDeg !== undefined ? camera.headingDeg : 315; // NW
   const savedPitch = camera.pitchDeg !== undefined ? camera.pitchDeg : -50;
-  // Override shallow pitch for small parcels — need to look down to see the ground
-  const pitch = (areaHa < 1 && savedPitch > -25) ? -40 : savedPitch;
+  // Area-adaptive pitch: small parcels need steeper viewing angle
+  const idealPitch = areaHa < 0.5 ? -40 : areaHa < 10 ? -35 : areaHa < 100 ? -32 : -30;
+  const pitch = (savedPitch > idealPitch + 15) ? idealPitch : savedPitch;
 
   // Compute ideal range based on parcel area, then sanity-check saved value
   let idealRange: number;

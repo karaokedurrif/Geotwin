@@ -833,6 +833,205 @@ def create_autotwin(req: AutoTwinRequest):
     )
 
 
+# ─── Multi-Parcel AutoTwin ──────────────────────────────────────────────────
+
+class MultiParcelRequest(BaseModel):
+    refcats: list[str] = Field(..., min_length=1, max_length=3)
+
+
+@app.post("/autotwin/multi", response_model=AutoTwinResponse, status_code=202)
+def create_multi_parcel_autotwin(req: MultiParcelRequest):
+    """Pipeline: merge up to 3 adjacent parcels → single digital twin.
+
+    Async job (202 + polling via GET /jobs/{job_id}).
+    """
+    from .cadastre.refcat import validate_refcat
+
+    validated = [validate_refcat(rc) for rc in req.refcats]
+    job_id = uuid.uuid4().hex[:12]
+    # Twin ID from first refcat, prefixed with "mp_" for multi-parcel
+    twin_id = f"mp_{validated[0][:14]}" if len(validated) > 1 else f"rc_{validated[0][:14]}"
+
+    job = JobState(job_id=job_id, twin_id=twin_id)
+    _jobs[job_id] = job
+
+    thread = Thread(target=_run_multi_autotwin, args=(job_id, validated, twin_id), daemon=True)
+    thread.start()
+
+    return AutoTwinResponse(
+        job_id=job_id,
+        twin_id=twin_id,
+        refcat=validated[0],
+        status=JobStatus.QUEUED,
+    )
+
+
+def _run_multi_autotwin(job_id: str, refcats: list[str], twin_id: str) -> None:
+    """Execute multi-parcel pipeline: merge parcels → mesh → 3D Tiles."""
+    import asyncio
+    import json as _json
+
+    job = _jobs[job_id]
+    job.status = JobStatus.RUNNING
+
+    def on_progress(step: str, pct: float) -> None:
+        job.current_step = step
+        job.progress = pct
+
+    try:
+        on_progress("Descargando y uniendo parcelas", 5)
+
+        if len(refcats) == 1:
+            # Single parcel — delegate to standard _run_autotwin
+            _run_autotwin(job_id, refcats[0], twin_id)
+            return
+
+        from .cadastre.multi_parcel import fetch_and_merge_parcels
+        from .cadastre.refcat import fetch_buildings_by_refcat, union_adjacent_buildings
+
+        loop = asyncio.new_event_loop()
+        merged_feature = loop.run_until_complete(fetch_and_merge_parcels(refcats))
+        on_progress("Descargando edificios", 12)
+
+        # Fetch buildings for ALL refcats
+        all_buildings: list[dict] = []
+        for rc in refcats:
+            try:
+                bldgs = loop.run_until_complete(fetch_buildings_by_refcat(rc))
+                all_buildings.extend(bldgs)
+            except Exception as bldg_err:
+                logger.warning("Buildings fetch for %s failed: %s", rc, bldg_err)
+        loop.close()
+
+        if len(all_buildings) > 1:
+            all_buildings = union_adjacent_buildings(all_buildings, buffer_m=2.0)
+
+        # Save merged geometry
+        output_dir = settings.tiles_dir / twin_id
+        output_dir.mkdir(parents=True, exist_ok=True)
+        geojson_path = output_dir / "geometry.geojson"
+        geojson_path.write_text(_json.dumps(merged_feature, indent=2))
+
+        # Run standard terrain pipeline on merged geometry
+        on_progress("Procesando terreno unificado", 18)
+        result = process_twin(
+            input_files=[geojson_path],
+            twin_id=twin_id,
+            output_dir=output_dir,
+            on_progress=on_progress,
+        )
+
+        # Extrude buildings (same logic as single-parcel autotwin)
+        building_info: list[dict] = []
+        if all_buildings:
+            on_progress("Extruyendo edificios 3D", 92)
+            from .buildings.extruder import extrude_building
+            from .terrain.export import get_local_origin
+
+            local_origin = get_local_origin()
+            if local_origin is None:
+                import math
+                c_lon = result.aoi_metadata.centroid_lon
+                c_lat = result.aoi_metadata.centroid_lat
+                lat_rad = math.radians(c_lat)
+                local_origin = {
+                    "centroid_lon": c_lon,
+                    "centroid_lat": c_lat,
+                    "min_elev": 0.0,
+                    "m_per_deg_lon": 111_320.0 * math.cos(lat_rad),
+                    "m_per_deg_lat": 111_320.0,
+                    "z_sign": -1,
+                }
+
+            dem_elevations: dict[int, float] = {}
+            try:
+                dem_tif = output_dir / "dem.tif"
+                if dem_tif.exists():
+                    import rasterio
+                    with rasterio.open(str(dem_tif)) as src:
+                        for i, bldg_feature in enumerate(all_buildings):
+                            from shapely.geometry import shape as _shape
+                            bldg_geom = _shape(bldg_feature["geometry"])
+                            bldg_centroid = bldg_geom.centroid
+                            try:
+                                row, col = src.index(bldg_centroid.x, bldg_centroid.y)
+                                elev = float(src.read(1)[row, col])
+                                if elev > -1000:
+                                    dem_elevations[i] = elev
+                            except (IndexError, ValueError):
+                                pass
+            except Exception as dem_err:
+                logger.warning("DEM elevation sampling failed: %s", dem_err)
+
+            for i, bldg_feature in enumerate(all_buildings):
+                try:
+                    n_floors = max(1, bldg_feature["properties"].get("numberOfFloorsAboveGround", 1))
+                    base_elev = dem_elevations.get(i, local_origin.get("min_elev", 0.0))
+                    bldg_mesh = extrude_building(
+                        footprint=bldg_feature["geometry"],
+                        num_floors=n_floors,
+                        ground_elevation=base_elev,
+                        use=bldg_feature["properties"].get("currentUse", "agricultural"),
+                        origin=local_origin,
+                        metadata={"refcat": refcats[0], "index": i},
+                    )
+                    bldg_glb_path = output_dir / f"building_{i}.glb"
+                    bldg_mesh.export(str(bldg_glb_path), file_type="glb")
+                    building_info.append({
+                        "index": i,
+                        "use": bldg_feature["properties"].get("currentUse"),
+                        "floors": n_floors,
+                        "area_m2": bldg_feature["properties"].get("area_m2"),
+                        "glb_path": str(bldg_glb_path),
+                        "base_elevation": base_elev,
+                    })
+                except Exception as bldg_err:
+                    logger.warning("Building %d extrusion failed: %s", i, bldg_err)
+
+        if building_info:
+            try:
+                from .terrain.export import merge_buildings_into_glb
+                bldg_paths = [Path(bi["glb_path"]) for bi in building_info]
+                _aoi_path = Path(result.glb_path).parent / "aoi.geojson"
+                merge_buildings_into_glb(
+                    Path(result.glb_path), bldg_paths,
+                    area_ha=result.aoi_metadata.area_ha,
+                    aoi_geojson_path=_aoi_path if _aoi_path.exists() else None,
+                    local_origin=local_origin,
+                )
+            except Exception as merge_exc:
+                logger.warning("Building merge into GLB failed: %s", merge_exc)
+
+        job.status = JobStatus.COMPLETED
+        job.progress = 100.0
+        job.current_step = "Completado"
+        job.result = {
+            "twin_id": result.twin_id,
+            "refcats": refcats,
+            "area_ha": result.aoi_metadata.area_ha,
+            "centroid": [result.aoi_metadata.centroid_lon, result.aoi_metadata.centroid_lat],
+            "vertex_count": result.vertex_count,
+            "face_count": result.face_count,
+            "lod_count": result.lod_count,
+            "processing_time_s": round(result.processing_time_s, 2),
+            "tileset_path": result.tileset_path,
+            "glb_path": result.glb_path,
+            "buildings": building_info,
+            "ndvi": result.ndvi,
+            "ortho": result.ortho,
+            "merged": len(refcats) > 1,
+        }
+        logger.info(
+            "MultiParcel %s completed: %d parcels, %.1f ha, %d buildings",
+            job_id, len(refcats), result.aoi_metadata.area_ha, len(building_info),
+        )
+
+    except Exception as exc:
+        job.status = JobStatus.FAILED
+        job.error = str(exc)
+        logger.error("MultiParcel %s failed: %s", job_id, exc)
+
+
 # ─── Regenerate stale twins ────────────────────────────────────────────────
 
 @app.post("/regenerate/{twin_id}", response_model=ProcessResponse, status_code=202)

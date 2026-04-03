@@ -6,6 +6,10 @@ interface RefcatBody {
   refcat: string;
 }
 
+interface MultiRefcatBody {
+  refcats: string[];
+}
+
 /**
  * Referencia Catastral API — creates a digital twin from a Spanish cadastral reference.
  */
@@ -49,6 +53,54 @@ export async function refcatRouter(fastify: FastifyInstance) {
       return reply.code(202).send(result);
     } catch (err) {
       fastify.log.error('Engine /autotwin call failed: %s', err);
+      return reply.code(502).send({
+        error: 'Engine service unavailable',
+      });
+    }
+  });
+
+  // POST /api/twin/from-refcat/multi — Merge up to 3 adjacent parcels
+  fastify.post('/twin/from-refcat/multi', {
+    schema: {
+      body: {
+        type: 'object',
+        required: ['refcats'],
+        properties: {
+          refcats: {
+            type: 'array',
+            minItems: 1,
+            maxItems: 3,
+            items: {
+              type: 'string',
+              minLength: 14,
+              maxLength: 20,
+              pattern: '^[A-Za-z0-9]+$',
+            },
+          },
+        },
+      },
+    },
+  }, async (request: FastifyRequest<{ Body: MultiRefcatBody }>, reply: FastifyReply) => {
+    const { refcats } = request.body;
+
+    try {
+      const resp = await fetch(`${ENGINE_URL}/autotwin/multi`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refcats }),
+      });
+
+      if (!resp.ok) {
+        const error = await resp.text();
+        return reply.code(resp.status).send({
+          error: `Engine error: ${error}`,
+        });
+      }
+
+      const result = await resp.json() as { job_id: string; twin_id: string; refcat: string; status: string };
+      return reply.code(202).send(result);
+    } catch (err) {
+      fastify.log.error('Engine /autotwin/multi call failed: %s', err);
       return reply.code(502).send({
         error: 'Engine service unavailable',
       });
