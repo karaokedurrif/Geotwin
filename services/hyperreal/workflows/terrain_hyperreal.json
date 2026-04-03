@@ -1,0 +1,80 @@
+{
+  "1": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "depth_input.png"
+    }
+  },
+  "2": {
+    "class_type": "CheckpointLoaderSimple",
+    "inputs": {
+      "ckpt_name": "flux1-dev-fp8.safetensors"
+    }
+  },
+  "3": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "PLACEHOLDER_POSITIVE",
+      "clip": ["2", 1]
+    }
+  },
+  "4": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "PLACEHOLDER_NEGATIVE",
+      "clip": ["2", 1]
+    }
+  },
+  "5": {
+    "class_type": "ControlNetLoader",
+    "inputs": {
+      "control_net_name": "flux-depth-controlnet-v3.safetensors"
+    }
+  },
+  "6": {
+    "class_type": "ControlNetApplyAdvanced",
+    "inputs": {
+      "strength": 0.85,
+      "conditioning": ["3", 0],
+      "control_net": ["5", 0],
+      "image": ["1", 0]
+    }
+  },
+  "7": {
+    "class_type": "EmptyLatentImage",
+    "inputs": {
+      "width": 2048,
+      "height": 2048,
+      "batch_size": 1
+    }
+  },
+  "8": {
+    "class_type": "KSampler",
+    "inputs": {
+      "model": ["2", 0],
+      "positive": ["6", 0],
+      "negative": ["4", 0],
+      "latent_image": ["7", 0],
+      "seed": 42,
+      "steps": 25,
+      "cfg": 3.5,
+      "sampler_name": "euler",
+      "scheduler": "normal",
+      "denoise": 0.75
+    }
+  },
+  "9": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": ["8", 0],
+      "vae": ["2", 2]
+    }
+  },
+  "10": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": ["9", 0],
+      "filename_prefix": "hyperreal"
+    }
+  }
+}

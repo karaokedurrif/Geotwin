@@ -3,6 +3,7 @@ import { useRef } from 'react';
 import { useStudioStore } from '../store';
 import ViewModeToggle from './ViewModeToggle';
 import ExportMenu from './ExportMenu';
+import HyperrealButton from './HyperrealButton';
 
 interface StudioToolbarProps {
   twinId: string;
@@ -111,7 +112,8 @@ export default function StudioToolbar({ twinId, glbUrl, onClose }: StudioToolbar
 
       <div style={{ flex: 1 }} />
 
-      {/* Right: Export + Close */}
+      {/* Right: Hyperreal + Export + Close */}
+      <HyperrealButton twinId={twinId} />
       <ExportMenu twinId={twinId} glbUrl={glbUrl} />
       <button
         onClick={onClose}

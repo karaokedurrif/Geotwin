@@ -202,6 +202,38 @@ services:
     networks:
       - geotwin
 
+  # ----------------------------------------------------------------------------
+  # Hyperreal Service — ComfyUI + FLUX ControlNet renders (on-demand via --profile hyperreal)
+  # Requires NVIDIA GPU runtime. Start with:
+  #   docker compose --profile hyperreal up -d geotwin-hyperreal
+  # ----------------------------------------------------------------------------
+  geotwin-hyperreal:
+    build:
+      context: services/hyperreal
+      dockerfile: Dockerfile
+    container_name: geotwin-hyperreal
+    restart: unless-stopped
+    profiles: ["hyperreal"]
+
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+
+    volumes:
+      - hyperreal-models:/app/comfyui/models    # Checkpoints, ControlNets, LoRAs
+      - hyperreal-output:/app/output             # Generated renders
+      - ${GEOTWIN_TILES_HOST_DIR:-geotwin-tiles}:/app/tiles:ro  # Read-only tiles
+
+    networks:
+      - geotwin
+
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8003/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
 # ==============================================================================
 # Networks
 # ==============================================================================
@@ -247,3 +279,13 @@ volumes:
   odm-data:
     driver: local
     name: odm-data
+
+  # Hyperreal ComfyUI model weights (only used with --profile hyperreal)
+  hyperreal-models:
+    driver: local
+    name: hyperreal-models
+
+  # Hyperreal render output (only used with --profile hyperreal)
+  hyperreal-output:
+    driver: local
+    name: hyperreal-output
