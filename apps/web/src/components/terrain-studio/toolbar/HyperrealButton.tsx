@@ -5,7 +5,7 @@
  * This is a STANDALONE component. It does NOT modify any existing code.
  * It is imported into StudioToolbar.tsx via a single import + JSX line.
  */
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import * as THREE from 'three';
 import HyperrealResult from './HyperrealResult';
 
@@ -124,19 +124,8 @@ export default function HyperrealButton({ twinId }: HyperrealButtonProps) {
   const [originalUrl, setOriginalUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showResult, setShowResult] = useState(false);
-  const [serviceAvailable, setServiceAvailable] = useState<boolean | null>(null);
 
-  // Check if hyperreal service is running on user's machine
-  useEffect(() => {
-    fetch(`${HYPERREAL_API}/health`, { method: 'GET' })
-      .then((r) => r.ok && setServiceAvailable(true))
-      .catch(() => setServiceAvailable(false));
-  }, []);
-
-  // Don't render if service is not available
-  if (serviceAvailable === false) return null;
-  // Show loading while checking
-  if (serviceAvailable === null) return null;
+  // Always show button — error handling happens on click
 
   const handleClick = async () => {
     const state = getThreeState();
@@ -196,7 +185,12 @@ export default function HyperrealButton({ twinId }: HyperrealButtonProps) {
       }
       throw new Error('Timeout: render tardó demasiado');
     } catch (err: any) {
-      setError(err.message || 'Error desconocido');
+      // Detect connection errors (service not running)
+      if (err.message?.includes('fetch') || err.name === 'TypeError') {
+        setError('Servicio hyperreal no disponible. Inicia: docker compose --profile hyperreal up -d');
+      } else {
+        setError(err.message || 'Error desconocido');
+      }
       setStatus('');
     } finally {
       setLoading(false);
