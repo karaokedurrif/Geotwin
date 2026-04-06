@@ -687,9 +687,9 @@ export default function ControlPanel({
             Export Parcel KML
           </button>
 
-          {generatedTwinId && (
+          {recipe?.twinId && (
             <a
-              href={`/studio/${generatedTwinId}`}
+              href={`/studio/${recipe.twinId}`}
               target="_blank"
               rel="noopener noreferrer"
               className={styles.btnStudio}

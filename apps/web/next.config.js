@@ -18,11 +18,6 @@ const nextConfig = {
   async redirects() {
     return [
       {
-        source: '/studio/:twinId',
-        destination: '/twin/:twinId?tab=map',
-        permanent: false,
-      },
-      {
         source: '/visor/:twinId',
         destination: '/twin/:twinId?tab=3d',
         permanent: false,

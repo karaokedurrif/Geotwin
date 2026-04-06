@@ -704,8 +704,8 @@ export default function CesiumViewer({
               layers[layer] = true;
             });
 
-            // Generate unique twin ID
-            const twinId = generateTwinId();
+            // Use existing engine twinId when available (refcat flow), generate new only for KML uploads
+            const twinId = recipe?.twinId || generateTwinId();
 
             // Build snapshot with camera centerLon/centerLat
             const snapshot: TwinSnapshot = {
