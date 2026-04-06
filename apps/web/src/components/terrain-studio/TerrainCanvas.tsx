@@ -45,18 +45,19 @@ export default function TerrainCanvas({ glbUrl, geojson }: TerrainCanvasProps) {
   const effectiveUrl = glbOverrideUrl || glbUrl;
 
   return (
-    <Canvas
-      shadows
-      gl={{
-        antialias: true,
-        toneMapping: THREE.ACESFilmicToneMapping,
-        toneMappingExposure: 1.0,
-        alpha: true,
-      }}
-      camera={{ fov: 45, near: 0.01, far: 5000 }}
-      dpr={[1, 2]}
-      style={{ background: '#0a0a14' }}
-    >
+    <div id="terrain-studio-canvas-container" style={{ width: '100%', height: '100%' }}>
+      <Canvas
+        shadows
+        gl={{
+          antialias: true,
+          toneMapping: THREE.ACESFilmicToneMapping,
+          toneMappingExposure: 1.0,
+          alpha: true,
+        }}
+        camera={{ fov: 45, near: 0.01, far: 5000 }}
+        dpr={[1, 2]}
+        style={{ background: '#0a0a14' }}
+      >
       <Bvh firstHitOnly>
       <Suspense fallback={<LoadingFallback />}>
         <TerrainModel key={effectiveUrl} url={effectiveUrl} geojson={geojson} />
@@ -136,5 +137,6 @@ export default function TerrainCanvas({ glbUrl, geojson }: TerrainCanvasProps) {
       <StudioPostProcessing />
       </Bvh>
     </Canvas>
+    </div>
   );
 }

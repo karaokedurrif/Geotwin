@@ -30,13 +30,32 @@ interface HyperrealButtonProps {
  * internal __r3f store attached to the DOM canvas element.
  */
 function getThreeState(): { gl: THREE.WebGLRenderer; scene: THREE.Scene; camera: THREE.Camera } | null {
-  const canvas = document.querySelector('canvas') as HTMLCanvasElement | null;
-  if (!canvas) return null;
+  // Target the specific canvas inside Terrain Studio's container
+  const container = document.getElementById('terrain-studio-canvas-container');
+  if (!container) {
+    console.warn('[Hyperreal] terrain-studio-canvas-container not found');
+    return null;
+  }
+  
+  const canvas = container.querySelector('canvas') as HTMLCanvasElement | null;
+  if (!canvas) {
+    console.warn('[Hyperreal] canvas not found inside container');
+    return null;
+  }
+  
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const root = (canvas as any).__r3f;
-  if (!root) return null;
+  if (!root) {
+    console.warn('[Hyperreal] __r3f store not found on canvas');
+    return null;
+  }
+  
   const state = root.store?.getState?.();
-  if (!state?.gl || !state?.scene || !state?.camera) return null;
+  if (!state?.gl || !state?.scene || !state?.camera) {
+    console.warn('[Hyperreal] R3F state incomplete:', { hasGl: !!state?.gl, hasScene: !!state?.scene, hasCamera: !!state?.camera });
+    return null;
+  }
+  
   return { gl: state.gl, scene: state.scene, camera: state.camera };
 }
 
