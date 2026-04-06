@@ -403,8 +403,22 @@ export default function CesiumViewer({
         // === STEP 1: CREATE VIEWER IMMEDIATELY (NO WAITING) ===
         logMessage('Initializing Cesium viewer...', 'info');
         
-        // Base viewer options (shared across attempts)
-        const baseViewerOptions = {
+        // Probe WebGL support BEFORE constructing Viewer (avoids corrupt container on failure)
+        const probe = document.createElement('canvas');
+        probe.width = 1; probe.height = 1;
+        const hasWebGL2 = !!probe.getContext('webgl2');
+        const hasWebGL1 = !hasWebGL2 && !!(probe.getContext('webgl') || probe.getContext('experimental-webgl'));
+        probe.remove();
+
+        if (!hasWebGL2 && !hasWebGL1) {
+          throw new Error('WebGL not available. Enable "Override software rendering list" in chrome://flags');
+        }
+
+        const useWebGL1 = !hasWebGL2;
+        const ctxLabel = useWebGL1 ? 'WebGL1' : 'WebGL2';
+        logMessage(`Using ${ctxLabel} (probe: webgl2=${hasWebGL2})`, 'info');
+
+        viewer = new Cesium.Viewer(viewerRef.current, {
           imageryProvider: new Cesium.OpenStreetMapImageryProvider({
             url: 'https://tile.openstreetmap.org/',
           }),
@@ -421,37 +435,12 @@ export default function CesiumViewer({
           infoBox: false,
           selectionIndicator: false,
           showRenderLoopErrors: false,
-        };
+          contextOptions: useWebGL1
+            ? { requestWebgl1: true, webgl: { failIfMajorPerformanceCaveat: false } }
+            : { webgl: { failIfMajorPerformanceCaveat: false } },
+        });
 
-        // Try WebGL2 first, fall back to WebGL1 (Chromium + blocklisted GPU needs it)
-        const contextAttempts = [
-          { label: 'WebGL2', contextOptions: { webgl: { failIfMajorPerformanceCaveat: false } } },
-          { label: 'WebGL1', contextOptions: { requestWebgl1: true, webgl: { failIfMajorPerformanceCaveat: false } } },
-        ];
-
-        for (const attempt of contextAttempts) {
-          try {
-            viewer = new Cesium.Viewer(viewerRef.current, {
-              ...baseViewerOptions,
-              contextOptions: attempt.contextOptions,
-            });
-            logMessage(`Cesium initialized (${attempt.label})`, 'success');
-            break;
-          } catch (err) {
-            logMessage(`Cesium ${attempt.label} failed, trying next...`, 'warn');
-            // Clean up any canvases left by the failed attempt
-            if (viewerRef.current) {
-              viewerRef.current.querySelectorAll('canvas').forEach((c: HTMLCanvasElement) => {
-                try {
-                  const gl = (c.getContext('webgl2') || c.getContext('webgl')) as WebGLRenderingContext | null;
-                  gl?.getExtension('WEBGL_lose_context')?.loseContext();
-                } catch (_) { /* ignore */ }
-                c.remove();
-              });
-            }
-            if (attempt.label === 'WebGL1') throw err; // Last attempt — re-throw
-          }
-        }
+        logMessage(`Cesium initialized (${ctxLabel})`, 'success');
 
         // Attach offline-aware error handler for base imagery
         const baseLayer = viewer.imageryLayers?.get?.(0);

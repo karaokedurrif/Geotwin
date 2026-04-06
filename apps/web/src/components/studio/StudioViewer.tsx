@@ -794,6 +794,13 @@ export default function StudioViewer({
       try {
         // Base imagery: OSM (always works, no Cesium Ion account needed)
         // ❌❌❌ CRÍTICO para captura PNG de alta resolución ❌❌❌
+        // Probe WebGL support (same logic as CesiumViewer)
+        const probe = document.createElement('canvas');
+        probe.width = 1; probe.height = 1;
+        const hasWebGL2 = !!probe.getContext('webgl2');
+        probe.remove();
+        const useWebGL1 = !hasWebGL2;
+
         viewer = new Cesium.Viewer(containerRef.current!, {
           imageryProvider: new Cesium.OpenStreetMapImageryProvider({
             url: 'https://tile.openstreetmap.org/',
@@ -810,20 +817,10 @@ export default function StudioViewer({
           selectionIndicator: false,
           shadows: false,
           terrainShadows: Cesium.ShadowMode.DISABLED,
-          showRenderLoopErrors: false, // Suppress native Cesium error dialog
-          contextOptions: {
-            webgl: {
-              preserveDrawingBuffer: true,  // Permite canvas.toBlob() para captura 4K
-              alpha: false,
-              depth: true,
-              stencil: false,
-              antialias: true,
-              powerPreference: 'high-performance',
-              failIfMajorPerformanceCaveat: false, // Allow software/degraded GPU renderers
-            }
-          },
-          // Calidad visual máxima
-          msaaSamples: 4,
+          showRenderLoopErrors: false,
+          contextOptions: useWebGL1
+            ? { requestWebgl1: true, webgl: { preserveDrawingBuffer: true, failIfMajorPerformanceCaveat: false } }
+            : { webgl: { preserveDrawingBuffer: true, failIfMajorPerformanceCaveat: false } },
           useBrowserRecommendedResolution: false,
         });
 
