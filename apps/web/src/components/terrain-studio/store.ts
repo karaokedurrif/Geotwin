@@ -62,7 +62,7 @@ export const useStudioStore = create<StudioStore>((set) => ({
   setLightPreset: (p) => set({ lightPreset: p }),
   setLightIntensity: (v) => set({ lightIntensity: v }),
   setLightRotation: (v) => set({ lightRotation: v }),
-  ssaoEnabled: true,
+  ssaoEnabled: false,  // Disabled by default - causes WebGL depth buffer conflicts
   bloomEnabled: false,
   vignetteEnabled: true,
   toggleFX: (fx) => set((s) => ({ ...s, [fx]: !s[fx as keyof StudioStore] })),
