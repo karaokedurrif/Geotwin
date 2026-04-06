@@ -63,11 +63,11 @@ async def generate_parcel_glb(refcat: str, output_path: str) -> None:
     lats = [c[1] for c in coords]
     log.info(f"  → {len(coords)} vértices, centroid ≈ ({np.mean(lons):.6f}, {np.mean(lats):.6f})")
 
-    # Bbox con buffer de 10 m mínimo (≥20 % para parcelas pequeñas)
+    # Bbox con buffer ≥20% o ≥50m (golden rule)
     width_deg = max(lons) - min(lons)
     height_deg = max(lats) - min(lats)
-    buf_lon = max(width_deg * 0.20, 10 / 111000)
-    buf_lat = max(height_deg * 0.20, 10 / 111000)
+    buf_lon = max(width_deg * 0.20, 50 / 111000)
+    buf_lat = max(height_deg * 0.20, 50 / 111000)
     bbox = (
         min(lons) - buf_lon,
         min(lats) - buf_lat,
@@ -176,15 +176,19 @@ async def generate_parcel_glb(refcat: str, output_path: str) -> None:
     )
     elevs = interp(pts[:, ::-1])  # (lat, lon) order for interpolator
 
-    vertices = np.column_stack([
-        (pts[:, 0] - centroid_lon) * 111000 * cos_lat,
-        (pts[:, 1] - centroid_lat) * 111000,
-        elevs,
-    ])
-    vertices[:, 2] -= vertices[:, 2].min()  # center Z at 0
+    # Build in Z-up for Delaunay (x=east, y=north, z=elev)
+    east  = (pts[:, 0] - centroid_lon) * 111000 * cos_lat
+    north = (pts[:, 1] - centroid_lat) * 111000
+    elev  = elevs - np.nanmin(elevs)  # center Z at 0
 
-    tri = Delaunay(vertices[:, :2])
+    # Delaunay on horizontal plane (east, north)
+    vertices_2d = np.column_stack([east, north])
+    tri = Delaunay(vertices_2d)
     faces = tri.simplices
+
+    # Convert to glTF Y-up: X=East, Y=Elevation(up), -Z=North
+    # This matches engine/terrain/export.py _degrees_to_local_meters()
+    vertices = np.column_stack([east, elev, -north])
     log.info(f"  → {len(vertices)} vértices, {len(faces)} triángulos")
 
     if len(vertices) < 2000:
@@ -192,10 +196,11 @@ async def generate_parcel_glb(refcat: str, output_path: str) -> None:
 
     # ── 5. UVs y textura ─────────────────────────────────────────────
     log.info("[5/6] Calculando UVs...")
-    x_min, y_min = vertices[:, 0].min(), vertices[:, 1].min()
-    x_max, y_max = vertices[:, 0].max(), vertices[:, 1].max()
-    u = (vertices[:, 0] - x_min) / max(x_max - x_min, 1e-6)
-    v = 1.0 - (vertices[:, 1] - y_min) / max(y_max - y_min, 1e-6)
+    # UVs from east/north (horizontal plane), NOT from glTF Y-up vertices
+    e_min, n_min = east.min(), north.min()
+    e_max, n_max = east.max(), north.max()
+    u = (east - e_min) / max(e_max - e_min, 1e-6)
+    v = 1.0 - (north - n_min) / max(n_max - n_min, 1e-6)
     uv = np.column_stack([u, v]).astype(np.float32)
 
     assert uv[:, 0].min() >= 0.0 and uv[:, 0].max() <= 1.0, "UV u out of [0,1]"
