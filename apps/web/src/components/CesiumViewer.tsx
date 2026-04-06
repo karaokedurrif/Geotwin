@@ -127,6 +127,7 @@ export default function CesiumViewer({
   const dataSourcesRef = useRef<Map<LayerType, any>>(new Map());
   const ndviLayerRef = useRef<any>(null);
   const ndviBboxEntityRef = useRef<any>(null);
+  const [webglError, setWebglError] = useState<string | null>(null);
   
   // Session tracking to prevent operations on destroyed viewer
   const sessionRef = useRef<number>(0);
@@ -919,6 +920,10 @@ export default function CesiumViewer({
         const errorMsg = `Failed to initialize viewer: ${error instanceof Error ? error.message : 'Unknown'}`;
         logMessage(errorMsg, 'error');
         console.error(error);
+        // Show visible error overlay when WebGL fails
+        if (errorMsg.includes('WebGL') || errorMsg.includes('initialization failed')) {
+          setWebglError(errorMsg);
+        }
       }
     }
 
@@ -1736,11 +1741,36 @@ export default function CesiumViewer({
     };
   }, []);
 
-  return <div 
-    ref={viewerRef} 
-    className={`w-full h-full cesium-viewer ${tileMode ? 'tile-mode' : ''}`}
-    style={{ minHeight: '400px', minWidth: '400px', position: 'relative' }}
-  />;
+  return (
+    <>
+      <div 
+        ref={viewerRef} 
+        className={`w-full h-full cesium-viewer ${tileMode ? 'tile-mode' : ''}`}
+        style={{ minHeight: '400px', minWidth: '400px', position: 'relative' }}
+      />
+      {webglError && (
+        <div style={{
+          position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
+          alignItems: 'center', justifyContent: 'center', background: 'rgba(10,10,20,0.95)',
+          color: '#e0e0e0', fontFamily: 'system-ui', zIndex: 50, gap: 12, padding: 24,
+        }}>
+          <span style={{ fontSize: 32 }}>⚠️</span>
+          <p style={{ fontSize: 14, fontWeight: 600, color: '#f87171' }}>WebGL no disponible</p>
+          <p style={{ fontSize: 12, maxWidth: 400, textAlign: 'center', lineHeight: 1.6, color: '#9ca3af' }}>
+            Chrome bloquea WebGL en GPUs nuevas. Abre{' '}
+            <code style={{ background: '#333', padding: '2px 6px', borderRadius: 4 }}>chrome://flags</code>{' '}
+            → busca <b>&quot;Override software rendering list&quot;</b> → <b>Enable</b> → reinicia Chrome.
+          </p>
+          <button
+            onClick={() => setWebglError(null)}
+            style={{ marginTop: 8, padding: '6px 16px', background: '#333', border: 'none', borderRadius: 6, color: '#e0e0e0', cursor: 'pointer', fontSize: 12 }}
+          >
+            Cerrar
+          </button>
+        </div>
+      )}
+    </>
+  );
 }
 
 /**
