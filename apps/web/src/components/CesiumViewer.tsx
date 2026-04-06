@@ -424,7 +424,6 @@ export default function CesiumViewer({
           contextOptions: {
             webgl: {
               failIfMajorPerformanceCaveat: false, // Allow software/degraded GPU renderers
-              powerPreference: 'high-performance',
             },
           },
         });
