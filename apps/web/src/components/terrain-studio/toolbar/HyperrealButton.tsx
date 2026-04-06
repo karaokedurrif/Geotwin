@@ -101,20 +101,12 @@ function captureDepthMap(
   }
   ctx.putImageData(imageData, 0, 0);
 
-  // Sync canvas → blob
-  let blob: Blob | null = null;
-  canvas.toBlob((b) => {
-    blob = b;
-  }, 'image/png');
-  // toBlob is async on some browsers — use toDataURL as fallback
-  if (!blob) {
-    const dataUrl = canvas.toDataURL('image/png');
-    const bytes = atob(dataUrl.split(',')[1]);
-    const arr = new Uint8Array(bytes.length);
-    for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
-    blob = new Blob([arr], { type: 'image/png' });
-  }
-  return blob;
+  // Use toDataURL (synchronous) instead of toBlob (async)
+  const dataUrl = canvas.toDataURL('image/png');
+  const bytes = atob(dataUrl.split(',')[1]);
+  const arr = new Uint8Array(bytes.length);
+  for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
+  return new Blob([arr], { type: 'image/png' });
 }
 
 /** Capture the RGB view from the Three.js canvas */
