@@ -351,6 +351,7 @@ export default function TwinStudioPage() {
           ? () => setShowModelViewer(true)
           : tileProcessing.startProcessing
         }
+        onOpenTerrainStudio={() => setShowTerrainStudio(true)}
         meshStatus={tileProcessing.status}
         twinId={typeof twinId === 'string' ? twinId : undefined}
       />

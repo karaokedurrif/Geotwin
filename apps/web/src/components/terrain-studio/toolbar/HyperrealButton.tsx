@@ -136,7 +136,7 @@ export default function HyperrealButton({ twinId }: HyperrealButtonProps) {
   const handleClick = async () => {
     const state = getThreeState();
     if (!state) {
-      setError('Visor 3D no disponible');
+      setError('Hyperreal solo funciona en Terrain Studio. Abre Terrain Studio desde el botón morado en la barra superior.');
       return;
     }
     const { gl, scene, camera } = state;

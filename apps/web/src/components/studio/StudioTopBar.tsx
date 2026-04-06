@@ -22,6 +22,7 @@ interface StudioTopBarProps {
   onExport: () => void;
   onBackToCapture: () => void;
   onGenerateMesh?: () => void;
+  onOpenTerrainStudio?: () => void;
   meshStatus?: string;
   twinId?: string;
 }
@@ -33,6 +34,7 @@ export default function StudioTopBar({
   onExport,
   onBackToCapture,
   onGenerateMesh,
+  onOpenTerrainStudio,
   meshStatus,
   twinId,
 }: StudioTopBarProps) {
@@ -207,6 +209,19 @@ export default function StudioTopBar({
           {meshRunning ? <Loader2 size={10} style={{ animation: 'spin 1s linear infinite' }} /> : <Palette size={10} />}
           {meshRunning ? 'Generando...' : meshDone ? 'Mallado 3D \u2713' : 'Mallado 3D'}
         </button>
+
+        {/* Terrain Studio — Three.js full-screen inspector */}
+        {meshDone && onOpenTerrainStudio && (
+          <button
+            onClick={onOpenTerrainStudio}
+            className={styles.actionBtn}
+            style={{ borderColor: '#8B5CF660', color: '#8B5CF6' }}
+            title="Abrir Terrain Studio (Three.js inspector + Hyperreal)"
+          >
+            <Sparkles size={10} />
+            Terrain Studio
+          </button>
+        )}
 
         {/* Abrir Visor 3D standalone */}
         {meshDone && twinId && (
