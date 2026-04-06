@@ -59,6 +59,28 @@ function getThreeState(): { gl: THREE.WebGLRenderer; scene: THREE.Scene; camera:
   return { gl: state.gl, scene: state.scene, camera: state.camera };
 }
 
+/**
+ * Retry getThreeState with delays to handle R3F initialization timing.
+ * R3F attaches __r3f store asynchronously after Canvas mounts.
+ */
+async function getThreeStateWithRetry(maxAttempts = 5, delayMs = 150): Promise<{ gl: THREE.WebGLRenderer; scene: THREE.Scene; camera: THREE.Camera } | null> {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const state = getThreeState();
+    if (state) {
+      console.log(`[Hyperreal] R3F state acquired on attempt ${attempt}`);
+      return state;
+    }
+    
+    if (attempt < maxAttempts) {
+      console.log(`[Hyperreal] Retry ${attempt}/${maxAttempts} in ${delayMs}ms...`);
+      await new Promise(resolve => setTimeout(resolve, delayMs));
+    }
+  }
+  
+  console.error('[Hyperreal] Failed to acquire R3F state after', maxAttempts, 'attempts');
+  return null;
+}
+
 /** Capture a depth map from the Three.js viewport */
 function captureDepthMap(
   gl: THREE.WebGLRenderer,
@@ -153,16 +175,20 @@ export default function HyperrealButton({ twinId }: HyperrealButtonProps) {
   // Always show button — error handling happens on click
 
   const handleClick = async () => {
-    const state = getThreeState();
-    if (!state) {
-      setError('Hyperreal solo funciona en Terrain Studio. Abre Terrain Studio desde el botón morado en la barra superior.');
-      return;
-    }
-    const { gl, scene, camera } = state;
-
     setLoading(true);
     setError(null);
     setRenderUrl(null);
+    setStatus('Esperando R3F...');
+
+    // Retry to acquire R3F state (Canvas may still be initializing)
+    const state = await getThreeStateWithRetry();
+    if (!state) {
+      setError('Hyperreal solo funciona en Terrain Studio. Abre Terrain Studio desde el botón morado en la barra superior.');
+      setLoading(false);
+      setStatus('');
+      return;
+    }
+    const { gl, scene, camera } = state;
 
     try {
       // 1. Capture depth + RGB
