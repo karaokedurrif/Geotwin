@@ -305,6 +305,8 @@ export default function TerrainModel({ url }: TerrainModelProps) {
   }, [scene, camera, invalidate, setModelInfo]);
 
   // Discover and load building GLBs that sit alongside the terrain GLB
+  // DISABLED: causes 404 errors when buildings don't exist
+  /*
   useEffect(() => {
     const basePath = url.substring(0, url.lastIndexOf('/'));
     const probes = Array.from({ length: 10 }, (_, i) => `${basePath}/building_${i}.glb`);
@@ -323,6 +325,7 @@ export default function TerrainModel({ url }: TerrainModelProps) {
       setBuildingUrls(valid);
     });
   }, [url]);
+  */
 
   // Apply view mode changes
   useEffect(() => {
