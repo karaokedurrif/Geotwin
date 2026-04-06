@@ -75,30 +75,45 @@ async def generate_parcel_glb(refcat: str, output_path: str) -> None:
         max(lats) + buf_lat,
     )
 
-    # ── 2. DEM (MDT02 IGN 2 m/px) ─────────────────────────────────────
-    log.info("[2/6] Descargando DEM (MDT02 IGN WCS)...")
+    # ── 2. DEM (MDT02 → MDT05 fallback, IGN WCS) ──────────────────────
+    log.info("[2/6] Descargando DEM (WCS IGN)...")
     wcs_url = "https://servicios.idee.es/wcs-inspire/mdt"
-    wcs_params = {
-        "SERVICE": "WCS",
-        "VERSION": "2.0.1",
-        "REQUEST": "GetCoverage",
-        "COVERAGEID": "Elevacion4258_2",  # MDT02 2m
-        "FORMAT": "image/tiff",
-        "SUBSET": [f"Lat({bbox[1]},{bbox[3]})", f"Long({bbox[0]},{bbox[2]})"],
-    }
-    async with httpx.AsyncClient(timeout=60) as c:
-        r = await c.get(wcs_url, params=wcs_params)
+    # Buffer DEM más amplio (50 m) para garantizar coverage en parcelas pequeñas
+    dem_buf = 50 / 111000
+    dem_bbox = (bbox[0] - dem_buf, bbox[1] - dem_buf, bbox[2] + dem_buf, bbox[3] + dem_buf)
 
-    dem: np.ndarray
-    if r.status_code == 200 and len(r.content) > 5000:
-        dem_img = Image.open(BytesIO(r.content))
-        dem = np.array(dem_img, dtype=float)
-        dem[dem < -1000] = np.nan
-        dem = np.nan_to_num(dem, nan=np.nanmean(dem[~np.isnan(dem)]))
-        log.info(f"  → DEM {dem.shape}, elev [{dem.min():.0f}, {dem.max():.0f}] m")
-    else:
+    dem: np.ndarray = np.array([])
+    for coverage_id in ("Elevacion4258_2", "Elevacion4258_5"):  # MDT02 → MDT05 fallback
+        wcs_params = {
+            "SERVICE": "WCS",
+            "VERSION": "2.0.1",
+            "REQUEST": "GetCoverage",
+            "COVERAGEID": coverage_id,
+            "FORMAT": "image/tiff",
+            "SUBSET": [f"Lat({dem_bbox[1]},{dem_bbox[3]})", f"Long({dem_bbox[0]},{dem_bbox[2]})"],
+        }
+        async with httpx.AsyncClient(timeout=60) as c:
+            r = await c.get(wcs_url, params=wcs_params)
+        if r.status_code == 200 and len(r.content) > 5000:
+            try:
+                dem_img = Image.open(BytesIO(r.content))
+                arr = np.array(dem_img, dtype=float)
+                arr[arr < -1000] = np.nan
+                valid = arr[~np.isnan(arr)]
+                if valid.size > 0:
+                    arr = np.nan_to_num(arr, nan=np.nanmean(valid))
+                    dem = arr
+                    log.info(f"  → DEM {dem.shape} ({coverage_id}), elev [{dem.min():.0f}, {dem.max():.0f}] m")
+                    break
+            except Exception as e:
+                log.warning(f"  ⚠ {coverage_id} parse error: {e}")
+        else:
+            log.warning(f"  ⚠ {coverage_id} → HTTP {r.status_code}")
+
+    if dem.size == 0:
         log.warning("  ⚠ DEM no disponible — usando terreno plano")
         dem = np.zeros((20, 20))
+        dem_bbox = bbox  # use normal bbox for interpolation
 
     # ── 3. Ortofoto PNOA (25 cm/px) ──────────────────────────────────
     log.info("[3/6] Descargando ortofoto PNOA...")
@@ -150,8 +165,8 @@ async def generate_parcel_glb(refcat: str, output_path: str) -> None:
     grid_lats = np.linspace(bbox[1], bbox[3], n_y)
 
     # Interpolar DEM al grid
-    dem_lats = np.linspace(bbox[3], bbox[1], dem.shape[0])
-    dem_lons = np.linspace(bbox[0], bbox[2], dem.shape[1])
+    dem_lats = np.linspace(dem_bbox[3], dem_bbox[1], dem.shape[0])
+    dem_lons = np.linspace(dem_bbox[0], dem_bbox[2], dem.shape[1])
     interp = RegularGridInterpolator(
         (dem_lats[::-1], dem_lons), dem[::-1], method="linear", bounds_error=False, fill_value=None
     )
