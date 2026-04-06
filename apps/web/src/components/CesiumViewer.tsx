@@ -403,15 +403,29 @@ export default function CesiumViewer({
         // === STEP 1: CREATE VIEWER IMMEDIATELY (NO WAITING) ===
         logMessage('Initializing Cesium viewer...', 'info');
 
-        // Clean up any stale canvas elements left by a previous failed Viewer init.
-        // Without this, React remounts (Strict Mode) leave a contaminated canvas that
-        // causes "The browser supports WebGL, but initialization failed".
-        if (viewerRef.current) {
-          const staleCanvases = viewerRef.current.querySelectorAll('canvas');
-          staleCanvases.forEach((c: HTMLCanvasElement) => c.remove());
+        // Helper: free WebGL contexts and remove canvas elements inside a container.
+        // Explicitly calling loseContext() is required on Linux/NVIDIA where GPU context
+        // slots are limited — just removing the DOM node doesn't free the slot.
+        function freeCanvases(container: HTMLElement) {
+          container.querySelectorAll('canvas').forEach((c: HTMLCanvasElement) => {
+            try {
+              const gl =
+                c.getContext('webgl2') ||
+                c.getContext('webgl') ||
+                c.getContext('experimental-webgl');
+              if (gl) {
+                const ext = (gl as WebGLRenderingContext)
+                  .getExtension('WEBGL_lose_context');
+                ext?.loseContext();
+              }
+            } catch (_) { /* ignore */ }
+            c.remove();
+          });
         }
 
-        const viewerOptions = {
+        if (viewerRef.current) freeCanvases(viewerRef.current);
+
+        const baseViewerOptions = {
           imageryProvider: new Cesium.OpenStreetMapImageryProvider({
             url: 'https://tile.openstreetmap.org/',
           }),
@@ -428,33 +442,52 @@ export default function CesiumViewer({
           infoBox: false,
           selectionIndicator: false,
           showRenderLoopErrors: false,
-          contextOptions: {
-            webgl: {
-              failIfMajorPerformanceCaveat: false,
-              powerPreference: 'high-performance',
-            },
-          },
         };
 
-        // Try WebGL2 first; if Cesium throws, retry with WebGL1 fallback.
-        try {
-          viewer = new Cesium.Viewer(viewerRef.current, viewerOptions);
-        } catch (webglErr) {
-          logMessage('WebGL2 init failed, retrying with WebGL1...', 'warn');
-          // Remove the stale canvas Cesium left behind from the failed attempt
-          if (viewerRef.current) {
-            viewerRef.current.querySelectorAll('canvas').forEach((c: HTMLCanvasElement) => c.remove());
-          }
-          viewer = new Cesium.Viewer(viewerRef.current, {
-            ...viewerOptions,
+        // Attempt order: WebGL2 → WebGL1 → WebGL1 minimal (antialias off)
+        // Do NOT use powerPreference:'high-performance' — on Linux NVIDIA/Wayland it
+        // forces the discrete GPU and frequently exhausts the driver context limit.
+        const contextAttempts = [
+          {
+            label: 'WebGL2',
+            contextOptions: {
+              webgl: { failIfMajorPerformanceCaveat: false, antialias: true, alpha: false },
+            },
+          },
+          {
+            label: 'WebGL1',
             contextOptions: {
               requestWebgl1: true,
-              webgl: {
-                failIfMajorPerformanceCaveat: false,
-                powerPreference: 'default',
-              },
+              webgl: { failIfMajorPerformanceCaveat: false, antialias: true, alpha: false },
             },
-          });
+          },
+          {
+            label: 'WebGL1 minimal',
+            contextOptions: {
+              requestWebgl1: true,
+              webgl: { failIfMajorPerformanceCaveat: false, antialias: false, alpha: false },
+            },
+          },
+        ];
+
+        let lastWebglError: unknown;
+        for (const attempt of contextAttempts) {
+          try {
+            viewer = new Cesium.Viewer(viewerRef.current, {
+              ...baseViewerOptions,
+              contextOptions: attempt.contextOptions,
+            });
+            logMessage(`Cesium initialized (${attempt.label})`, 'success');
+            break; // success
+          } catch (err) {
+            lastWebglError = err;
+            logMessage(`${attempt.label} init failed, trying next...`, 'warn');
+            if (viewerRef.current) freeCanvases(viewerRef.current);
+          }
+        }
+
+        if (!viewer) {
+          throw lastWebglError ?? new Error('All WebGL context attempts failed');
         }
 
         // Attach offline-aware error handler for base imagery
