@@ -290,7 +290,7 @@ async function loadTerrainTileset(
     if (!res.ok) return null;
     const status = await res.json();
     if (!status.available) {
-      console.log('[StudioViewer] No terrain tileset available for', twinId);
+      // Terrain tileset not available, silently skip
       return null;
     }
 
@@ -349,7 +349,7 @@ async function loadNDVIOverlay(
     const status = await res.json();
 
     if (!status.available || !status.files?.includes('ndvi_colormap.png')) {
-      console.log('[StudioViewer] No NDVI overlay available for', twinId);
+      // NDVI not available, silently skip
       return null;
     }
 
