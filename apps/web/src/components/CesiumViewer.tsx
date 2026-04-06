@@ -402,9 +402,16 @@ export default function CesiumViewer({
 
         // === STEP 1: CREATE VIEWER IMMEDIATELY (NO WAITING) ===
         logMessage('Initializing Cesium viewer...', 'info');
-        
-        // Start with basic OSM imagery (always works, no waiting)
-        viewer = new Cesium.Viewer(viewerRef.current, {
+
+        // Clean up any stale canvas elements left by a previous failed Viewer init.
+        // Without this, React remounts (Strict Mode) leave a contaminated canvas that
+        // causes "The browser supports WebGL, but initialization failed".
+        if (viewerRef.current) {
+          const staleCanvases = viewerRef.current.querySelectorAll('canvas');
+          staleCanvases.forEach((c: HTMLCanvasElement) => c.remove());
+        }
+
+        const viewerOptions = {
           imageryProvider: new Cesium.OpenStreetMapImageryProvider({
             url: 'https://tile.openstreetmap.org/',
           }),
@@ -420,14 +427,35 @@ export default function CesiumViewer({
           vrButton: false,
           infoBox: false,
           selectionIndicator: false,
-          showRenderLoopErrors: false, // Suppress native Cesium error dialog
+          showRenderLoopErrors: false,
           contextOptions: {
             webgl: {
-              failIfMajorPerformanceCaveat: false, // Allow software/degraded GPU renderers
+              failIfMajorPerformanceCaveat: false,
               powerPreference: 'high-performance',
             },
           },
-        });
+        };
+
+        // Try WebGL2 first; if Cesium throws, retry with WebGL1 fallback.
+        try {
+          viewer = new Cesium.Viewer(viewerRef.current, viewerOptions);
+        } catch (webglErr) {
+          logMessage('WebGL2 init failed, retrying with WebGL1...', 'warn');
+          // Remove the stale canvas Cesium left behind from the failed attempt
+          if (viewerRef.current) {
+            viewerRef.current.querySelectorAll('canvas').forEach((c: HTMLCanvasElement) => c.remove());
+          }
+          viewer = new Cesium.Viewer(viewerRef.current, {
+            ...viewerOptions,
+            contextOptions: {
+              requestWebgl1: true,
+              webgl: {
+                failIfMajorPerformanceCaveat: false,
+                powerPreference: 'default',
+              },
+            },
+          });
+        }
 
         // Attach offline-aware error handler for base imagery
         const baseLayer = viewer.imageryLayers?.get?.(0);
