@@ -30,17 +30,19 @@ function computeAreaFromGeoJSON(geojson: any): number | null {
         : null;
     if (!rings?.[0]) return null;
     const ring: [number, number][] = rings[0];
-    // Shoelace over lon/lat — convert to meters using mean latitude
     const n = ring.length;
     if (n < 3) return null;
+    // Shoelace in projected metres (correct formula: sum of cross-products of metre coords)
     const avgLat = ring.reduce((s, c) => s + c[1], 0) / n;
     const mPerDegLon = 111319.9 * Math.cos((avgLat * Math.PI) / 180);
     const mPerDegLat = 111319.9;
     let area = 0;
     for (let i = 0, j = n - 1; i < n; j = i++) {
-      area +=
-        ring[j][0] * mPerDegLon * ring[i][1] * mPerDegLat -
-        ring[i][0] * mPerDegLon * ring[j][1] * mPerDegLat;
+      const xi = ring[i][0] * mPerDegLon;
+      const yi = ring[i][1] * mPerDegLat;
+      const xj = ring[j][0] * mPerDegLon;
+      const yj = ring[j][1] * mPerDegLat;
+      area += xj * yi - xi * yj;
     }
     return Math.abs(area / 2) / 10000; // m² → ha
   } catch {

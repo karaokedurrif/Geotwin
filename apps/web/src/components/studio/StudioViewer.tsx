@@ -1538,7 +1538,7 @@ export default function StudioViewer({
             alignItems: 'center',
             justifyContent: 'center',
             background: '#0a0a14',
-            zIndex: 80,
+            zIndex: 9999,
             flexDirection: 'column',
             gap: 16,
             fontFamily: 'system-ui, sans-serif',
