@@ -4,6 +4,10 @@ const nextConfig = {
   reactStrictMode: false,
   output: 'standalone',
   transpilePackages: ['@geotwin/types'],
+  // Force cache bust by changing build ID
+  generateBuildId: async () => {
+    return `build-${Date.now()}`;
+  },
   images: {
     unoptimized: true,
   },
