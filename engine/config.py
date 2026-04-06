@@ -38,7 +38,12 @@ class EngineSettings(BaseSettings):
     copernicus_client_id: str = Field(default="", description="CDSE OAuth2 client ID")
     copernicus_client_secret: str = Field(default="", description="CDSE OAuth2 client secret")
 
-    model_config = {"env_prefix": "GEOTWIN_ENGINE_"}
+    model_config = {
+        "env_prefix": "GEOTWIN_ENGINE_",
+        "env_file": ".env",
+        "env_file_encoding": "utf-8",
+        "extra": "ignore",
+    }
 
 
 settings = EngineSettings()
