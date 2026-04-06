@@ -129,6 +129,7 @@ export default function TerrainModel({ url }: TerrainModelProps) {
   const matcapTex = useMemo(() => createMatcapTexture(), []);
   const fpsRef = useRef({ frames: 0, lastTime: performance.now(), fps: 60 });
   const [buildingUrls, setBuildingUrls] = useState<string[]>([]);
+  const [materialsReady, setMaterialsReady] = useState(false);
 
   const viewMode = useStudioStore((s) => s.viewMode);
   const roughness = useStudioStore((s) => s.roughness);
@@ -207,8 +208,8 @@ export default function TerrainModel({ url }: TerrainModelProps) {
         mesh.castShadow = true;
         mesh.receiveShadow = true;
 
-        originalMaterials.current.set(mesh.uuid, mesh.material as THREE.Material);
-
+        // Clone BEFORE any mutation so originalMaterials preserves textures
+        originalMaterials.current.set(mesh.uuid, (mesh.material as THREE.Material).clone());
         // Detect special scene elements by node name
         const n = (mesh.name || '').toLowerCase();
         const pn = (mesh.parent?.name || '').toLowerCase();
@@ -235,15 +236,8 @@ export default function TerrainModel({ url }: TerrainModelProps) {
           mat.normalMap = null;
           mat.needsUpdate = true;
           mesh.userData._isWall = true;
-        } else if (mat) {
-          // Ground terrain: olive green / stone gray — visible but clean
-          mat.color = new THREE.Color(0x7A8B6F);
-          mat.roughness = 0.92;
-          mat.metalness = 0.0;
-          mat.map = null;
-          mat.normalMap = null;
-          mat.needsUpdate = true;
         }
+        // Ground terrain: leave material as-is on initial load — viewMode effect applies it
       }
     });
 
@@ -302,6 +296,7 @@ export default function TerrainModel({ url }: TerrainModelProps) {
     }
 
     invalidate();
+    setMaterialsReady(true); // Signal that originalMaterials is populated
   }, [scene, camera, invalidate, setModelInfo]);
 
   // Discover and load building GLBs that sit alongside the terrain GLB
@@ -472,7 +467,7 @@ export default function TerrainModel({ url }: TerrainModelProps) {
       (mesh.material as THREE.Material).needsUpdate = true;
     });
     invalidate();
-  }, [viewMode, roughness, metalness, envMapIntensity, scene, invalidate, matcapTex]);
+  }, [viewMode, roughness, metalness, envMapIntensity, scene, materialsReady, invalidate, matcapTex]);
 
   // FPS counter — exposed via store for status bar
   useFrame(() => {
