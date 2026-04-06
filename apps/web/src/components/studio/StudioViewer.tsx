@@ -793,7 +793,8 @@ export default function StudioViewer({
     async function initViewer() {
       try {
         // Base imagery: Bing Aerial via Cesium Ion (siempre funciona, sin CORS)
-        const studioViewerOptions = {
+        // ❌❌❌ CRÍTICO para captura PNG de alta resolución ❌❌❌
+        viewer = new Cesium.Viewer(containerRef.current!, {
           imageryProvider: new Cesium.IonImageryProvider({ assetId: 2 }),
           baseLayerPicker: false,
           geocoder: false,
@@ -808,7 +809,6 @@ export default function StudioViewer({
           shadows: false,
           terrainShadows: Cesium.ShadowMode.DISABLED,
           showRenderLoopErrors: false, // Suppress native Cesium error dialog
-          // ❌❌❌ CRÍTICO para captura PNG de alta resolución ❌❌❌
           contextOptions: {
             webgl: {
               preserveDrawingBuffer: true,  // Permite canvas.toBlob() para captura 4K
@@ -817,26 +817,13 @@ export default function StudioViewer({
               stencil: false,
               antialias: true,
               powerPreference: 'high-performance',
+              failIfMajorPerformanceCaveat: false, // Allow software/degraded GPU renderers
             }
           },
           // Calidad visual máxima
           msaaSamples: 4,
           useBrowserRecommendedResolution: false,
-        };
-
-        try {
-          viewer = new Cesium.Viewer(containerRef.current!, studioViewerOptions);
-        } catch (webgl2Err) {
-          // WebGL2 failed — retry with WebGL1 fallback (drops preserveDrawingBuffer still works)
-          console.warn('[StudioViewer] WebGL2 init failed, retrying with WebGL1...');
-          viewer = new Cesium.Viewer(containerRef.current!, {
-            ...studioViewerOptions,
-            contextOptions: {
-              requestWebgl1: true,
-              webgl: { preserveDrawingBuffer: true, alpha: false },
-            },
-          });
-        }
+        });
 
         console.log('[StudioViewer] ✓ Viewer created with OSM base imagery');
 
