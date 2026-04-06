@@ -47,15 +47,21 @@ function captureDepthMap(
   camera: THREE.Camera
 ): Blob | null {
   const size = gl.getSize(new THREE.Vector2());
+  
+  // Use a regular color render target (no depth texture to avoid WebGL errors)
   const depthTarget = new THREE.WebGLRenderTarget(size.x, size.y, {
-    depthTexture: new THREE.DepthTexture(size.x, size.y),
-    depthBuffer: true,
+    minFilter: THREE.NearestFilter,
+    magFilter: THREE.NearestFilter,
+    format: THREE.RGBAFormat,
   });
 
   const depthMaterial = new THREE.MeshDepthMaterial({
     depthPacking: THREE.RGBADepthPacking,
   });
 
+  // Store original override material
+  const originalOverride = scene.overrideMaterial;
+  
   scene.overrideMaterial = depthMaterial;
   gl.setRenderTarget(depthTarget);
   gl.render(scene, camera);
@@ -63,8 +69,14 @@ function captureDepthMap(
   const pixels = new Uint8Array(size.x * size.y * 4);
   gl.readRenderTargetPixels(depthTarget, 0, 0, size.x, size.y, pixels);
 
-  scene.overrideMaterial = null;
+  // Restore original state
+  scene.overrideMaterial = originalOverride;
   gl.setRenderTarget(null);
+  
+  // Force re-render to clear the depth material
+  gl.render(scene, camera);
+  
+  // Clean up
   depthTarget.dispose();
   depthMaterial.dispose();
 
