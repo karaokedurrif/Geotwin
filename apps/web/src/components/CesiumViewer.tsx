@@ -404,21 +404,11 @@ export default function CesiumViewer({
         // === STEP 1: CREATE VIEWER IMMEDIATELY (NO WAITING) ===
         logMessage('Initializing Cesium viewer...', 'info');
         
-        // Probe WebGL support BEFORE constructing Viewer (avoids corrupt container on failure)
-        const probe = document.createElement('canvas');
-        probe.width = 1; probe.height = 1;
-        const hasWebGL2 = !!probe.getContext('webgl2');
-        const hasWebGL1 = !hasWebGL2 && !!(probe.getContext('webgl') || probe.getContext('experimental-webgl'));
-        probe.remove();
-
-        if (!hasWebGL2 && !hasWebGL1) {
-          throw new Error('WebGL not available. Enable "Override software rendering list" in chrome://flags');
-        }
-
-        const useWebGL1 = !hasWebGL2;
-        const ctxLabel = useWebGL1 ? 'WebGL1' : 'WebGL2';
-        logMessage(`Using ${ctxLabel} (probe: webgl2=${hasWebGL2})`, 'info');
-
+        // Plain Cesium constructor — NO contextOptions overrides.
+        // CesiumJS handles WebGL2→WebGL1 fallback internally.
+        // Adding contextOptions (failIfMajor, powerPreference, etc.) BREAKS
+        // WebGL on Chrome with GPU-blocklisted drivers (RTX 5080 Linux).
+        // Commit deabf82 was the last known working version with this config.
         viewer = new Cesium.Viewer(viewerRef.current, {
           imageryProvider: new Cesium.OpenStreetMapImageryProvider({
             url: 'https://tile.openstreetmap.org/',
@@ -435,13 +425,9 @@ export default function CesiumViewer({
           vrButton: false,
           infoBox: false,
           selectionIndicator: false,
-          showRenderLoopErrors: false,
-          contextOptions: useWebGL1
-            ? { requestWebgl1: true, webgl: { failIfMajorPerformanceCaveat: false } }
-            : { webgl: { failIfMajorPerformanceCaveat: false } },
         });
 
-        logMessage(`Cesium initialized (${ctxLabel})`, 'success');
+        logMessage('Cesium initialized', 'success');
 
         // Attach offline-aware error handler for base imagery
         const baseLayer = viewer.imageryLayers?.get?.(0);

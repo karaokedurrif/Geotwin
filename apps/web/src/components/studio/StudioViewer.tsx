@@ -792,15 +792,9 @@ export default function StudioViewer({
 
     async function initViewer() {
       try {
-        // Base imagery: OSM (always works, no Cesium Ion account needed)
-        // ❌❌❌ CRÍTICO para captura PNG de alta resolución ❌❌❌
-        // Probe WebGL support (same logic as CesiumViewer)
-        const probe = document.createElement('canvas');
-        probe.width = 1; probe.height = 1;
-        const hasWebGL2 = !!probe.getContext('webgl2');
-        probe.remove();
-        const useWebGL1 = !hasWebGL2;
-
+        // Plain constructor — NO contextOptions overrides except preserveDrawingBuffer
+        // (needed for PNG capture). CesiumJS handles WebGL fallback internally.
+        // Adding failIfMajor/powerPreference/alpha BREAKS Chrome + RTX 5080.
         viewer = new Cesium.Viewer(containerRef.current!, {
           imageryProvider: new Cesium.OpenStreetMapImageryProvider({
             url: 'https://tile.openstreetmap.org/',
@@ -817,10 +811,11 @@ export default function StudioViewer({
           selectionIndicator: false,
           shadows: false,
           terrainShadows: Cesium.ShadowMode.DISABLED,
-          showRenderLoopErrors: false,
-          contextOptions: useWebGL1
-            ? { requestWebgl1: true, webgl: { preserveDrawingBuffer: true, failIfMajorPerformanceCaveat: false } }
-            : { webgl: { preserveDrawingBuffer: true, failIfMajorPerformanceCaveat: false } },
+          contextOptions: {
+            webgl: {
+              preserveDrawingBuffer: true,
+            },
+          },
           useBrowserRecommendedResolution: false,
         });
 
