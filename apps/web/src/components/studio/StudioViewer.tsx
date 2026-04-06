@@ -792,10 +792,12 @@ export default function StudioViewer({
 
     async function initViewer() {
       try {
-        // Base imagery: Bing Aerial via Cesium Ion (siempre funciona, sin CORS)
+        // Base imagery: OSM (always works, no Cesium Ion account needed)
         // ❌❌❌ CRÍTICO para captura PNG de alta resolución ❌❌❌
         viewer = new Cesium.Viewer(containerRef.current!, {
-          imageryProvider: new Cesium.IonImageryProvider({ assetId: 2 }),
+          imageryProvider: new Cesium.OpenStreetMapImageryProvider({
+            url: 'https://tile.openstreetmap.org/',
+          }),
           baseLayerPicker: false,
           geocoder: false,
           homeButton: false,

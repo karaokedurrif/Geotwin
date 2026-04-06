@@ -102,6 +102,17 @@ export default function TwinStudioPage() {
   const [selectedSensor, setSelectedSensor] = useState<string | null>(null);
   const [showModelViewer, setShowModelViewer] = useState(false);
   const [showTerrainStudio, setShowTerrainStudio] = useState(false);
+  const [engineAreaHa, setEngineAreaHa] = useState<number | null>(null);
+
+  // Fetch correct area from engine pipeline_result.json (overrides stale snapshot area)
+  useEffect(() => {
+    if (!twinId || typeof twinId !== 'string') return;
+    const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3001';
+    fetch(`${apiBase}/api/tiles/${encodeURIComponent(twinId)}/pipeline_result.json`)
+      .then(r => r.ok ? r.json() : null)
+      .then(meta => { if (meta?.area_ha) setEngineAreaHa(meta.area_ha); })
+      .catch(() => {});
+  }, [twinId]);
 
   // When tile processing completes, load tileset into viewer and fly back to parcel
   const handleTileProcessingComplete = useCallback(() => {
@@ -334,6 +345,7 @@ export default function TwinStudioPage() {
       {/* Top bar: Twin ID, parcel name, actions */}
       <StudioTopBar
         snapshot={snapshot}
+        engineAreaHa={engineAreaHa}
         visualStyle={visualStyle}
         viewerRef={viewerRef}
         onExport={() => {
@@ -468,7 +480,7 @@ export default function TwinStudioPage() {
       {showTerrainStudio && typeof twinId === 'string' && (
         <TerrainStudio
           twinId={twinId}
-          areaHa={snapshot.parcel?.area_ha}
+          areaHa={engineAreaHa ?? snapshot.parcel?.area_ha}
           geojson={snapshot.parcel?.geojson}
           onClose={() => setShowTerrainStudio(false)}
         />

@@ -59,10 +59,12 @@ interface StudioTopBarProps {
   onOpenTerrainStudio?: () => void;
   meshStatus?: string;
   twinId?: string;
+  engineAreaHa?: number | null;
 }
 
 export default function StudioTopBar({
   snapshot,
+  engineAreaHa,
   visualStyle,
   viewerRef,
   onExport,
@@ -217,7 +219,7 @@ export default function StudioTopBar({
       {/* Center: area + coordinates pill */}
       <div className={styles.parcelPill}>
         <span className={styles.pillArea}>
-          {(computeAreaFromGeoJSON(snapshot.parcel.geojson) ?? snapshot.parcel.area_ha).toFixed(1)} ha
+          {(engineAreaHa ?? computeAreaFromGeoJSON(snapshot.parcel.geojson) ?? snapshot.parcel.area_ha).toFixed(1)} ha
         </span>
         <span className={styles.pillSep}>·</span>
         <span className={styles.pillCoord}>

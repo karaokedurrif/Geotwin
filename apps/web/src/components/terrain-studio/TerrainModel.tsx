@@ -174,12 +174,11 @@ export default function TerrainModel({ url }: TerrainModelProps) {
     box.getCenter(center);
     scene.position.sub(center);
 
-    // Rotate 180° around Y to fix mirrored orientation
-    scene.rotation.y = Math.PI;
+    // No rotation needed: engine exports X=East, Y=Up, -Z=North (standard glTF Y-up)
 
     const size = new THREE.Vector3();
     box.getSize(size);
-    // Y-up GLB: X=east, Y=elevation, Z=north
+    // Y-up GLB: X=east, Y=elevation, -Z=north (glTF standard)
     const hzMax = Math.max(size.x, size.z) || 1;
     const scale = 2 / hzMax;
     scene.scale.set(scale, scale, scale);

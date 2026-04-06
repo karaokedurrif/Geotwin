@@ -104,8 +104,7 @@ function TerrainMesh({
     const yRange = size.y || 0.001;
     const flatRatio = hzMax / yRange;
 
-    // Rotate 180° around Y — GLB has -Z=North, this makes North face camera
-    scene.rotation.y = Math.PI;
+    // No rotation: engine exports X=East, Y=Up, -Z=North (standard glTF Y-up)
 
     const baseScale = 2 / hzMax;
     scene.scale.set(baseScale, baseScale, baseScale);
