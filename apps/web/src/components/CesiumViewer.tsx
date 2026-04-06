@@ -403,8 +403,8 @@ export default function CesiumViewer({
         // === STEP 1: CREATE VIEWER IMMEDIATELY (NO WAITING) ===
         logMessage('Initializing Cesium viewer...', 'info');
         
-        // Start with basic OSM imagery (always works, no waiting)
-        viewer = new Cesium.Viewer(viewerRef.current, {
+        // Base viewer options (shared across attempts)
+        const baseViewerOptions = {
           imageryProvider: new Cesium.OpenStreetMapImageryProvider({
             url: 'https://tile.openstreetmap.org/',
           }),
@@ -420,13 +420,38 @@ export default function CesiumViewer({
           vrButton: false,
           infoBox: false,
           selectionIndicator: false,
-          showRenderLoopErrors: false, // Suppress native Cesium error dialog
-          contextOptions: {
-            webgl: {
-              failIfMajorPerformanceCaveat: false, // Allow software/degraded GPU renderers
-            },
-          },
-        });
+          showRenderLoopErrors: false,
+        };
+
+        // Try WebGL2 first, fall back to WebGL1 (Chromium + blocklisted GPU needs it)
+        const contextAttempts = [
+          { label: 'WebGL2', contextOptions: { webgl: { failIfMajorPerformanceCaveat: false } } },
+          { label: 'WebGL1', contextOptions: { requestWebgl1: true, webgl: { failIfMajorPerformanceCaveat: false } } },
+        ];
+
+        for (const attempt of contextAttempts) {
+          try {
+            viewer = new Cesium.Viewer(viewerRef.current, {
+              ...baseViewerOptions,
+              contextOptions: attempt.contextOptions,
+            });
+            logMessage(`Cesium initialized (${attempt.label})`, 'success');
+            break;
+          } catch (err) {
+            logMessage(`Cesium ${attempt.label} failed, trying next...`, 'warn');
+            // Clean up any canvases left by the failed attempt
+            if (viewerRef.current) {
+              viewerRef.current.querySelectorAll('canvas').forEach((c: HTMLCanvasElement) => {
+                try {
+                  const gl = (c.getContext('webgl2') || c.getContext('webgl')) as WebGLRenderingContext | null;
+                  gl?.getExtension('WEBGL_lose_context')?.loseContext();
+                } catch (_) { /* ignore */ }
+                c.remove();
+              });
+            }
+            if (attempt.label === 'WebGL1') throw err; // Last attempt — re-throw
+          }
+        }
 
         // Attach offline-aware error handler for base imagery
         const baseLayer = viewer.imageryLayers?.get?.(0);
