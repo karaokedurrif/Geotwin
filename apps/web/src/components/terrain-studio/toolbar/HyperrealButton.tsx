@@ -48,11 +48,13 @@ function captureDepthMap(
 ): Blob | null {
   const size = gl.getSize(new THREE.Vector2());
   
-  // Use a regular color render target (no depth texture to avoid WebGL errors)
+  // Use a regular color render target WITHOUT depth buffer (avoids WebGL conflicts)
   const depthTarget = new THREE.WebGLRenderTarget(size.x, size.y, {
     minFilter: THREE.NearestFilter,
     magFilter: THREE.NearestFilter,
     format: THREE.RGBAFormat,
+    depthBuffer: false,  // ← CRITICAL: Disable depth buffer to avoid conflicts
+    stencilBuffer: false,
   });
 
   const depthMaterial = new THREE.MeshDepthMaterial({
