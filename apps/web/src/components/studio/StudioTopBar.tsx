@@ -13,6 +13,40 @@ import {
 import type { TwinSnapshot, VisualStyle } from '@/lib/twinStore';
 import styles from '@/styles/studio.module.css';
 import IllustrationModal from './IllustrationModal';
+
+/**
+ * Compute parcel area in hectares from GeoJSON using the Shoelace formula.
+ * Falls back to stored area_ha if GeoJSON is unavailable.
+ */
+function computeAreaFromGeoJSON(geojson: any): number | null {
+  try {
+    const geometry = geojson?.geometry ?? geojson?.features?.[0]?.geometry;
+    if (!geometry) return null;
+    const rings =
+      geometry.type === 'Polygon'
+        ? geometry.coordinates
+        : geometry.type === 'MultiPolygon'
+        ? geometry.coordinates[0]
+        : null;
+    if (!rings?.[0]) return null;
+    const ring: [number, number][] = rings[0];
+    // Shoelace over lon/lat — convert to meters using mean latitude
+    const n = ring.length;
+    if (n < 3) return null;
+    const avgLat = ring.reduce((s, c) => s + c[1], 0) / n;
+    const mPerDegLon = 111319.9 * Math.cos((avgLat * Math.PI) / 180);
+    const mPerDegLat = 111319.9;
+    let area = 0;
+    for (let i = 0, j = n - 1; i < n; j = i++) {
+      area +=
+        ring[j][0] * mPerDegLon * ring[i][1] * mPerDegLat -
+        ring[i][0] * mPerDegLon * ring[j][1] * mPerDegLat;
+    }
+    return Math.abs(area / 2) / 10000; // m² → ha
+  } catch {
+    return null;
+  }
+}
 import { captureHQIllustration, downloadBlob } from '@/services/hq_capture';
 
 interface StudioTopBarProps {
@@ -183,7 +217,7 @@ export default function StudioTopBar({
       {/* Center: area + coordinates pill */}
       <div className={styles.parcelPill}>
         <span className={styles.pillArea}>
-          {snapshot.parcel.area_ha.toFixed(1)} ha
+          {(computeAreaFromGeoJSON(snapshot.parcel.geojson) ?? snapshot.parcel.area_ha).toFixed(1)} ha
         </span>
         <span className={styles.pillSep}>·</span>
         <span className={styles.pillCoord}>

@@ -1,0 +1,211 @@
+#!/usr/bin/env python3
+"""
+generate_standalone_glb.py — Genera un GLB texturizado de una parcela catastral
+sin depender del pipeline de GeoTwin.
+
+Uso:
+    cd ~/Documentos/Geotwin
+    source .venv/bin/activate
+    python scripts/generate_standalone_glb.py 0100602VL1300S palacio_gallinero.glb
+
+Requiere:
+    pip install httpx lxml trimesh pillow scipy numpy
+"""
+import asyncio
+import sys
+import logging
+from pathlib import Path
+
+import numpy as np
+
+logging.basicConfig(level=logging.INFO, format="%(message)s")
+log = logging.getLogger(__name__)
+
+
+async def generate_parcel_glb(refcat: str, output_path: str) -> None:
+    """Pipeline mínimo: refcat → WFS Catastro → DEM IGN → PNOA → mesh → GLB."""
+    import httpx
+    from lxml import etree
+    import trimesh
+    from trimesh.visual.material import PBRMaterial
+    from trimesh.visual import TextureVisuals
+    from PIL import Image
+    from io import BytesIO
+    from scipy.interpolate import RegularGridInterpolator
+    from scipy.spatial import Delaunay
+
+    # ── 1. Descargar parcela del WFS Catastro ────────────────────────────
+    log.info(f"[1/6] Descargando parcela {refcat} del WFS Catastro...")
+    wfs_url = (
+        "http://ovc.catastro.meh.es/INSPIRE/wfsCP.aspx"
+        "?service=wfs&version=2&request=getfeature"
+        f"&STOREDQUERIE_ID=GetParcel&REFCAT={refcat}&srsname=EPSG::4326"
+    )
+    async with httpx.AsyncClient(timeout=30) as c:
+        r = await c.get(wfs_url)
+    r.raise_for_status()
+
+    ns = {"gml": "http://www.opengis.net/gml/3.2"}
+    root = etree.fromstring(r.content)
+    pos_list = root.find(".//gml:posList", ns)
+    if pos_list is not None and pos_list.text:
+        coords_text = pos_list.text.strip()
+    else:
+        coords_text = " ".join(p.text.strip() for p in root.findall(".//gml:pos", ns) if p.text)
+
+    if not coords_text:
+        raise ValueError(f"No se encontraron coordenadas para {refcat}")
+
+    values = [float(v) for v in coords_text.split()]
+    # WFS Catastro devuelve lat,lon — convertir a lon,lat
+    coords = [(values[i + 1], values[i]) for i in range(0, len(values) - 1, 2)]
+    lons = [c[0] for c in coords]
+    lats = [c[1] for c in coords]
+    log.info(f"  → {len(coords)} vértices, centroid ≈ ({np.mean(lons):.6f}, {np.mean(lats):.6f})")
+
+    # Bbox con buffer de 10 m mínimo (≥20 % para parcelas pequeñas)
+    width_deg = max(lons) - min(lons)
+    height_deg = max(lats) - min(lats)
+    buf_lon = max(width_deg * 0.20, 10 / 111000)
+    buf_lat = max(height_deg * 0.20, 10 / 111000)
+    bbox = (
+        min(lons) - buf_lon,
+        min(lats) - buf_lat,
+        max(lons) + buf_lon,
+        max(lats) + buf_lat,
+    )
+
+    # ── 2. DEM (MDT02 IGN 2 m/px) ─────────────────────────────────────
+    log.info("[2/6] Descargando DEM (MDT02 IGN WCS)...")
+    wcs_url = "https://servicios.idee.es/wcs-inspire/mdt"
+    wcs_params = {
+        "SERVICE": "WCS",
+        "VERSION": "2.0.1",
+        "REQUEST": "GetCoverage",
+        "COVERAGEID": "Elevacion4258_2",  # MDT02 2m
+        "FORMAT": "image/tiff",
+        "SUBSET": [f"Lat({bbox[1]},{bbox[3]})", f"Long({bbox[0]},{bbox[2]})"],
+    }
+    async with httpx.AsyncClient(timeout=60) as c:
+        r = await c.get(wcs_url, params=wcs_params)
+
+    dem: np.ndarray
+    if r.status_code == 200 and len(r.content) > 5000:
+        dem_img = Image.open(BytesIO(r.content))
+        dem = np.array(dem_img, dtype=float)
+        dem[dem < -1000] = np.nan
+        dem = np.nan_to_num(dem, nan=np.nanmean(dem[~np.isnan(dem)]))
+        log.info(f"  → DEM {dem.shape}, elev [{dem.min():.0f}, {dem.max():.0f}] m")
+    else:
+        log.warning("  ⚠ DEM no disponible — usando terreno plano")
+        dem = np.zeros((20, 20))
+
+    # ── 3. Ortofoto PNOA (25 cm/px) ──────────────────────────────────
+    log.info("[3/6] Descargando ortofoto PNOA...")
+    centroid_lat = np.mean(lats)
+    width_m = (bbox[2] - bbox[0]) * 111000 * np.cos(np.radians(centroid_lat))
+    height_m = (bbox[3] - bbox[1]) * 111000
+    px_w = min(int(width_m / 0.25), 8192)
+    px_h = min(int(height_m / 0.25), 8192)
+    px_w = max(px_w, 256)
+    px_h = max(px_h, 256)
+
+    wms_params = {
+        "SERVICE": "WMS",
+        "VERSION": "1.3.0",
+        "REQUEST": "GetMap",
+        "LAYERS": "OI.OrthoimageCoverage",
+        "STYLES": "",
+        "CRS": "CRS:84",
+        "BBOX": f"{bbox[0]},{bbox[1]},{bbox[2]},{bbox[3]}",
+        "WIDTH": str(px_w),
+        "HEIGHT": str(px_h),
+        "FORMAT": "image/png",  # PNG lossless para máxima calidad
+    }
+    async with httpx.AsyncClient(timeout=60, follow_redirects=True) as c:
+        r = await c.get("https://www.ign.es/wms-inspire/pnoa-ma", params=wms_params)
+
+    if r.status_code == 200:
+        ortho = Image.open(BytesIO(r.content)).convert("RGB")
+        log.info(f"  → Ortofoto {ortho.size}")
+    else:
+        log.warning(f"  ⚠ PNOA falló ({r.status_code}) — usando color sólido")
+        ortho = Image.new("RGB", (512, 512), color=(120, 160, 80))
+
+    # ── 4. Malla 3D ──────────────────────────────────────────────────
+    log.info("[4/6] Generando malla 3D...")
+    centroid_lon = np.mean(lons)
+    cos_lat = np.cos(np.radians(centroid_lat))
+
+    def to_local(lon: float, lat: float) -> tuple[float, float]:
+        return (lon - centroid_lon) * 111000 * cos_lat, (lat - centroid_lat) * 111000
+
+    # Densidad de puntos: 1 m para parcelas pequeñas (<5 000 m²)
+    area_m2 = width_m * height_m
+    step = 0.5 if area_m2 < 5000 else 1.0
+    n_x = max(int(width_m / step), 20)
+    n_y = max(int(height_m / step), 20)
+
+    grid_lons = np.linspace(bbox[0], bbox[2], n_x)
+    grid_lats = np.linspace(bbox[1], bbox[3], n_y)
+
+    # Interpolar DEM al grid
+    dem_lats = np.linspace(bbox[3], bbox[1], dem.shape[0])
+    dem_lons = np.linspace(bbox[0], bbox[2], dem.shape[1])
+    interp = RegularGridInterpolator(
+        (dem_lats[::-1], dem_lons), dem[::-1], method="linear", bounds_error=False, fill_value=None
+    )
+
+    pts = np.array(
+        [[lon, lat] for lat in grid_lats for lon in grid_lons]
+    )
+    elevs = interp(pts[:, ::-1])  # (lat, lon) order for interpolator
+
+    vertices = np.column_stack([
+        (pts[:, 0] - centroid_lon) * 111000 * cos_lat,
+        (pts[:, 1] - centroid_lat) * 111000,
+        elevs,
+    ])
+    vertices[:, 2] -= vertices[:, 2].min()  # center Z at 0
+
+    tri = Delaunay(vertices[:, :2])
+    faces = tri.simplices
+    log.info(f"  → {len(vertices)} vértices, {len(faces)} triángulos")
+
+    if len(vertices) < 2000:
+        log.warning(f"  ⚠ Menos de 2000 vértices ({len(vertices)}) — considera bajar step")
+
+    # ── 5. UVs y textura ─────────────────────────────────────────────
+    log.info("[5/6] Calculando UVs...")
+    x_min, y_min = vertices[:, 0].min(), vertices[:, 1].min()
+    x_max, y_max = vertices[:, 0].max(), vertices[:, 1].max()
+    u = (vertices[:, 0] - x_min) / max(x_max - x_min, 1e-6)
+    v = 1.0 - (vertices[:, 1] - y_min) / max(y_max - y_min, 1e-6)
+    uv = np.column_stack([u, v]).astype(np.float32)
+
+    assert uv[:, 0].min() >= 0.0 and uv[:, 0].max() <= 1.0, "UV u out of [0,1]"
+    assert uv[:, 1].min() >= 0.0 and uv[:, 1].max() <= 1.0, "UV v out of [0,1]"
+
+    material = PBRMaterial(
+        baseColorTexture=ortho,
+        metallicFactor=0.0,
+        roughnessFactor=0.85,
+    )
+    visual = TextureVisuals(uv=uv, material=material)
+    mesh = trimesh.Trimesh(vertices=vertices, faces=faces, visual=visual)
+
+    # ── 6. Exportar GLB ──────────────────────────────────────────────
+    log.info("[6/6] Exportando GLB...")
+    glb_bytes = mesh.export(file_type="glb")
+    Path(output_path).write_bytes(glb_bytes)
+
+    area_ha = area_m2 / 10000
+    log.info(f"  → {output_path} ({len(glb_bytes) / 1024 / 1024:.1f} MB)")
+    log.info(f"  → Área ~{area_ha:.2f} ha, UV ok, {len(vertices)} vértices")
+    log.info("✅ GLB generado con éxito.")
+
+
+if __name__ == "__main__":
+    refcat = sys.argv[1] if len(sys.argv) > 1 else "0100602VL1300S"
+    output = sys.argv[2] if len(sys.argv) > 2 else f"geotwin_{refcat}.glb"
+    asyncio.run(generate_parcel_glb(refcat, output))

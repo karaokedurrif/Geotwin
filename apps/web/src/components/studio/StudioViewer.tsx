@@ -726,6 +726,7 @@ export default function StudioViewer({
   const containerRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<any>(null);
   const [cesiumLoaded, setCesiumLoaded] = useState(false);
+  const [viewerReady, setViewerReady] = useState(false);
   const [showControlsHint, setShowControlsHint] = useState(false);
   const [helicopterMode, setHelicopterMode] = useState(false);
   const [shaderCrash, setShaderCrash] = useState(false);
@@ -1024,6 +1025,8 @@ export default function StudioViewer({
         if (viewer.isDestroyed()) return;
         await flyToParcelWithTerrain(viewer, snapshot);
         if (viewer.isDestroyed()) return;
+
+        setViewerReady(true);
 
         // Load terrain 3D Tileset if available (non-blocking)
         loadTerrainTileset(viewer, snapshot.twinId).catch(() => {});
@@ -1520,6 +1523,40 @@ export default function StudioViewer({
           left: 0,
         }}
       />
+
+      {/* Loading overlay — shown until parcel + terrain are fully loaded */}
+      {!viewerReady && (
+        <div
+          style={{
+            position: 'absolute',
+            inset: 0,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            background: '#0a0a14',
+            zIndex: 80,
+            flexDirection: 'column',
+            gap: 16,
+            fontFamily: 'system-ui, sans-serif',
+            color: '#9ca3af',
+          }}
+        >
+          <svg
+            width="36"
+            height="36"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="#10B981"
+            strokeWidth="2"
+            strokeLinecap="round"
+            style={{ animation: 'spin 1s linear infinite' }}
+          >
+            <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+          </svg>
+          <span style={{ fontSize: 14 }}>Cargando gemelo digital...</span>
+          <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
+        </div>
+      )}
 
       {/* Shader crash banner */}
       {shaderCrash && (

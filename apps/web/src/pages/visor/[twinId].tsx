@@ -630,7 +630,8 @@ export default function VisorPage() {
                   dampingFactor={0.08}
                   minDistance={0.3}
                   maxDistance={20}
-                  maxPolarAngle={Math.PI / 1.8}
+                  minPolarAngle={0}
+                  maxPolarAngle={Math.PI}
                 />
               </Canvas>
             )}
