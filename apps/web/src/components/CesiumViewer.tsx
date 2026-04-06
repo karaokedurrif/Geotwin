@@ -404,7 +404,7 @@ export default function CesiumViewer({
         logMessage('Initializing Cesium viewer...', 'info');
         
         // Start with basic OSM imagery (always works, no waiting)
-        viewer = new Cesium.Viewer(viewerRef.current, {
+        const viewerOptions = {
           imageryProvider: new Cesium.OpenStreetMapImageryProvider({
             url: 'https://tile.openstreetmap.org/',
           }),
@@ -420,7 +420,19 @@ export default function CesiumViewer({
           vrButton: false,
           infoBox: false,
           selectionIndicator: false,
-        });
+          showRenderLoopErrors: false, // Suppress native Cesium error dialog
+        };
+
+        try {
+          viewer = new Cesium.Viewer(viewerRef.current, viewerOptions);
+        } catch (webgl2Err) {
+          // WebGL2 failed — retry with WebGL1 fallback
+          logMessage('WebGL2 init failed, retrying with WebGL1...', 'warn');
+          viewer = new Cesium.Viewer(viewerRef.current, {
+            ...viewerOptions,
+            contextOptions: { requestWebgl1: true },
+          });
+        }
 
         // Attach offline-aware error handler for base imagery
         const baseLayer = viewer.imageryLayers?.get?.(0);
