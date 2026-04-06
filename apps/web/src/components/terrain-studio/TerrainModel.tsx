@@ -180,11 +180,19 @@ export default function TerrainModel({ url }: TerrainModelProps) {
     box.getSize(size);
     // Y-up GLB: X=east, Y=elevation, -Z=north (glTF standard)
     const hzMax = Math.max(size.x, size.z) || 1;
-    const scale = 2 / hzMax;
-    scene.scale.set(scale, scale, scale);
+    const yRange = size.y || 0.001;
+    const flatRatio = hzMax / yRange;
+    const baseScale = 2 / hzMax;
+    scene.scale.set(baseScale, baseScale, baseScale);
 
-    // Y-exaggeration disabled — terrain is flattened in the pipeline.
-    // Any exaggeration would amplify floating-point noise on the flat plane.
+    // Y-exaggeration for flat terrain (matches visor/[twinId].tsx logic)
+    if (flatRatio > 30) {
+      // Ultra-flat: no exag — avoids mesh explosion on gardens/parking lots
+    } else if (flatRatio > 15) {
+      scene.scale.y = baseScale * Math.min(flatRatio / 20, 2.5);
+    } else if (flatRatio > 10) {
+      scene.scale.y = baseScale * Math.min(flatRatio / 8, 5.0);
+    }
 
     // Recalculate after scaling
     const finalBox = new THREE.Box3().setFromObject(scene);

@@ -3,6 +3,7 @@ import { useRef } from 'react';
 import { useStudioStore } from '../store';
 import ViewModeToggle from './ViewModeToggle';
 import ExportMenu from './ExportMenu';
+import HyperrealButton from './HyperrealButton';
 
 interface StudioToolbarProps {
   twinId: string;
@@ -112,18 +113,7 @@ export default function StudioToolbar({ twinId, glbUrl, onClose }: StudioToolbar
       <div style={{ flex: 1 }} />
 
       {/* Right: Hyperreal + Export + Close */}
-      <button
-        style={{
-          ...toolBtn,
-          background: 'rgba(139,92,246,0.08)',
-          color: '#a78bfa',
-          borderColor: 'rgba(139,92,246,0.3)',
-        }}
-        onClick={() => alert('Render hiperrealista: próximamente. Requiere servicio ComfyUI.')}
-        title="Render hiperrealista (próximamente)"
-      >
-        ✨ Hiperrealista
-      </button>
+      <HyperrealButton twinId={twinId} />
       <ExportMenu twinId={twinId} glbUrl={glbUrl} />
       <button
         onClick={onClose}

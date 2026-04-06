@@ -168,8 +168,6 @@ export default function CesiumViewer({
     }
   }, [terrainExaggeration]);
   
-  const [webglError, setWebglError] = useState<string | null>(null);
-
   const [viewerStatus, setViewerStatus] = useState<ViewerStatus>({
     terrainType: 'idle',
     imageryType: 'idle',
@@ -404,46 +402,9 @@ export default function CesiumViewer({
 
         // === STEP 1: CREATE VIEWER IMMEDIATELY (NO WAITING) ===
         logMessage('Initializing Cesium viewer...', 'info');
-
-        // Remove stale canvas elements from a previous failed Cesium init.
-        // NOTE: do NOT call getContext() here — requesting a context with different
-        // attributes than the one Cesium used originally returns null on Linux/Mesa
-        // and doesn't release the slot. Just remove from DOM; GC handles the rest.
-        function dropCanvases(container: HTMLElement) {
-          container.querySelectorAll('canvas').forEach((c: HTMLCanvasElement) => {
-            try {
-              // Only call loseContext if we can get the SAME type of context
-              // the canvas already has (alpha default = true in browser default).
-              const gl = (c.getContext('webgl2') || c.getContext('webgl')) as WebGLRenderingContext | null;
-              gl?.getExtension('WEBGL_lose_context')?.loseContext();
-            } catch (_) { /* ignore */ }
-            c.remove();
-          });
-        }
-
-        if (viewerRef.current) dropCanvases(viewerRef.current);
-
-        // -- Pre-flight WebGL test on a scratch canvas --
-        // If even a scratch canvas can't get a WebGL context, the issue is the
-        // browser/driver (Chrome GPU blocklist), NOT Cesium. We surface a helpful
-        // error instead of looping through 3 broken attempts.
-        {
-          const probe = document.createElement('canvas');
-          probe.width = 1; probe.height = 1;
-          const probeGl = probe.getContext('webgl2') || probe.getContext('webgl') || probe.getContext('experimental-webgl');
-          if (!probeGl) {
-            probe.remove();
-            throw new Error(
-              'WebGL unavailable in this browser. ' +
-              'Open chrome://flags and enable "Override software rendering list", ' +
-              'or start Chrome with --ignore-gpu-blocklist.'
-            );
-          }
-          (probeGl as WebGLRenderingContext).getExtension('WEBGL_lose_context')?.loseContext();
-          probe.remove();
-        }
-
-        const baseViewerOptions = {
+        
+        // Start with basic OSM imagery (always works, no waiting)
+        viewer = new Cesium.Viewer(viewerRef.current, {
           imageryProvider: new Cesium.OpenStreetMapImageryProvider({
             url: 'https://tile.openstreetmap.org/',
           }),
@@ -459,50 +420,14 @@ export default function CesiumViewer({
           vrButton: false,
           infoBox: false,
           selectionIndicator: false,
-          showRenderLoopErrors: false,
-        };
-
-        // Attempt order — progressively simpler context options.
-        // CRITICAL: do NOT set alpha:false or antialias on Linux/Mesa/NVIDIA —
-        // requesting alpha:false on a canvas whose driver expects alpha:true
-        // causes getContext() to return null silently.
-        const contextAttempts: Array<{ label: string; contextOptions?: object }> = [
-          {
-            // Attempt 1: Cesium defaults (no overrides) — most compatible
-            label: 'default',
-            contextOptions: undefined,
+          showRenderLoopErrors: false, // Suppress native Cesium error dialog
+          contextOptions: {
+            webgl: {
+              failIfMajorPerformanceCaveat: false, // Allow software/degraded GPU renderers
+              powerPreference: 'high-performance',
+            },
           },
-          {
-            // Attempt 2: only the one flag that matters for blocklisted GPUs
-            label: 'failIfMajorPerformanceCaveat:false',
-            contextOptions: { webgl: { failIfMajorPerformanceCaveat: false } },
-          },
-          {
-            // Attempt 3: force WebGL1 with that same flag
-            label: 'WebGL1',
-            contextOptions: { requestWebgl1: true, webgl: { failIfMajorPerformanceCaveat: false } },
-          },
-        ];
-
-        let lastWebglError: unknown;
-        for (const attempt of contextAttempts) {
-          try {
-            const opts = attempt.contextOptions
-              ? { ...baseViewerOptions, contextOptions: attempt.contextOptions }
-              : baseViewerOptions;
-            viewer = new Cesium.Viewer(viewerRef.current, opts);
-            logMessage(`Cesium initialized (${attempt.label})`, 'success');
-            break;
-          } catch (err) {
-            lastWebglError = err;
-            logMessage(`Cesium ${attempt.label} failed, trying next...`, 'warn');
-            if (viewerRef.current) dropCanvases(viewerRef.current);
-          }
-        }
-
-        if (!viewer) {
-          throw lastWebglError ?? new Error('All Cesium init attempts failed');
-        }
+        });
 
         // Attach offline-aware error handler for base imagery
         const baseLayer = viewer.imageryLayers?.get?.(0);
@@ -978,10 +903,9 @@ export default function CesiumViewer({
           onExportReady
         );
       } catch (error) {
-        const errorMsg = error instanceof Error ? error.message : 'Unknown error';
-        logMessage(`Failed to initialize viewer: ${errorMsg}`, 'error');
+        const errorMsg = `Failed to initialize viewer: ${error instanceof Error ? error.message : 'Unknown'}`;
+        logMessage(errorMsg, 'error');
         console.error(error);
-        setWebglError(errorMsg);
       }
     }
 
@@ -1798,40 +1722,6 @@ export default function CesiumViewer({
       }
     };
   }, []);
-
-  if (webglError) {
-    const isBlocklist = webglError.toLowerCase().includes('webgl unavailable') || webglError.toLowerCase().includes('initialization failed');
-    return (
-      <div className="w-full h-full flex items-center justify-center bg-[#0a0a14]" style={{ minHeight: '400px' }}>
-        <div className="max-w-md text-center px-6">
-          <div className="text-4xl mb-4">⚠️</div>
-          <h3 className="text-white font-semibold text-lg mb-2">WebGL no disponible</h3>
-          <p className="text-gray-400 text-sm mb-4">
-            El navegador no puede crear un contexto WebGL. Esto suele ocurrir en Linux
-            cuando Chrome bloquea la aceleración GPU por el driver.
-          </p>
-          {isBlocklist && (
-            <div className="bg-[#1a1a2e] border border-[#2e2e44] rounded-lg p-4 text-left mb-4">
-              <p className="text-emerald-400 text-xs font-mono mb-2">Soluciones:</p>
-              <ol className="text-gray-300 text-xs space-y-1 list-decimal list-inside">
-                <li>Abre <span className="text-emerald-300 font-mono">chrome://flags</span></li>
-                <li>Busca <span className="text-emerald-300 font-mono">Override software rendering list</span></li>
-                <li>Actívalo → Reinicia Chrome</li>
-                <li>O inicia Chrome con <span className="text-emerald-300 font-mono">--ignore-gpu-blocklist</span></li>
-              </ol>
-            </div>
-          )}
-          <p className="text-gray-600 text-xs font-mono">{webglError}</p>
-          <button
-            className="mt-4 px-4 py-2 bg-emerald-600/20 text-emerald-400 border border-emerald-500/30 rounded text-sm hover:bg-emerald-600/30 transition"
-            onClick={() => { setWebglError(null); }}
-          >
-            Reintentar
-          </button>
-        </div>
-      </div>
-    );
-  }
 
   return <div 
     ref={viewerRef} 

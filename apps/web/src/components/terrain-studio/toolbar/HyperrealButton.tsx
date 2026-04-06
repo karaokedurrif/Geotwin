@@ -9,8 +9,7 @@ import { useState } from 'react';
 import * as THREE from 'three';
 import HyperrealResult from './HyperrealResult';
 
-// Always try localhost:8003 — works from any origin if service is running locally
-const HYPERREAL_API = 'http://localhost:8003';
+const HYPERREAL_API = process.env.NEXT_PUBLIC_HYPERREAL_URL || 'http://localhost:8003';
 
 const STYLE_OPTIONS = [
   { value: 'extensivo', label: 'Dehesa' },
