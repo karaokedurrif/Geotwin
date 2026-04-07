@@ -247,6 +247,7 @@ export default function Home() {
                 twinId={recipe.twinId}
                 centroid={recipe.centroid}
                 radiusMeters={viewerStatus?.parcelStatus?.radiusMeters}
+                areaHa={recipe.area_ha}
                 wasReprojected={viewerStatus?.parcelStatus?.wasReprojected}
                 sourceEPSG={viewerStatus?.parcelStatus?.sourceEPSG}
               />

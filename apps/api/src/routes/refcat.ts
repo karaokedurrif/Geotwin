@@ -123,7 +123,7 @@ export async function refcatRouter(fastify: FastifyInstance) {
 
       const job = await resp.json();
       return reply.send(job);
-    } catch (_err) {
+    } catch {
       return reply.code(502).send({ error: 'Engine service unavailable' });
     }
   });
@@ -149,7 +149,7 @@ export async function refcatRouter(fastify: FastifyInstance) {
 
       const result = await resp.json();
       return reply.code(202).send(result);
-    } catch (_err) {
+    } catch {
       return reply.code(502).send({ error: 'Engine service unavailable' });
     }
   });
@@ -168,7 +168,7 @@ export async function refcatRouter(fastify: FastifyInstance) {
         return reply.code(resp.status).send({ error: 'Job not found' });
       }
       return reply.send(await resp.json());
-    } catch (_err) {
+    } catch {
       return reply.code(502).send({ error: 'Engine service unavailable' });
     }
   });

@@ -83,12 +83,13 @@ export default function TwinPage() {
   const [layerState, setLayerState] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
-  const [viewerRef, setViewerRef] = useState<any>(null);
+  const [, setViewerRef] = useState<any>(null);
   const [tilesAvailable, setTilesAvailable] = useState<boolean | null>(null); // null = checking
 
   // Sync tab with URL query param
   useEffect(() => {
     if (tabQuery && tabQuery !== tab) setTab(tabQuery as Tab);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tabQuery]);
 
   const changeTab = (t: Tab) => {

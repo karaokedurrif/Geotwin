@@ -7,6 +7,7 @@ interface ParcelBadgeProps {
   twinId?: string;
   centroid?: [number, number];
   radiusMeters?: number;
+  areaHa?: number;
   wasReprojected?: boolean;
   sourceEPSG?: string;
 }
@@ -15,6 +16,7 @@ export default function ParcelBadge({
   twinId,
   centroid,
   radiusMeters,
+  areaHa,
   wasReprojected,
   sourceEPSG,
 }: ParcelBadgeProps) {
@@ -23,10 +25,8 @@ export default function ParcelBadge({
     return null;
   }
 
-  // Calculate area from radius (approximation)
-  const areaHectares = radiusMeters 
-    ? (Math.PI * Math.pow(radiusMeters, 2) / 10000).toFixed(1)
-    : null;
+  // Use real area from engine/recipe (UTM-projected), NOT π*r² approximation
+  const areaHectares = areaHa ? areaHa.toFixed(1) : null;
 
   return (
     <div style={{

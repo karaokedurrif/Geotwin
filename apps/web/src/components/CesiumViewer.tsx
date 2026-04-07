@@ -5,8 +5,8 @@ import type { TwinRecipe, LayerType } from '@geotwin/types';
 import { withTimeout, TimeoutError, checkAPIHealth } from '@/utils/withTimeout';
 import { waitForViewerReady, waitForSceneReady, ViewerNotReadyError } from '@/utils/cesiumUtils';
 import { reprojectKmlString, parseGmlBuildings } from '@/lib/geo/reprojectKml';
-import { exportParcelGeoJSON, exportParcelMetadata, downloadTextFile } from '@/lib/exportUtils';
-import { twinStore, generateTwinId, createSnapshotFromRecipe } from '@/lib/twinStore';
+import { exportParcelGeoJSON, downloadTextFile } from '@/lib/exportUtils';
+import { twinStore, generateTwinId } from '@/lib/twinStore';
 import type { TwinSnapshot } from '@/lib/twinStore';
 
 interface CesiumViewerProps {
@@ -138,7 +138,6 @@ export default function CesiumViewer({
   const parcelBoundingSphereRef = useRef<any>(null);
   const parcelPositionsRef = useRef<any[]>([]); // Store parcel polygon positions for plinth
   const logThrottleRef = useRef<Record<string, number>>({});
-  const mapParcelContainerRef = useRef<any>(null);
   const tileErrorCountRef = useRef(0); // Track consecutive tile load errors
   const lastErrorResetRef = useRef(Date.now()); // Reset error count after 30s without errors
   const plinthEntityRef = useRef<any>(null); // Ground plinth rectangle entity
@@ -167,6 +166,7 @@ export default function CesiumViewer({
       viewer.scene.verticalExaggerationRelativeHeight = 0;
       logMessage(`Terrain exaggeration: ${terrainExaggeration.toFixed(2)}×`, 'info');
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [terrainExaggeration]);
   
   const [viewerStatus, setViewerStatus] = useState<ViewerStatus>({
@@ -338,6 +338,7 @@ export default function CesiumViewer({
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Update status and notify parent
@@ -363,6 +364,7 @@ export default function CesiumViewer({
     }
     
     checkHealth();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewerStatus.apiBaseUrl]);
 
   // Initialize Cesium viewer (NON-BLOCKING, ONCE)
@@ -400,6 +402,20 @@ export default function CesiumViewer({
         } else {
           logMessage('No Cesium Ion token found - using free providers', 'warn');
         }
+
+        // === STEP 0: PRE-CHECK WebGL ===
+        // Test WebGL on a scratch canvas BEFORE Cesium.Viewer.
+        // This avoids Cesium's ugly pink error dialog when WebGL is unavailable.
+        const testCanvas = document.createElement('canvas');
+        const testGl = testCanvas.getContext('webgl2') || testCanvas.getContext('webgl');
+        if (!testGl) {
+          logMessage('WebGL context creation failed — GPU may be blocked', 'error');
+          setWebglError('WebGL no disponible. Activa aceleración por hardware en tu navegador.');
+          return;
+        }
+        // Release the test context immediately
+        const loseExt = testGl.getExtension('WEBGL_lose_context');
+        if (loseExt) loseExt.loseContext();
 
         // === STEP 1: CREATE VIEWER IMMEDIATELY (NO WAITING) ===
         logMessage('Initializing Cesium viewer...', 'info');
@@ -990,7 +1006,7 @@ export default function CesiumViewer({
         
         pnoaProv.errorEvent.addEventListener(() => {});
         logMessage('✓ PNOA imagery added (proxy, neutral settings)', 'success');
-      } catch (pnoaError) {
+      } catch {
         logMessage('PNOA imagery failed (optional)', 'warn');
       }
       
@@ -1089,7 +1105,7 @@ export default function CesiumViewer({
               }));
               logMessage('✓ World Terrain loaded (fallback)', 'success');
             }
-          } catch (fallbackError) {
+          } catch {
             // Ultimate fallback to ellipsoid
             if (viewer && !viewer.isDestroyed()) {
               viewer.terrainProvider = new Cesium.EllipsoidTerrainProvider();
@@ -1178,6 +1194,9 @@ export default function CesiumViewer({
 
     initializeViewer();
 
+    // Capture ref value for cleanup (React warns about stale .current in cleanup)
+    const dataSources = dataSourcesRef.current;
+
     // Cleanup: invalidate session and destroy viewer
     return () => {
       // Invalidate this session to cancel pending async operations
@@ -1193,8 +1212,9 @@ export default function CesiumViewer({
       }
       
       // Clear data sources ref
-      dataSourcesRef.current.clear();
+      dataSources.clear();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // Empty deps - initialize ONCE only
 
   // Update layers based on enabled state
@@ -1289,7 +1309,8 @@ export default function CesiumViewer({
         console.warn('[Plinth] Failed to create entity:', error);
       }
     }
-  }, [enabledLayers, parcelPositionsRef.current]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabledLayers]);
 
   // Update terrain based on toggle and source selection (WITH TIMEOUT)
   useEffect(() => {
@@ -1475,6 +1496,7 @@ export default function CesiumViewer({
     }
 
     updateTerrain();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [terrainEnabled, terrainSource]);
 
   // Load real NDVI imagery layer with TIMEOUT and DEBUG
@@ -1699,6 +1721,7 @@ export default function CesiumViewer({
         ndviStatus: { status: 'idle' }
       }));
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [realNDVIEnabled, recipe, enabledLayers, viewerStatus.apiBaseUrl, viewerStatus.apiStatus.healthy]);
 
   // Handle parcel layer visibility toggle
@@ -1713,6 +1736,7 @@ export default function CesiumViewer({
     } else {
       logMessage('Parcel layer hidden', 'info');
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabledLayers]);
 
   // Cleanup click handler when component unmounts
@@ -1726,6 +1750,7 @@ export default function CesiumViewer({
         logMessage('✓ Click handler cleaned up', 'info');
       }
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (
@@ -1985,7 +2010,8 @@ function getEntityPositions(entity: any, Cesium: any, time: any): any[] {
   return [];
 }
 
-function createOutlinePolyline(dataSource: any, Cesium: any, positions: any[]): void {
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function createOutlinePolyline(_dataSource: any, _Cesium: any, _positions: any[]): void {
   // Removed: outline polyline now created in styleParcelEntities with gold color
   // This function kept for compatibility but does nothing
 }
@@ -2610,7 +2636,7 @@ async function loadGeometry(
         } else {
           logMessage('Tiles not yet generated — base WMTS active', 'info');
         }
-      } catch (orthoError) {
+      } catch {
         // Silent — base WMTS remains active
       }
     }
@@ -2657,7 +2683,7 @@ async function loadGeometry(
     try {
       await waitForSceneReady(viewer, { timeout: 6000, minFrames: 4, stableFrames: 2 });
       logMessage('Scene ready, flying to parcel...', 'success');
-    } catch (error) {
+    } catch {
       logMessage('Scene wait timeout, proceeding with fly...', 'warn');
     }
 
