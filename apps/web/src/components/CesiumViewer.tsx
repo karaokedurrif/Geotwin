@@ -378,7 +378,6 @@ export default function CesiumViewer({
 
     const Cesium = window.Cesium;
     let viewer: any = null;
-    let retried = false;
 
     async function initializeViewer() {
       if (!viewerRef.current || currentSessionRef.current !== thisSession) return;
@@ -907,14 +906,6 @@ export default function CesiumViewer({
         const errorMsg = `Failed to initialize viewer: ${error instanceof Error ? error.message : 'Unknown'}`;
         logMessage(errorMsg, 'error');
         console.error(error);
-
-        // Retry once after 1.5s — GPU process may recover after first crash
-        if (!retried) {
-          retried = true;
-          logMessage('Retrying Cesium init in 1.5s...', 'warn');
-          setTimeout(() => initializeViewer(), 1500);
-          return;
-        }
 
         // Show visible error overlay when WebGL fails
         if (errorMsg.includes('WebGL') || errorMsg.includes('initialization failed')) {
