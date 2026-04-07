@@ -414,8 +414,10 @@ def _mesh_to_glb(mesh: TerrainMesh, texture_path: Path | None = None, *, local_c
             logger.warning("UVs have wrong shape %s, rebuilding as (N,2)", uv.shape)
             uv = uv.reshape(-1, 2)
         uv = np.clip(uv, 0.0, 1.0).astype(np.float32)
-        # Flip V: nuestros UVs tienen v=0 en min_lat (abajo), glTF espera top-left
-        uv[:, 1] = 1.0 - uv[:, 1]
+        # NOTE: trimesh internally flips V during GLB export (v_out = 1 - v_in)
+        # to convert from OpenGL convention (V=0 bottom) to glTF convention (V=0 top).
+        # Our UVs already have v=0 at min_lat (south/bottom) = OpenGL convention,
+        # so we must NOT flip here — trimesh handles it.
 
         material = trimesh.visual.material.PBRMaterial(
             baseColorTexture=image,

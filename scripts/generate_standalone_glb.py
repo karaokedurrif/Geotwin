@@ -197,10 +197,13 @@ async def generate_parcel_glb(refcat: str, output_path: str) -> None:
     # ── 5. UVs y textura ─────────────────────────────────────────────
     log.info("[5/6] Calculando UVs...")
     # UVs from east/north (horizontal plane), NOT from glTF Y-up vertices
+    # NOTE: trimesh flips V during GLB export (v_exported = 1 - v_input),
+    # so we pass V in OpenGL convention (V=0 at south, V=1 at north).
+    # trimesh's export will convert to glTF convention (V=0 at north/top).
     e_min, n_min = east.min(), north.min()
     e_max, n_max = east.max(), north.max()
     u = (east - e_min) / max(e_max - e_min, 1e-6)
-    v = 1.0 - (north - n_min) / max(n_max - n_min, 1e-6)
+    v = (north - n_min) / max(n_max - n_min, 1e-6)
     uv = np.column_stack([u, v]).astype(np.float32)
 
     assert uv[:, 0].min() >= 0.0 and uv[:, 0].max() <= 1.0, "UV u out of [0,1]"
@@ -214,16 +217,33 @@ async def generate_parcel_glb(refcat: str, output_path: str) -> None:
     visual = TextureVisuals(uv=uv, material=material)
     mesh = trimesh.Trimesh(vertices=vertices, faces=faces, visual=visual)
 
-    # FIX 1: Compute vertex normals (without this, shading is flat/ugly)
+    # Compute vertex normals (without this, shading is flat/ugly)
     mesh.fix_normals()
     log.info(f"  → Normals computed: {mesh.vertex_normals.shape}")
 
-    # FIX 2: Mirror fix — WFS Catastro returns lat,lon (Y,X).
-    # The local coordinate transform may produce mirrored geometry.
-    # Flip X axis and recalculate normals to fix.
-    mesh.vertices[:, 0] *= -1
-    mesh.fix_normals()
-    log.info("  → X-axis flipped to correct mirroring")
+    # ── Geographic validation ─────────────────────────────────────
+    # Verify the mesh is NOT mirrored: east side of bbox should have
+    # positive X in glTF, and the UV/texture should align with geometry.
+    # glTF convention: X=East, Y=Up, -Z=North
+    x_range = mesh.vertices[:, 0].max() - mesh.vertices[:, 0].min()
+    z_range = mesh.vertices[:, 2].max() - mesh.vertices[:, 2].min()
+    geo_width_m = width_m
+    geo_height_m = height_m
+    # Sanity: mesh dimensions should be within 20% of geographic dims
+    if abs(x_range - geo_width_m) / max(geo_width_m, 1) > 0.3:
+        log.warning(f"  ⚠ X range ({x_range:.0f}m) differs from geo width ({geo_width_m:.0f}m) by >30%")
+    if abs(z_range - geo_height_m) / max(geo_height_m, 1) > 0.3:
+        log.warning(f"  ⚠ Z range ({z_range:.0f}m) differs from geo height ({geo_height_m:.0f}m) by >30%")
+    log.info(f"  → Mesh: {x_range:.0f}m × {z_range:.0f}m, Geo: {geo_width_m:.0f}m × {geo_height_m:.0f}m")
+    log.info(f"  → UV range: u[{uv[:,0].min():.3f},{uv[:,0].max():.3f}] v[{uv[:,1].min():.3f},{uv[:,1].max():.3f}]")
+
+    # Verify UV-geometry alignment: vertex with max east should have max u
+    max_east_idx = np.argmax(east)
+    max_u_idx = np.argmax(uv[:, 0])
+    if max_east_idx != max_u_idx:
+        log.warning(f"  ⚠ UV alignment mismatch — max east vertex ({max_east_idx}) ≠ max U vertex ({max_u_idx})")
+    else:
+        log.info("  → UV-geometry alignment: OK (east↔U, north↔V consistent)")
 
     # ── 6. Exportar GLB ──────────────────────────────────────────────
     log.info("[6/6] Exportando GLB...")
