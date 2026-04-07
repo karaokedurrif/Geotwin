@@ -185,9 +185,13 @@ export default function TerrainModel({ url }: TerrainModelProps) {
     const baseScale = 2 / hzMax;
     scene.scale.set(baseScale, baseScale, baseScale);
 
-    // Y-exaggeration for flat terrain (matches visor/[twinId].tsx logic)
-    if (flatRatio > 30) {
-      // Ultra-flat: no exag — avoids mesh explosion on gardens/parking lots
+    // Y-exaggeration: ensure terrain always has visible height in viewport
+    const apparentY = yRange * baseScale;
+    const minVisibleY = 0.12; // minimum Y extent in normalized space (~6% of 2-unit width)
+    if (apparentY < minVisibleY && yRange > 0.001) {
+      // Ultra-flat or very large parcels: force minimum visible height
+      const yExag = Math.min(minVisibleY / apparentY, 10);
+      scene.scale.y = baseScale * yExag;
     } else if (flatRatio > 15) {
       scene.scale.y = baseScale * Math.min(flatRatio / 20, 2.5);
     } else if (flatRatio > 10) {

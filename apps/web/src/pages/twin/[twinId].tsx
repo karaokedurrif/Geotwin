@@ -84,6 +84,7 @@ export default function TwinPage() {
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
   const [viewerRef, setViewerRef] = useState<any>(null);
+  const [tilesAvailable, setTilesAvailable] = useState<boolean | null>(null); // null = checking
 
   // Sync tab with URL query param
   useEffect(() => {
@@ -94,6 +95,16 @@ export default function TwinPage() {
     setTab(t);
     router.replace(`/twin/${tid}?tab=${t}`, undefined, { shallow: true });
   };
+
+  // Check if 3D tiles (GLB) exist when switching to 3D tab
+  useEffect(() => {
+    if (!tid || tab !== '3d') return;
+    setTilesAvailable(null);
+    const glbUrl = `${API_BASE}/api/tiles/${encodeURIComponent(tid)}/${encodeURIComponent(tid)}.glb`;
+    fetch(glbUrl, { method: 'HEAD' })
+      .then(r => setTilesAvailable(r.ok))
+      .catch(() => setTilesAvailable(false));
+  }, [tid, tab]);
 
   useEffect(() => {
     if (!tid) return;
@@ -230,7 +241,18 @@ export default function TwinPage() {
               onViewerReady={setViewerRef}
             />
           )}
-          {tab === '3d' && (
+          {tab === '3d' && tilesAvailable === null && (
+            <LoadingOverlay />
+          )}
+          {tab === '3d' && tilesAvailable === false && (
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flex: 1, gap: 12, color: '#9ca3af', fontSize: 14, fontFamily: 'system-ui, sans-serif' }}>
+              <span>El modelo 3D aún no ha sido generado.</span>
+              <a href={`/studio/${tid}`} style={{ color: '#10B981', textDecoration: 'underline', cursor: 'pointer' }}>
+                Abrir en Studio para generar el mallado 3D →
+              </a>
+            </div>
+          )}
+          {tab === '3d' && tilesAvailable === true && (
             <TerrainStudio
               twinId={tid}
               areaHa={snapshot.parcel.area_ha}

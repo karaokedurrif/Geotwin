@@ -49,9 +49,13 @@ export default function TerrainStudio({ twinId, areaHa, onClose, geojson }: Terr
           setLocalOrigin(meta.local_origin);
           console.log('[TerrainStudio] local_origin loaded:', meta.local_origin);
         }
+        // Use engine's UTM-projected area (accurate) over Shoelace approximation
+        if (meta?.area_ha && meta.area_ha > 0) {
+          setModelInfo({ areaHa: meta.area_ha });
+        }
       })
       .catch(() => {});
-  }, [twinId, setLocalOrigin]);
+  }, [twinId, setLocalOrigin, setModelInfo]);
 
   // Set area from prop
   useEffect(() => {
