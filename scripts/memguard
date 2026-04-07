@@ -1,0 +1,48 @@
+#!/bin/bash
+# memguard — Atajo para Memory Guardian
+# Uso:
+#   memguard          → Estado actual
+#   memguard clean    → Forzar limpieza inmediata
+#   memguard start    → Arrancar daemon
+#   memguard stop     → Parar daemon
+#   memguard log      → Ver log en tiempo real
+
+SCRIPT="/home/davidia/Documentos/Geotwin/scripts/memory_guardian.py"
+PYTHON="/home/davidia/Documentos/Geotwin/.venv/bin/python"
+SERVICE="memory-guardian.service"
+
+case "${1:-status}" in
+  status)
+    $PYTHON "$SCRIPT" --status
+    echo ""
+    systemctl --user is-active "$SERVICE" 2>/dev/null && \
+      echo "Daemon: ✅ activo" || echo "Daemon: ⏹ parado"
+    ;;
+  clean|force)
+    echo "🧹 Forzando limpieza..."
+    $PYTHON "$SCRIPT" --once --force
+    ;;
+  start)
+    systemctl --user start "$SERVICE"
+    systemctl --user status "$SERVICE" --no-pager
+    ;;
+  stop)
+    systemctl --user stop "$SERVICE"
+    echo "⏹ Daemon parado"
+    ;;
+  restart)
+    systemctl --user restart "$SERVICE"
+    systemctl --user status "$SERVICE" --no-pager
+    ;;
+  enable)
+    systemctl --user enable "$SERVICE"
+    systemctl --user start "$SERVICE"
+    echo "✅ Daemon habilitado y arrancado"
+    ;;
+  log)
+    tail -f ~/.local/share/memory-guardian/guardian.log
+    ;;
+  *)
+    echo "Uso: memguard [status|clean|start|stop|restart|enable|log]"
+    ;;
+esac

@@ -197,13 +197,13 @@ async def generate_parcel_glb(refcat: str, output_path: str) -> None:
     # ── 5. UVs y textura ─────────────────────────────────────────────
     log.info("[5/6] Calculando UVs...")
     # UVs from east/north (horizontal plane), NOT from glTF Y-up vertices
-    # NOTE: trimesh flips V during GLB export (v_exported = 1 - v_input),
-    # so we pass V in OpenGL convention (V=0 at south, V=1 at north).
-    # trimesh's export will convert to glTF convention (V=0 at north/top).
+    # glTF convention: V=0 is TOP of image, V=1 is BOTTOM.
+    # trimesh ≥4.x does NOT flip V during export — we must flip manually.
+    # Our texture has north at top, so V=0 should map to north (max latitude).
     e_min, n_min = east.min(), north.min()
     e_max, n_max = east.max(), north.max()
     u = (east - e_min) / max(e_max - e_min, 1e-6)
-    v = (north - n_min) / max(n_max - n_min, 1e-6)
+    v = 1.0 - (north - n_min) / max(n_max - n_min, 1e-6)
     uv = np.column_stack([u, v]).astype(np.float32)
 
     assert uv[:, 0].min() >= 0.0 and uv[:, 0].max() <= 1.0, "UV u out of [0,1]"
