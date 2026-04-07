@@ -38,23 +38,11 @@ export function useTileProcessing(twinId: string | undefined, geojson?: any): Us
   const pollRef = useRef<NodeJS.Timeout | null>(null);
   const jobIdRef = useRef<string | null>(null);
 
-  // Check if tiles already exist on mount
+  // Do NOT auto-check tile availability on mount.
+  // The user chooses when to generate mesh via the "Mallado 3D" button.
+  // This avoids the "auto-complete" effect when the pipeline already generated tiles.
+
   useEffect(() => {
-    if (!twinId) return;
-
-    setStatus('checking');
-    fetch(`${API_BASE}/api/tiles/${encodeURIComponent(twinId)}/status`)
-      .then(r => r.ok ? r.json() : null)
-      .then(data => {
-        if (data?.available) {
-          setStatus('available');
-          setTilesAvailable(true);
-        } else {
-          setStatus('idle');
-        }
-      })
-      .catch(() => setStatus('idle'));
-
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
     };

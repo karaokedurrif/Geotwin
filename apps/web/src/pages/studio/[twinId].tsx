@@ -179,9 +179,12 @@ export default function TwinStudioPage() {
       .catch((err: any) => console.warn('[Studio] Failed to load tileset after processing:', err));
   }, [viewerRef, twinId, snapshot]);
 
+  // Only auto-load tiles + show 3D viewer when mesh processing COMPLETES (not pre-existing)
   useEffect(() => {
-    if (tileProcessing.status === 'completed' || tileProcessing.status === 'available') handleTileProcessingComplete();
-    if (tileProcessing.status === 'completed') setShowModelViewer(true);
+    if (tileProcessing.status === 'completed') {
+      handleTileProcessingComplete();
+      setShowModelViewer(true);
+    }
   }, [tileProcessing.status, handleTileProcessingComplete]);
 
   // Persist meshStatus to localStorage when it changes
@@ -359,10 +362,7 @@ export default function TwinStudioPage() {
           URL.revokeObjectURL(url);
         }}
         onBackToCapture={() => router.push('/')}
-        onGenerateMesh={tileProcessing.tilesAvailable
-          ? () => setShowModelViewer(true)
-          : tileProcessing.startProcessing
-        }
+        onGenerateMesh={tileProcessing.startProcessing}
         onOpenTerrainStudio={() => setShowTerrainStudio(true)}
         meshStatus={tileProcessing.status}
         twinId={typeof twinId === 'string' ? twinId : undefined}
