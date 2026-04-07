@@ -120,8 +120,8 @@ async def generate_parcel_glb(refcat: str, output_path: str) -> None:
     centroid_lat = np.mean(lats)
     width_m = (bbox[2] - bbox[0]) * 111000 * np.cos(np.radians(centroid_lat))
     height_m = (bbox[3] - bbox[1]) * 111000
-    px_w = min(int(width_m / 0.25), 8192)
-    px_h = min(int(height_m / 0.25), 8192)
+    px_w = min(max(int(width_m / 0.05), 2048), 8192)   # Min 2048px for sharp textures
+    px_h = min(max(int(height_m / 0.05), 2048), 8192)
     px_w = max(px_w, 256)
     px_h = max(px_h, 256)
 
@@ -214,9 +214,31 @@ async def generate_parcel_glb(refcat: str, output_path: str) -> None:
     visual = TextureVisuals(uv=uv, material=material)
     mesh = trimesh.Trimesh(vertices=vertices, faces=faces, visual=visual)
 
+    # FIX 1: Compute vertex normals (without this, shading is flat/ugly)
+    mesh.fix_normals()
+    log.info(f"  → Normals computed: {mesh.vertex_normals.shape}")
+
+    # FIX 2: Mirror fix — WFS Catastro returns lat,lon (Y,X).
+    # The local coordinate transform may produce mirrored geometry.
+    # Flip X axis and recalculate normals to fix.
+    mesh.vertices[:, 0] *= -1
+    mesh.fix_normals()
+    log.info("  → X-axis flipped to correct mirroring")
+
     # ── 6. Exportar GLB ──────────────────────────────────────────────
     log.info("[6/6] Exportando GLB...")
-    glb_bytes = mesh.export(file_type="glb")
+    glb_bytes = mesh.export(file_type="glb", include_normals=True)
+
+    # Validate GLB: check that NORMAL and TEXCOORD_0 are present
+    import struct, json as _json
+    json_len = struct.unpack('<I', glb_bytes[12:16])[0]
+    gltf = _json.loads(glb_bytes[20:20+json_len].rstrip(b'\x00'))
+    attrs = gltf['meshes'][0]['primitives'][0]['attributes']
+    assert 'NORMAL' in attrs, "ERROR: GLB sin normales"
+    assert 'TEXCOORD_0' in attrs, "ERROR: GLB sin UVs"
+    log.info(f"  → GLB attrs: {list(attrs.keys())}")
+
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     Path(output_path).write_bytes(glb_bytes)
 
     area_ha = area_m2 / 10000
