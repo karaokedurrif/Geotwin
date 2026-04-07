@@ -81,7 +81,7 @@ const DEFAULT_VISUAL_STYLE: VisualStyle = {
   boundaryWidth: 4.0,
   terrainExaggeration: 1.0,
   enableLighting: true,
-  timeOfDay: new Date(2024, 0, 1, 8, 0, 0).toISOString(),
+  timeOfDay: '2024-06-15T10:00:00Z',
   atmosphereDensity: 1.0,
 };
 
